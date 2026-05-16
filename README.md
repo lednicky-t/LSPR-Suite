@@ -1,26 +1,41 @@
 # LSPR Suite
 
-This workspace will host the shared ecosystem for:
+This repository is the umbrella for the LSPR application suite.
 
-- singleLSPR acquisition and evaluation
-- LSPRimaging acquisition and evaluation
-- shared file formats, workflow rules, and analysis primitives
+It now connects several separate app repositories through Git submodules:
 
-The acquisition apps stay separate from the offline evaluation apps.
-Shared logic lives in `packages/`.
-The first shared library is `packages/lspr_core`.
-Shared Qt styling and icon helpers live in `packages/lspr_ui`.
-HDF and file-format rules live in `packages/lspr_io` and `docs/schemas/`.
+- `apps/LSPRi/eva` -> LSPRimaging evaluation
+- `apps/sLSPR/acq` -> singleLSPR acquisition
+- `apps/sLSPR/eva` -> singleLSPR evaluation
+
+The remaining suite-level content stays in this repository:
+
+- shared packages in `packages/`
+- suite launcher in `apps/suite_launcher`
+- shared docs in `docs/`
+- bootstrap and workspace files in the repo root
+
+`LSPRimaging-Acquisition` is reserved as a separate repo for later work and is
+not started yet.
+
+Shared logic lives in the `packages/` tree:
+
+- `packages/lspr_core` for common flow and domain primitives
+- `packages/lspr_ui` for shared Qt styling and icon helpers
+- `packages/lspr_io` for HDF and file-format rules
+
 Architecture notes live in `docs/architecture/`.
+Schema documents live in `docs/schemas/`.
 Legacy references are kept in `references/`.
-The suite launcher lives in `apps/suite_launcher`.
 
 ## Local Setup
 
-Create a virtual environment at the repo root, activate it, then install the
-workspace packages in editable mode:
+Clone the suite with submodules, then create a virtual environment at the repo
+root and install the workspace packages in editable mode:
 
 ```powershell
+git clone --recurse-submodules https://github.com/lednicky-t/LSPR-Suite.git
+cd LSPR-Suite
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -45,4 +60,13 @@ these environment variables before launching the suite:
 
 The root `requirements.txt` is the one-command bootstrap for a fresh clone.
 It installs the shared packages and app entry points in editable mode.
+
+## Repository Layout
+
+When you work in this checkout:
+
+- edit suite-wide docs, shared packages, and the launcher in this repository
+- edit app-specific code inside the corresponding submodule repositories
+- commit app changes in the app repo first, then update the suite submodule
+  pointer in this umbrella repo
 
