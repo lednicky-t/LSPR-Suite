@@ -1,0 +1,58 @@
+﻿{
+  "folders": [
+    {
+      "name": "LSPR_suite",
+      "path": "."
+    },
+    {
+      "name": "sLSPR acquisition",
+      "path": "apps/sLSPR/acq"
+    },
+    {
+      "name": "sLSPR evaluation",
+      "path": "apps/sLSPR/eva"
+    },
+    {
+      "name": "LSPRi acquisition",
+      "path": "apps/LSPRi/acq"
+    },
+    {
+      "name": "LSPRi evaluation",
+      "path": "apps/LSPRi/eva"
+    },
+    {
+      "name": "shared packages",
+      "path": "packages"
+    },
+    {
+      "name": "docs",
+      "path": "docs"
+    },
+    {
+      "name": "references",
+      "path": "references"
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+    "python.analysis.autoSearchPaths": true,
+    "python.analysis.extraPaths": [
+      "packages/lspr_ui/src",
+      "packages/lspr_core/src",
+      "packages/lspr_io/src",
+      "apps/sLSPR/acq/src",
+      "apps/sLSPR/eva/src",
+      "apps/LSPRi/acq/src",
+      "apps/LSPRi/eva/src",
+      "apps/suite_launcher/src"
+    ],
+    "python.terminal.activateEnvironment": true,
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/*.pyc": true,
+      "**/.venv": true,
+      "**/dist": true,
+      "**/.tmp": true
+    }
+  }
+}

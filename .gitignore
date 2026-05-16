@@ -1,0 +1,33 @@
+# Python / build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor settings
+.vscode/
+.idea/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local runtime / generated state
+**/lspr_settings.json
+**/measurement_*.h5
+**/.appdata/
+**/tmp_*.txt
+apps/LSPRi/eva/.git_backup/
