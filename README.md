@@ -31,7 +31,11 @@ Legacy references are kept in `references/`.
 ## Local Setup
 
 Clone the suite with submodules, then create a virtual environment at the repo
-root and install the workspace packages in editable mode:
+root and install the workspace packages in editable mode.
+
+On Windows, make sure `python` points to a normal Python install, not the
+Inkscape-bundled interpreter. If `python` resolves to the wrong executable,
+use the full path to your system Python when creating the venv:
 
 ```powershell
 git clone --recurse-submodules https://github.com/lednicky-t/LSPR-Suite.git
@@ -43,6 +47,13 @@ python -m pip install -r requirements.txt
 
 After that, you can launch the installed apps with `lspr-suite`,
 `lspr-acquisition`, or `lspri-evaluation`.
+
+If you want to run the launcher directly from the repo instead of the installed
+console script, use:
+
+```powershell
+.\.venv\Scripts\python.exe apps\suite_launcher\run.py
+```
 
 The suite launcher remembers the last app you opened and will auto-launch it
 again after about 3 seconds on the next start.

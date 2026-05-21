@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap, QPen
-from PyQt6.QtWidgets import QApplication, QAbstractSpinBox, QSlider, QStyle, QToolButton
+from PyQt6.QtWidgets import QAbstractSpinBox, QSlider, QToolButton
 
 
 def make_sim_slider(minimum: int, maximum: int, value: int) -> QSlider:
@@ -67,35 +67,43 @@ def make_window_button(icon: QIcon, tooltip: str, slot) -> QToolButton:
     button.setToolTip(tooltip)
     button.setAutoRaise(True)
     button.setCursor(Qt.CursorShape.PointingHandCursor)
-    button.setIconSize(QSize(12, 12))
-    button.setFixedSize(24, 18)
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    button.setIconSize(QSize(18, 18))
+    button.setFixedSize(20, 18)
+    button.setContentsMargins(0, 0, 0, 0)
+    button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     button.clicked.connect(slot)
     return button
 
 
 def window_control_icon(kind: str) -> QIcon:
-    style = QApplication.style()
     color = QColor("#f4f8fc")
-    if kind == "minimize":
-        return _tint_icon(style.standardIcon(QStyle.StandardPixmap.SP_TitleBarMinButton), color)
-    if kind == "maximize":
-        return _tint_icon(style.standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton), color)
-    if kind == "restore":
-        return _tint_icon(style.standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton), color)
-    if kind == "close":
-        return _tint_icon(style.standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton), color)
+    if kind in {"minimize", "maximize", "restore", "close"}:
+        return _draw_window_control_icon(kind, color)
     raise ValueError(f"Unsupported window control icon kind: {kind}")
 
 
-def _tint_icon(icon: QIcon, color: QColor, *, size: int = 16) -> QIcon:
-    pixmap = icon.pixmap(size, size)
-    if pixmap.isNull():
-        return icon
-    tinted = QPixmap(pixmap.size())
-    tinted.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(tinted)
-    painter.drawPixmap(0, 0, pixmap)
-    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-    painter.fillRect(tinted.rect(), color)
+def _draw_window_control_icon(kind: str, color: QColor, *, size: int = 18) -> QIcon:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(color)
+    pen.setWidthF(2.0)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    if kind == "minimize":
+        painter.drawLine(4, size - 5, size - 4, size - 5)
+    elif kind == "maximize":
+        painter.drawRect(4, 4, size - 8, size - 8)
+    elif kind == "restore":
+        painter.drawRect(5, 4, size - 9, size - 9)
+        painter.drawRect(3, 6, size - 9, size - 9)
+    elif kind == "close":
+        painter.drawLine(4, 4, size - 4, size - 4)
+        painter.drawLine(size - 4, 4, 4, size - 4)
     painter.end()
-    return QIcon(tinted)
+    return QIcon(pixmap)

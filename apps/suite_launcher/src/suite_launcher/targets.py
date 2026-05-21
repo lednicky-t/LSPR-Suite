@@ -22,10 +22,18 @@ def _candidate_paths(*paths: Path | None) -> tuple[Path, ...]:
     return tuple(path for path in paths if path is not None)
 
 
+def _venv_python(root: Path | None) -> tuple[Path, ...]:
+    if root is None:
+        return ()
+    return (
+        root / ".venv" / "Scripts" / "python.exe",
+        root / ".venv" / "bin" / "python.exe",
+    )
+
+
 LEGACY_ROOT = _env_path("LSPR_LEGACY_EVAL_ROOT")
 LSPR_ROOT = _env_path("LSPR_LEGACY_SINGLE_ROOT")
 LSPRIMAGING_ROOT = _env_path("LSPR_LEGACY_IMAGING_ROOT")
-DEFAULT_SINGLE_ROOT = Path(r"C:/Users/lednicky/Desktop/python/LSPR")
 
 
 @dataclass(frozen=True)
@@ -104,13 +112,11 @@ TARGETS = [
         root_candidates=_candidate_paths(
             SUITE_ROOT / "apps" / "sLSPR" / "acq",
             LSPR_ROOT,
-            DEFAULT_SINGLE_ROOT,
         ),
         script="src/main.py",
         python_candidates=_candidate_paths(
-            SUITE_ROOT / ".venv" / "Scripts" / "python.exe",
-            LSPR_ROOT / ".venv" / "Scripts" / "python.exe" if LSPR_ROOT else None,
-            DEFAULT_SINGLE_ROOT / ".venv" / "Scripts" / "python.exe" if DEFAULT_SINGLE_ROOT.exists() else None,
+            *_venv_python(SUITE_ROOT),
+            *_venv_python(LSPR_ROOT),
         ),
         extra_paths=(
             SUITE_ROOT / "packages" / "lspr_ui" / "src",
@@ -118,7 +124,7 @@ TARGETS = [
             SUITE_ROOT / "packages" / "lspr_io" / "src",
             SUITE_ROOT / "apps" / "sLSPR" / "acq" / "src",
         ),
-        note="Prefers the suite-local workspace in LSPR_suite when present.",
+        note="Prefers the suite-local workspace when present; set LSPR_LEGACY_SINGLE_ROOT for an external legacy workspace.",
     ),
     AppTarget(
         key="slspr_eva",
@@ -131,7 +137,7 @@ TARGETS = [
         ),
         script="main.py",
         python_candidates=_candidate_paths(
-            LEGACY_ROOT / ".venv" / "Scripts" / "python.exe" if LEGACY_ROOT else None,
+            *_venv_python(LEGACY_ROOT),
         ),
         extra_paths=_candidate_paths(
             LEGACY_ROOT,
@@ -167,7 +173,7 @@ TARGETS = [
         ),
         script="src/main.py",
         python_candidates=_candidate_paths(
-            LSPRIMAGING_ROOT / ".venv" / "Scripts" / "python.exe" if LSPRIMAGING_ROOT else None,
+            *_venv_python(LSPRIMAGING_ROOT),
         ),
         note="Implemented in this workspace. Set LSPR_LEGACY_IMAGING_ROOT to point at a legacy workspace if needed.",
     ),

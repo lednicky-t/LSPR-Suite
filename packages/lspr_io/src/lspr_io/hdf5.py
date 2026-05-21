@@ -31,9 +31,14 @@ from .schema import (
 )
 
 
-def _iso_utc(value: datetime | None = None) -> str:
-    current = value or datetime.now(timezone.utc)
-    return current.isoformat().replace("+00:00", "Z")
+def _iso_utc(value: datetime | str | None = None) -> str:
+    if value is None:
+        current = datetime.now(timezone.utc)
+        return current.isoformat().replace("+00:00", "Z")
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    text = str(value).strip()
+    return text or _iso_utc()
 
 
 def _string_array(values: list[str]) -> np.ndarray:
@@ -56,7 +61,8 @@ def write_measurement_root_metadata(
     app_name: str,
     app_version: str,
     created_by: str,
-    started_at_utc: datetime,
+    created_at_utc: str | None = None,
+    started_at_utc: datetime | str,
     experiment_name: str = "",
 ) -> None:
     handle.attrs["schema_name"] = schema_name
@@ -66,7 +72,7 @@ def write_measurement_root_metadata(
     handle.attrs["format_name"] = format_name
     handle.attrs["format_version"] = format_version
     handle.attrs["created_by"] = created_by
-    handle.attrs["created_at_utc"] = _iso_utc()
+    handle.attrs["created_at_utc"] = _iso_utc(created_at_utc)
     handle.attrs["started_at_utc"] = _iso_utc(started_at_utc)
     handle.attrs["app_name"] = app_name
     handle.attrs["app_version"] = app_version
@@ -199,7 +205,7 @@ def build_legacy_experiment_plan_row_table(
 def standard_measurement_metadata(
     *,
     created_by: str,
-    started_at_utc: datetime,
+    started_at_utc: datetime | str,
     app_name: str,
     app_version: str,
     experiment_name: str = "",

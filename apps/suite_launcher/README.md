@@ -17,3 +17,7 @@ after a short delay on the next start.
 
 If you want to use VS Code's "Run Python File" button, run
 [`apps/suite_launcher/run.py`](run.py) instead of `app.py`.
+
+On Windows, make sure the interpreter behind your venv is a normal Python
+install. If `python` points to the Inkscape bundle, recreate the venv with your
+system Python before launching the suite.
