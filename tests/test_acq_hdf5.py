@@ -19,10 +19,57 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_app.domain.models import ProcessingSettings
+from lspr_app.gui.experiment_control_window import build_experiment_plan_steps_from_hdf5_rows
 from lspr_app.storage.hdf5_export import HDF5MeasurementWriter
 
 
 class Hdf5AcquisitionWriterTests(unittest.TestCase):
+    def test_hdf5_plan_rows_can_be_parsed_into_steps(self) -> None:
+        columns = [
+            "step",
+            "duration_s",
+            "start_s",
+            "end_s",
+            "color",
+            "valve",
+            "switch_position",
+            "description",
+            "ch1_flow_ul_min",
+            "ch1_direction",
+            "ch1_tube_mm",
+            "ch2_flow_ul_min",
+            "ch2_direction",
+            "ch2_tube_mm",
+        ]
+        rows = [
+            [
+                "1",
+                "12.5",
+                "0.0",
+                "12.5",
+                "#4E79A7",
+                "Open",
+                "3",
+                "First step",
+                "50",
+                "CW",
+                "0.25",
+                "20",
+                "CCW",
+                "0.25",
+            ]
+        ]
+
+        steps = build_experiment_plan_steps_from_hdf5_rows(columns, rows)
+
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0].step, 1)
+        self.assertEqual(steps[0].duration_s, 12.5)
+        self.assertEqual(steps[0].switch_position, 3)
+        self.assertEqual(steps[0].description, "First step")
+        self.assertEqual(steps[0].channels[0].flow_ul_min, 50)
+        self.assertEqual(steps[0].channels[1].direction, "CCW")
+
     def test_switch_solution_metadata_is_resizable(self) -> None:
         processing = ProcessingSettings()
         wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
@@ -73,6 +120,16 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
                     }
                 ]
             )
+            writer.append_device_state(
+                {
+                    "event": "step_updated",
+                    "step_index": 1,
+                    "status": "running",
+                    "pump_running": False,
+                    "switch_position": 2,
+                    "valve_position": "sample",
+                }
+            )
             writer.close()
 
             with h5py.File(path, "r") as handle:
@@ -97,7 +154,7 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
         self.assertEqual(plan_shape, (2, len(plan_row)))
         self.assertEqual(plan_tmp_shape, (2, len(plan_row)))
         self.assertEqual(legacy_plan_shape, (2, len(plan_row)))
-        self.assertEqual(flow_events_shape[0], 1)
+        self.assertEqual(flow_events_shape[0], 2)
 
     def test_compression_metadata_and_filters_are_written(self) -> None:
         processing = ProcessingSettings()
