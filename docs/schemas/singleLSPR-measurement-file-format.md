@@ -111,7 +111,7 @@ The primary time coordinate is relative integer milliseconds:
 t_ms int64
 ```
 
-`t_ms` is measured from `started_at_utc`. This should be the universal join key for spectra, flow state, device events, and metrics.
+`t_ms` is measured from `started_at_utc`. This should be the universal join key for spectra, experimental control state, device events, and metrics.
 
 Rules:
 
@@ -549,7 +549,7 @@ Recommended live writer behavior:
 4. Append dark and reference spectra whenever they are acquired.
 5. Store `dark_index` and `reference_index` on each sample row.
 6. Append metric rows after processing.
-7. Append flow state rows when state changes and optionally at heartbeat intervals.
+7. Append experimental control state rows when state changes and optionally at heartbeat intervals.
 8. Append runtime events for hold, pause, skip, jump, and recording transitions.
 9. Flush periodically and on measurement stop.
 10. Close the file cleanly at measurement end.
