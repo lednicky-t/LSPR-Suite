@@ -17,6 +17,8 @@ This is a living draft for the next-generation experiment file. The goal is to m
 - solution registry and usage
 - experiment metadata and tags
 
+See [`../../apps/sLSPR/acq/docs/processing_math.md`](../../apps/sLSPR/acq/docs/processing_math.md) for the exact metric definitions, fit-aware rules, and processing assumptions.
+
 ## Goals
 
 - Preserve all raw sample, dark, and reference spectra.
@@ -343,6 +345,8 @@ Sample spectra should also contain:
 ## Processed
 
 Derived outputs should live here.
+
+The metric definitions in [`../../apps/sLSPR/acq/docs/processing_math.md`](../../apps/sLSPR/acq/docs/processing_math.md) explain which traces are fit-aware and which are derived from the processed spectrum only.
 
 Recommended groups:
 

@@ -19,6 +19,7 @@ if str(APP_SRC) not in sys.path:
 from lspr_app.domain.models import Spectrum
 from lspr_app.gui.acquisition_controller import append_processed_trace_history
 from lspr_app.gui.main_window_plotting import clear_trace_history_for
+from lspr_app.gui.processing_helpers import get_analysis_metrics
 from lspr_app.gui.plot_controller import (
     clip_series_to_window,
     autoscale_trace_plot,
@@ -511,6 +512,47 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertEqual(window._peak_history, {})
         self.assertEqual(window._sensorgram_heatmap_history, [])
         self.assertIsNone(window._sensorgram_heatmap_wavelengths)
+
+    def test_smoothed_max_and_centroid_do_not_depend_on_fit(self) -> None:
+        processed = Spectrum(
+            wavelengths_nm=np.asarray([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+            values=np.asarray([0.0, 3.0, 1.0, 0.0], dtype=np.float64),
+            y_label="sample",
+            acquired_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+        )
+        fit = Spectrum(
+            wavelengths_nm=np.asarray([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+            values=np.asarray([0.0, 2.0, 4.0, 2.0], dtype=np.float64),
+            y_label="sample",
+            acquired_at=processed.acquired_at,
+            metadata={
+                "fit_method": "poly",
+                "polynomial_peak_nm": 3.0,
+            },
+        )
+        settings = SimpleNamespace(
+            crop_method="fixed_width",
+            crop_fraction=0.7,
+            fit_method="poly",
+            fit_window_width_nm=10.0,
+            analysis_resolution_nm=0.1,
+            polynomial_order=2,
+            peak_tracking_mode="smoothed_max",
+            smoothing_method="none",
+            smoothing_window=1,
+            baseline_method="none",
+            trace_metrics=["smoothed_max"],
+        )
+
+        without_fit = get_analysis_metrics(processed, None, settings)
+        with_fit = get_analysis_metrics(processed, fit, settings)
+
+        self.assertAlmostEqual(float(with_fit["smoothed_max"]), float(without_fit["smoothed_max"]), places=6)
+        self.assertAlmostEqual(float(with_fit["centroid"]), float(without_fit["centroid"]), places=6)
+        self.assertNotEqual(float(with_fit["poly_max"]), float(without_fit["poly_max"]))
+        self.assertAlmostEqual(float(without_fit["smoothed_max"]), 2.01, places=6)
+        self.assertAlmostEqual(float(without_fit["poly_max"]), 2.01, places=6)
+        self.assertAlmostEqual(float(with_fit["poly_max"]), 3.0, places=6)
 
 
 if __name__ == "__main__":
