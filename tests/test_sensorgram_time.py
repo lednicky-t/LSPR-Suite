@@ -59,9 +59,10 @@ class _FakeCurve:
 
 
 class _FakeTracePlot:
-    def __init__(self) -> None:
+    def __init__(self, view_range: list[list[float]] | None = None) -> None:
         self.ranges: list[tuple[float, float]] = []
         self.y_ranges: list[tuple[float, float]] = []
+        self._view_range = view_range or [[0.0, 20.0], [0.0, 1.0]]
 
     def enableAutoRange(self, *args, **kwargs) -> None:  # noqa: N802 - Qt-style API
         return None
@@ -81,7 +82,7 @@ class _FakeTracePlot:
         return SimpleNamespace(vb=self)
 
     def viewRange(self):  # noqa: N802 - Qt-style API
-        return [[0.0, 20.0], [0.0, 1.0]]
+        return self._view_range
 
     def sceneBoundingRect(self):  # noqa: N802 - Qt-style API
         return SimpleNamespace(width=lambda: 320.0, height=lambda: 240.0)
@@ -311,6 +312,90 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertAlmostEqual(window.trace_plot.y_ranges[-1][0], 610.0, places=6)
         self.assertAlmostEqual(window.trace_plot.y_ranges[-1][1], 620.0, places=6)
         self.assertLessEqual(window.trace_heatmap_image.image.shape[1], 2)
+
+    def test_trace_renderer_absolute_ignores_stale_viewport(self) -> None:
+        window = SimpleNamespace(
+            trace_curves={"smoothed_max": _FakeCurve()},
+            _selected_trace_metrics=lambda: ["smoothed_max"],
+            _primary_trace_metric=lambda: "smoothed_max",
+            _visible_trace_x=None,
+            _visible_trace_y=None,
+            _sensorgram_view_mode="absolute",
+            _trace_view_locked=False,
+            _sensorgram_downsampling_enabled=True,
+            _trace_display_window_s=5.0,
+            trace_plot=_FakeTracePlot(view_range=[[40.0, 60.0], [0.0, 1.0]]),
+        )
+        history = {
+            "smoothed_max": [(float(index), float(index)) for index in range(100)],
+        }
+
+        render_trace_series(window, history, clock_mode=False)
+
+        x_values, y_values = window.trace_curves["smoothed_max"].data
+        self.assertEqual(len(x_values), 100)
+        self.assertListEqual(x_values[:3].tolist(), [0.0, 1.0, 2.0])
+        self.assertListEqual(x_values[-3:].tolist(), [97.0, 98.0, 99.0])
+        self.assertListEqual(y_values[:3].tolist(), [0.0, 1.0, 2.0])
+
+    def test_downsampling_toggle_can_bypass_reduction(self) -> None:
+        x = np.arange(0.0, 1000.0, dtype=np.float64)
+        y = np.sin(x / 20.0)
+
+        sampled_x, sampled_y = downsample_trace_series_for_view(
+            x,
+            y,
+            view_width_px=20.0,
+            enabled=False,
+        )
+
+        self.assertEqual(sampled_x.shape, x.shape)
+        self.assertEqual(sampled_y.shape, y.shape)
+        self.assertTrue(np.array_equal(sampled_x, x))
+        self.assertTrue(np.array_equal(sampled_y, y))
+
+    def test_heatmap_downsampling_toggle_can_bypass_reduction(self) -> None:
+        history = [
+            (float(index), np.asarray([float(index), float(index) + 1.0], dtype=np.float64))
+            for index in range(600)
+        ]
+
+        sampled = downsample_sensorgram_history_for_view(
+            history,
+            view_height_px=50.0,
+            enabled=False,
+        )
+
+        self.assertEqual(len(sampled), len(history))
+        self.assertTrue(all(np.array_equal(sampled[index][1], history[index][1]) for index in range(len(history))))
+
+    def test_heatmap_renderer_absolute_ignores_stale_viewport(self) -> None:
+        wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)
+        history = [
+            (0.0, np.asarray([0.1, 0.2], dtype=np.float64)),
+            (10.0, np.asarray([0.3, 0.4], dtype=np.float64)),
+            (20.0, np.asarray([0.5, 0.6], dtype=np.float64)),
+        ]
+        window = SimpleNamespace(
+            trace_heatmap_image=_FakeImageItem(),
+            trace_plot=_FakeTracePlot(view_range=[[40.0, 60.0], [0.0, 1.0]]),
+            trace_curves={"smoothed_max": _FakeCurve()},
+            trace_legend=_FakeLegend(),
+            _sensorgram_heatmap_wavelengths=wavelengths,
+            _visible_trace_x=None,
+            _visible_trace_y=None,
+            _visible_trace_mode=None,
+            _sensorgram_view_mode="absolute",
+            _trace_view_locked=False,
+            _trace_display_window_s=5.0,
+            _sensorgram_downsampling_enabled=True,
+        )
+
+        render_sensorgram_heatmap(window, history, clock_mode=False)
+
+        self.assertTrue(window.trace_heatmap_image.visible)
+        self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 0.0, places=6)
+        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.6, places=6)
 
     def test_trace_downsampling_prefers_visible_window(self) -> None:
         x = np.arange(0.0, 1000.0, dtype=np.float64)
