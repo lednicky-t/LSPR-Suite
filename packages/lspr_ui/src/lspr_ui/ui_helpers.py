@@ -69,7 +69,7 @@ def make_window_button(icon: QIcon, tooltip: str, slot) -> QToolButton:
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     button.setIconSize(QSize(18, 18))
-    button.setFixedSize(20, 18)
+    button.setFixedSize(28, 24)
     button.setContentsMargins(0, 0, 0, 0)
     button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     button.clicked.connect(slot)

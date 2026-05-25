@@ -73,14 +73,52 @@ def app_icon() -> QIcon:
 def window_control_icon(kind: str) -> QIcon:
     color = QColor("#f4f8fc")
     if kind == "minimize":
-        return tint_icon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMinButton), color, size=16)
+        icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMinButton)
+        if not icon.isNull():
+            return tint_icon(icon, color, size=18)
     if kind == "maximize":
-        return tint_icon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton), color, size=16)
+        icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton)
+        if not icon.isNull():
+            return tint_icon(icon, color, size=18)
     if kind == "restore":
-        return tint_icon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton), color, size=16)
+        icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton)
+        if not icon.isNull():
+            return tint_icon(icon, color, size=18)
     if kind == "close":
-        return tint_icon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton), color, size=16)
+        icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton)
+        if not icon.isNull():
+            return tint_icon(icon, color, size=18)
+    if kind in {"minimize", "maximize", "restore", "close"}:
+        return _draw_window_control_icon(kind, color, size=18)
     raise ValueError(f"Unsupported window control icon kind: {kind}")
+
+
+def _draw_window_control_icon(kind: str, color: QColor, *, size: int = 18) -> QIcon:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(color)
+        pen.setWidthF(2.0)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if kind == "minimize":
+            painter.drawLine(4, size - 5, size - 4, size - 5)
+        elif kind == "maximize":
+            painter.drawRect(4, 4, size - 8, size - 8)
+        elif kind == "restore":
+            painter.drawRect(5, 4, size - 9, size - 9)
+            painter.drawRect(3, 6, size - 9, size - 9)
+        elif kind == "close":
+            painter.drawLine(4, 4, size - 4, size - 4)
+            painter.drawLine(size - 4, 4, 4, size - 4)
+    finally:
+        painter.end()
+    return QIcon(pixmap)
 
 
 def flow_tabler_icon(*names: str) -> QIcon:
