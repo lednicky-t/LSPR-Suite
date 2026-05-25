@@ -27,6 +27,7 @@ from lspr_app.gui.plot_controller import (
     downsample_trace_series_for_view,
     render_sensorgram_heatmap,
     render_trace_series,
+    request_trace_autoscale,
 )
 
 
@@ -118,6 +119,14 @@ class _FakeLegend:
 
     def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
         self.visible = bool(value)
+
+
+class _FakeTimer:
+    def __init__(self) -> None:
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
 
 
 class SensorgramTimeTests(unittest.TestCase):
@@ -396,6 +405,17 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertTrue(window.trace_heatmap_image.visible)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 0.0, places=6)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.6, places=6)
+
+    def test_sensorgram_freeze_blocks_autoscale_timer(self) -> None:
+        window = SimpleNamespace(
+            _plots_frozen=False,
+            _sensorgram_frozen=True,
+            _trace_autoscale_timer=_FakeTimer(),
+        )
+
+        request_trace_autoscale(window)
+
+        self.assertFalse(window._trace_autoscale_timer.started)
 
     def test_trace_downsampling_prefers_visible_window(self) -> None:
         x = np.arange(0.0, 1000.0, dtype=np.float64)
