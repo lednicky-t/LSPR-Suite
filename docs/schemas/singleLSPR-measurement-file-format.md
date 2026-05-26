@@ -1,6 +1,6 @@
 ﻿# LSPR Measurement File Format
 
-This document describes the planned native HDF5 file layout for LSPR Acquisition measurement data.
+This document describes the native HDF5 file layout for LSPR Acquisition measurement data.
 It is intended as the implementation contract for writers, readers, validators, and future analysis tools.
 
 The current application already writes HDF5 files. This specification defines the next structured schema so raw spectra, baseline spectra, device descriptions, experiment-control state, metrics, and experiment metadata can grow without breaking old files.
@@ -51,10 +51,11 @@ Recommended root attributes:
 
 ```text
 attrs["schema_name"] = "lspr_measurement"
-attrs["schema_version"] = "4.0"
-attrs["schema_major"] = 4
-attrs["schema_minor"] = 0
+attrs["schema_version"] = "5.2"
+attrs["schema_major"] = 5
+attrs["schema_minor"] = 2
 attrs["format_name"] = "experiment_run"
+attrs["format_version"] = 5
 attrs["app_version"] = "<application version>"
 attrs["created_by"] = "LSPR Acquisition"
 attrs["created_at_utc"] = "YYYY-MM-DDTHH:MM:SS.sssZ"
@@ -79,6 +80,7 @@ Recommended manifest group:
   schema_major
   schema_minor
   format_name
+  format_version
   app_version
   created_by
   created_at_utc
@@ -105,26 +107,28 @@ attrs["columns"] = ["column_a", "column_b", ...]
 
 ## Time Model
 
-The primary time coordinate is relative integer milliseconds:
+The canonical saved time coordinate is absolute UTC milliseconds:
 
 ```text
-t_ms int64
+timestamp_utc_ms int64
 ```
 
-`t_ms` is measured from `started_at_utc`. This should be the universal join key for spectra, experimental control state, device events, and metrics.
+`timestamp_utc_ms` is the canonical event time used for file persistence and cross-stream joins.
+Display values may still be shown as relative milliseconds for usability.
 
 Rules:
 
 - Use millisecond resolution only.
 - Use `int64` for timestamps.
 - Store `started_at_utc` once at the root.
-- Optional absolute timestamps may be stored as Unix milliseconds for convenience.
+- Keep `t_ms` as the relative display coordinate for runtime orientation.
+- Store absolute event timestamps in UTC milliseconds.
 - Readers should align streams by selecting the latest state row at or before a spectrum timestamp.
 
-Recommended optional absolute time field:
+Recommended relative display field:
 
 ```text
-acquired_at_unix_ms int64
+t_ms int64
 ```
 
 ## Top-Level Layout
@@ -132,12 +136,9 @@ acquired_at_unix_ms int64
 ```text
 /
   /manifest
-  /axes
   /devices
   /metadata
-  /plans
-  /runs
-  /raw
+  /data
   /processed
   /events
 ```
@@ -149,16 +150,20 @@ Recommended semantic split:
 - `manifest`: file identity and exporter identity
 - `metadata`: static experiment context
 - `devices`: connected devices, inventory, and wiring
-- `plans`: authored configuration and assignment tables
-- `runs`: measured runtime sequence and state changes
-- `raw`: append-only raw spectra and baselines
+- `data`: wavelengths, spectra, runtime logs, and time series
 - `processed`: derived spectra, metrics, and provenance
 - `events`: human-readable event log
+
+Current exporters keep the authored plan table in `metadata/experiment_plan`. Runtime control snapshots are written to
+`data/experiment_control_runtime`. The wavelength axis is written once to
+`data/wavelengths_nm`, and spectra are stored under `data/spectra/...`.
+Legacy files may still contain `/plans`, `/runs`, `/axes`, or `/spectra` as top-level groups,
+but new exports should prefer the `data`/`metadata` layout.
 
 ## Axes
 
 ```text
-/axes/wavelengths_nm float64 [n_wavelength]
+/data/wavelengths_nm float64 [n_wavelength]
 ```
 
 Attributes:
@@ -170,14 +175,14 @@ description = "Wavelength axis shared by spectra matrices."
 
 The measurement writer should lock the wavelength axis when measurement starts. Spectra acquired on a different axis must be resampled before appending, and the row metadata should record that resampling occurred.
 
-## Raw Spectra
+## Spectra
 
-Raw spectra are stored by role.
+Spectra are stored by role.
 
 ```text
-/raw/spectra/sample
-/raw/spectra/dark
-/raw/spectra/reference
+/data/spectra/sample
+/data/spectra/dark
+/data/spectra/reference
 ```
 
 Each role group should contain:
@@ -203,10 +208,16 @@ Index rules:
 
 - `dark_index = -1` means no dark spectrum was assigned.
 - `reference_index = -1` means no reference spectrum was assigned.
-- Non-negative values point to rows in `/spectra/dark` or `/spectra/reference`.
+- Non-negative values point to rows in `/data/spectra/dark` or `/data/spectra/reference`.
 - The indices should represent the dark/reference spectra active when that sample row was acquired or processed.
 
 This preserves multiple baseline acquisitions and makes each sample reproducible.
+
+The current writer stores the canonical wavelength axis once under `/data/wavelengths_nm`
+and the canonical sample matrix once under `/data/spectra/sample/intensity`.
+Legacy duplicates such as `data/raw_spectra_extinction`, `data/wavelengths`, and
+top-level `/axes`, `/plans`, `/runs`, and `/spectra` groups are no longer part of the
+current file format.
 
 ## Baseline Events
 
@@ -229,6 +240,7 @@ Metrics derived from sample spectra should be stored as appendable numeric vecto
 ```text
 /processed/metrics
   t_ms                int64   [n_metric]
+  acquired_at_unix_ms int64   [n_metric]
   sample_index        int64   [n_metric]
   centroid_nm         float64 [n_metric]
   smoothed_max_nm     float64 [n_metric]
@@ -243,7 +255,8 @@ Rules:
 
 - Missing or unavailable metric values should be `NaN`.
 - New metrics may be added as new datasets.
-- `sample_index` links the metric row to `/spectra/sample/intensity`.
+- `sample_index` links the metric row to `/data/spectra/sample/intensity`.
+- `acquired_at_unix_ms` stores the absolute UTC timestamp of the spectrum used to derive the metric.
 
 ## Plans
 
@@ -252,12 +265,9 @@ The authored experimental plan should live here, separate from the runtime execu
 Recommended authored plan groups:
 
 ```text
-/plans/device_plan
-/plans/experiment_plan
-/plans/assignment_tables
-/plans/switch_table
-/plans/valve_table
-/plans/connector_mapping
+/metadata/device_plan
+/metadata/experiment_plan
+/metadata/assignment_tables
 ```
 
 Rules:
@@ -298,7 +308,8 @@ This section may continue to hold the current step table concept:
 This section should hold mapping tables such as:
 
 - switch port to solution label
-- valve state labels
+- unified valve state label/color map
+- custom color palette entries used by the experiment-plan editor
 - pump channel to chip inlet
 - chip channel to solution role
 - tubing and connector mapping
@@ -310,10 +321,7 @@ The measured execution should live here.
 Recommended groups:
 
 ```text
-/runs/executed_sequence
-/runs/flow_state
-/runs/device_events
-/runs/recording_events
+/data/experiment_control_runtime
 ```
 
 Rules:
@@ -322,6 +330,11 @@ Rules:
 - runtime data may differ from the authored plan
 - hold, pause, skip, and jump events must be represented explicitly
 - device state snapshots belong here, not in the authored plan
+- runtime records should include `timestamp_utc_ms` as the absolute event timestamp
+- runtime records should keep `t_ms` as the relative display / plan-time coordinate
+- wall-clock elapsed time keeps increasing while the run is held
+- active step time pauses during hold and drives automatic step switching
+- step runtime resets to zero when a new measurement run starts or when the active step changes
 
 ## Spectra
 
@@ -330,16 +343,16 @@ Raw and baseline spectra are appendable runtime data.
 Recommended layout:
 
 ```text
-/raw/spectra/sample
-/raw/spectra/dark
-/raw/spectra/reference
+/data/spectra/sample
+/data/spectra/dark
+/data/spectra/reference
 ```
 
 Sample spectra should also contain:
 
 ```text
-/raw/spectra/sample/dark_index
-/raw/spectra/sample/reference_index
+/data/spectra/sample/dark_index
+/data/spectra/sample/reference_index
 ```
 
 ## Processed
@@ -366,6 +379,27 @@ This section should store:
 - signal-to-noise trace
 - processing settings and provenance
 - algorithm version or implementation note
+
+`/processed/metrics` has its own schema and version metadata so derived metrics can
+evolve independently of the root measurement format.
+
+Recommended config layout:
+
+```text
+/processed/metrics
+  attrs["schema_name"] = "lspr_processed_metrics"
+  attrs["schema_version"] = "1.0"
+  attrs["format_name"] = "processed_metrics"
+  attrs["format_version"] = 1
+/processed/metrics/config
+  attrs["schema_name"] = "lspr_processing_settings"
+  attrs["schema_version"] = "1.0"
+  processing_settings_json
+```
+
+`processing_settings_json` is a pretty-printed human-readable JSON snapshot of the
+processing panel settings used to derive the metrics. It is the preferred payload for
+round-tripping the processing configuration back into the GUI.
 
 ## Devices
 
@@ -544,7 +578,7 @@ This should not replace structured numeric streams. It is for human-readable his
 Recommended live writer behavior:
 
 1. Create manifest, metadata, and fixed device identity when measurement starts.
-2. Lock `/axes/wavelengths_nm`.
+2. Lock `/data/wavelengths_nm`.
 3. Append sample spectra as they are acquired.
 4. Append dark and reference spectra whenever they are acquired.
 5. Store `dark_index` and `reference_index` on each sample row.
@@ -558,7 +592,7 @@ The writer may keep small in-memory counters for row indices. It should not read
 
 ## Current Implementation Notes
 
-The current writer stores a simpler v3 layout and is still being standardized.
+The current writer stores a simpler compatibility-oriented layout and is still being standardized.
 
 That is okay for now, but the v4 target should converge toward the structure above so future tools can inspect:
 
