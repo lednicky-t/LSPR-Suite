@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Callable
 
@@ -444,8 +445,17 @@ class MainWindow(QMainWindow):
                 )
                 return
             command, cwd, env = target.build_command()
-            process = subprocess.Popen(command, cwd=str(cwd), env=env)
+            process = subprocess.Popen(
+                command,
+                cwd=str(cwd),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
             self._processes_by_key.setdefault(target.key, []).append(process)
+            self._forward_process_output(process, target.title)
             self._mark_started(target)
             self._refresh_running_app_statuses()
         except Exception as exc:
@@ -494,6 +504,26 @@ class MainWindow(QMainWindow):
             card = self.cards.get(target.key)
             if card is not None:
                 card.set_running(bool(alive))
+
+    def _forward_process_output(self, process: subprocess.Popen[object], title: str) -> None:
+        stream = process.stdout
+        if stream is None:
+            return
+
+        def _pump_output() -> None:
+            try:
+                for line in iter(stream.readline, ""):
+                    if not line:
+                        break
+                    sys.stdout.write(f"[{title}] {line}")
+                    sys.stdout.flush()
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_pump_output, daemon=True).start()
 
 
 def _apply_palette(app: QApplication) -> None:

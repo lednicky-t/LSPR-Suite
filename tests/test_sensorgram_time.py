@@ -161,8 +161,10 @@ class SensorgramTimeTests(unittest.TestCase):
 
         append_processed_trace_history(window, processed, None)
 
-        self.assertIn("smoothed_max", window._peak_history)
-        self.assertAlmostEqual(window._peak_history["smoothed_max"][0][0], 5.0, places=6)
+        self.assertIn("smoothed_max", window._peak_history_buffers)
+        x_values, y_values = window._peak_history_buffers["smoothed_max"].to_arrays()
+        self.assertAlmostEqual(float(x_values[0]), 5.0, places=6)
+        self.assertAlmostEqual(float(y_values[0]), 42.0, places=6)
         self.assertEqual(window._measurement_writer.rows[0]["t_ms"], 5000)
 
     def test_live_trace_uses_local_timestamp(self) -> None:
@@ -177,8 +179,10 @@ class SensorgramTimeTests(unittest.TestCase):
 
         append_processed_trace_history(window, processed, None)
 
-        self.assertIn("smoothed_max", window._peak_history)
-        self.assertAlmostEqual(window._peak_history["smoothed_max"][0][0], acquired_at.timestamp(), places=6)
+        self.assertIn("smoothed_max", window._peak_history_buffers)
+        x_values, y_values = window._peak_history_buffers["smoothed_max"].to_arrays()
+        self.assertAlmostEqual(float(x_values[0]), acquired_at.timestamp(), places=6)
+        self.assertAlmostEqual(float(y_values[0]), 42.0, places=6)
 
     def test_trace_renderer_accepts_float_timestamps(self) -> None:
         window = SimpleNamespace(
@@ -222,7 +226,7 @@ class SensorgramTimeTests(unittest.TestCase):
         append_processed_trace_history(window, first, None)
         append_processed_trace_history(window, second, None)
 
-        self.assertEqual(len(window._peak_history["smoothed_max"]), 2)
+        self.assertEqual(len(window._peak_history_buffers["smoothed_max"]), 2)
 
     def test_trace_history_is_bounded_to_recent_points(self) -> None:
         started_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -238,11 +242,11 @@ class SensorgramTimeTests(unittest.TestCase):
             )
             append_processed_trace_history(window, processed, None)
 
-        history = window._peak_history["smoothed_max"]
-        self.assertEqual(len(history), 2)
-        self.assertAlmostEqual(history[0][0], (started_at + timedelta(seconds=1)).timestamp(), places=6)
-        self.assertAlmostEqual(history[1][0], (started_at + timedelta(seconds=2)).timestamp(), places=6)
-        self.assertListEqual([item[1] for item in history], [42.0, 42.0])
+        x_values, y_values = window._peak_history_buffers["smoothed_max"].to_arrays()
+        self.assertEqual(len(x_values), 2)
+        self.assertAlmostEqual(float(x_values[0]), (started_at + timedelta(seconds=1)).timestamp(), places=6)
+        self.assertAlmostEqual(float(x_values[1]), (started_at + timedelta(seconds=2)).timestamp(), places=6)
+        self.assertListEqual([float(item) for item in y_values.tolist()], [42.0, 42.0])
 
     def test_autoscale_trace_plot_respects_absolute_and_rolling_modes(self) -> None:
         series = {
@@ -261,12 +265,12 @@ class SensorgramTimeTests(unittest.TestCase):
 
         autoscale_trace_plot(window)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 0.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.6, places=6)
+        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.1, places=6)
 
         window._sensorgram_view_mode = "rolling"
         autoscale_trace_plot(window)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 15.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.15, places=6)
+        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.025, places=6)
 
     def test_heatmap_renderer_populates_image_matrix(self) -> None:
         wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)
@@ -318,7 +322,7 @@ class SensorgramTimeTests(unittest.TestCase):
 
         self.assertTrue(window.trace_heatmap_image.visible)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 15.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.15, places=6)
+        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.025, places=6)
         self.assertAlmostEqual(window.trace_plot.y_ranges[-1][0], 610.0, places=6)
         self.assertAlmostEqual(window.trace_plot.y_ranges[-1][1], 620.0, places=6)
         self.assertLessEqual(window.trace_heatmap_image.image.shape[1], 2)
@@ -405,7 +409,7 @@ class SensorgramTimeTests(unittest.TestCase):
 
         self.assertTrue(window.trace_heatmap_image.visible)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 0.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.6, places=6)
+        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.1, places=6)
 
     def test_sensorgram_freeze_blocks_autoscale_timer(self) -> None:
         window = SimpleNamespace(
