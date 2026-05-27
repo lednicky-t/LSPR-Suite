@@ -155,10 +155,9 @@ def tint_tabler_icon(icon: QIcon, color: QColor) -> QIcon:
     return tint_icon(icon, color)
 
 
-def device_status_icon(connected: bool) -> QIcon:
-    if connected:
-        svg = """
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#47a861" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+def _device_status_svg(color: str) -> str:
+    return f"""
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path stroke="none" d="M0 0h24v24H0z" fill="none" />
   <path d="m 8.9109993,10.089011 5.0000007,5 -1.5,1.5 a 3.536,3.536 0 1 1 -5.0000007,-5 l 1.5,-1.5" />
   <path d="m 15.089001,13.910989 -5,-4.9999999 1.5,-1.4999999 a 3.536,3.536 0 1 1 5,4.9999998 l -1.5,1.5" />
@@ -166,18 +165,17 @@ def device_status_icon(connected: bool) -> QIcon:
   <path d="m 16.589001,7.4109892 2.5,-2.5" />
 </svg>
 """
+
+
+def device_status_icon(status: bool | str) -> QIcon:
+    normalized = str(status).strip().lower() if isinstance(status, str) else ("connected" if status else "disconnected")
+    if normalized in {"connected", "online", "true", "1", "yes"}:
+        color = "#47a861"
+    elif normalized in {"discovered", "present", "available", "yellow"}:
+        color = "#f2c94c"
     else:
-        svg = """
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d65a63" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-  <path d="M7 12l5 5l-1.5 1.5a3.536 3.536 0 1 1 -5 -5l1.5 -1.5" />
-  <path d="M17 12l-5 -5l1.5 -1.5a3.536 3.536 0 1 1 5 5l-1.5 1.5" />
-  <path d="M3 21l2.5 -2.5" />
-  <path d="M18.5 5.5l2.5 -2.5" />
-  <path d="M10 11l-2 2" />
-  <path d="M13 14l-2 2" />
-</svg>
-"""
+        color = "#d65a63"
+    svg = _device_status_svg(color)
     pixmap = QPixmap(24, 24)
     pixmap.fill(Qt.GlobalColor.transparent)
     renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
@@ -192,6 +190,7 @@ def device_status_icon(connected: bool) -> QIcon:
 def transport_icon(theme_mode: str, kind: str) -> QIcon:
     palette = {
         "play": QColor("#47a861"),
+        "hold": QColor("#4f88ff"),
         "record": QColor("#d84d4d"),
         "pause": QColor("#e8d85f"),
         "stop": QColor("#d84d4d"),
@@ -202,6 +201,7 @@ def transport_icon(theme_mode: str, kind: str) -> QIcon:
     }
     icon_map = {
         "play": TablerQIcon.player_play,
+        "hold": getattr(TablerQIcon, "clock_stop", TablerQIcon.clock),
         "record": TablerQIcon.player_record,
         "pause": TablerQIcon.player_pause,
         "stop": TablerQIcon.player_stop,

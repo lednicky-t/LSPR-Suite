@@ -48,6 +48,16 @@ python -m pip install -r requirements.txt
 After that, you can launch the installed apps with `lspr-suite`,
 `lspr-acquisition`, or `lspri-evaluation`.
 
+If you use the AMF M-Switch hardware, install the optional vendor package in
+the same virtual environment:
+
+```powershell
+python -m pip install AMFTools
+```
+
+Without `AMFTools`, the M-Switch controls in the acquisition app will stay
+disabled and discovery will report the backend as unavailable.
+
 If you want to run the launcher directly from the repo instead of the installed
 console script, use:
 
