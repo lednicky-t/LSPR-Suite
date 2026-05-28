@@ -170,6 +170,26 @@ class ExperimentControlRuntimeTransitionTests(unittest.TestCase):
         self.assertTrue(controller.stop_plan_button.visible)
         self.assertTrue(controller.stop_plan_button.enabled)
 
+    def test_timeline_row_prefers_runtime_cursor_while_running(self) -> None:
+        controller = ExperimentControlWindow.__new__(ExperimentControlWindow)
+        controller._plan_running = True
+        controller._plan_holding = False
+        controller._plan_paused = False
+        controller._plan_active_row = 3
+        controller._selected_experiment_control_row = lambda: 1
+
+        self.assertEqual(ExperimentControlWindow._experiment_control_timeline_row(controller), 3)
+
+    def test_timeline_row_falls_back_to_editor_cursor_when_stopped(self) -> None:
+        controller = ExperimentControlWindow.__new__(ExperimentControlWindow)
+        controller._plan_running = False
+        controller._plan_holding = False
+        controller._plan_paused = False
+        controller._plan_active_row = 3
+        controller._selected_experiment_control_row = lambda: 1
+
+        self.assertEqual(ExperimentControlWindow._experiment_control_timeline_row(controller), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

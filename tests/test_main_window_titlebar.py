@@ -15,7 +15,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_app.gui.acquisition_controller import _experiment_runtime_label, _experiment_runtime_state
-from lspr_app.gui.main_window_titlebar import device_status_state
+from lspr_app.gui.main_window_titlebar import device_status_state, device_status_tooltip
 
 
 class MainWindowTitleBarTests(unittest.TestCase):
@@ -23,6 +23,17 @@ class MainWindowTitleBarTests(unittest.TestCase):
         self.assertEqual(device_status_state(True, False), "connected")
         self.assertEqual(device_status_state(False, True), "discovered")
         self.assertEqual(device_status_state(False, False), "disconnected")
+
+    def test_device_status_tooltip_includes_state_and_port(self) -> None:
+        self.assertEqual(
+            device_status_tooltip("Pump", "connected", port_name="COM8"),
+            "Pump: connected on COM8.",
+        )
+        self.assertEqual(
+            device_status_tooltip("Valve", "discovered", port_name="COM9", detail="manual assignment"),
+            "Valve: discovered on COM9. (manual assignment)",
+        )
+        self.assertEqual(device_status_tooltip("M-Switch", "disconnected"), "M-Switch: disconnected.")
 
     def test_experiment_runtime_state_prefers_experiment_control_states(self) -> None:
         window = SimpleNamespace(

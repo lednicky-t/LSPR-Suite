@@ -175,6 +175,8 @@ def device_status_icon(status: bool | str) -> QIcon:
         color = "#f2c94c"
     else:
         color = "#d65a63"
+    if normalized in {"disconnected", "offline", "false", "0", "no"}:
+        return tint_tabler_icon(tabler_icon("plug_connected", "plug"), QColor(color))
     svg = _device_status_svg(color)
     pixmap = QPixmap(24, 24)
     pixmap.fill(Qt.GlobalColor.transparent)
