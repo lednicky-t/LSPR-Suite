@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -58,6 +59,22 @@ class ClickableLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
+def _settings_bool(settings: QSettings, key: str, default: bool = False) -> bool:
+    raw = settings.value(key, None)
+    if raw is None:
+        return bool(default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return bool(default)
+
+
 CARD_THEMES = [
     CardTheme("#4C8BF5", "#183563"),
     CardTheme("#3AAFA9", "#163B3B"),
@@ -68,6 +85,8 @@ CARD_THEMES = [
 AUTO_LAUNCH_DELAY_MS = 3000
 SETTINGS_LAST_TARGET_KEY = "lastTargetKey"
 SETTINGS_LAUNCH_PROFILE_KEY = "launchProfileKey"
+SETTINGS_QUIET_DIAGNOSTICS_KEY = "quietDiagnosticsEnabled"
+SETTINGS_SUPPRESS_DIAGNOSTIC_INFO_LOGS_KEY = "suppressDiagnosticInfoLogsEnabled"
 SETTINGS_ORGANIZATION = "LSPR Suite"
 SETTINGS_APPLICATION = "Suite Launcher"
 _LOG_LEVEL_RE = re.compile(r"^(?P<level>[A-Z]+):(?P<logger>[^:]+):")
@@ -84,6 +103,10 @@ class LaunchCard(QFrame):
         profile_cycle_callback: Callable[[], None] | None = None,
         profile_text_callback: Callable[[], str] | None = None,
         profile_tooltip_callback: Callable[[], str] | None = None,
+        diagnostics_enabled_callback: Callable[[], bool] | None = None,
+        diagnostics_toggle_callback: Callable[[], None] | None = None,
+        diagnostics_info_logs_enabled_callback: Callable[[], bool] | None = None,
+        diagnostics_info_logs_toggle_callback: Callable[[], None] | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -94,6 +117,10 @@ class LaunchCard(QFrame):
         self.profile_cycle_callback = profile_cycle_callback
         self.profile_text_callback = profile_text_callback
         self.profile_tooltip_callback = profile_tooltip_callback
+        self.diagnostics_enabled_callback = diagnostics_enabled_callback
+        self.diagnostics_toggle_callback = diagnostics_toggle_callback
+        self.diagnostics_info_logs_enabled_callback = diagnostics_info_logs_enabled_callback
+        self.diagnostics_info_logs_toggle_callback = diagnostics_info_logs_toggle_callback
         self._launch_button_base_text = "Launch"
         self._launch_pending = False
         self._launch_pending_seconds = 0
@@ -149,6 +176,9 @@ class LaunchCard(QFrame):
         status_row.addStretch(1)
 
         self.mode_label = None
+        self.diagnostics_button = None
+        self.diagnostics_info_logs_button = None
+        self.launch_flags_label = None
         if self.target.key == "slspr_acq":
             self.mode_label = ClickableLabel(clicked_callback=self._cycle_launch_profile)
             self.mode_label.setObjectName("ModeInlineLabel")
@@ -156,7 +186,26 @@ class LaunchCard(QFrame):
             self.mode_label.setCursor(Qt.CursorShape.PointingHandCursor)
             self.mode_label.setToolTip("Click to cycle the singleLSPR acquisition launch mode.")
             status_row.addWidget(self.mode_label, 0, Qt.AlignmentFlag.AlignRight)
+            self.diagnostics_button = QPushButton()
+            self.diagnostics_button.setObjectName("DiagnosticsInlineButton")
+            self.diagnostics_button.setCheckable(True)
+            self.diagnostics_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.diagnostics_button.toggled.connect(self._toggle_diagnostics)
+            status_row.addWidget(self.diagnostics_button, 0, Qt.AlignmentFlag.AlignRight)
+            self.diagnostics_info_logs_button = QPushButton()
+            self.diagnostics_info_logs_button.setObjectName("DiagnosticsInlineButton")
+            self.diagnostics_info_logs_button.setCheckable(True)
+            self.diagnostics_info_logs_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.diagnostics_info_logs_button.toggled.connect(self._toggle_diagnostics_info_logs)
+            status_row.addWidget(self.diagnostics_info_logs_button, 0, Qt.AlignmentFlag.AlignRight)
+            self.launch_flags_label = QLabel()
+            self.launch_flags_label.setObjectName("LaunchFlagsInlineLabel")
+            self.launch_flags_label.setToolTip("Effective launch flags that will be passed to singleLSPR acquisition.")
+            status_row.addWidget(self.launch_flags_label, 0, Qt.AlignmentFlag.AlignRight)
             self._update_mode_label()
+            self._update_diagnostics_button()
+            self._update_diagnostics_info_logs_button()
+            self._update_launch_flags_label()
 
         status_row_widget = QWidget()
         status_row_widget.setLayout(status_row)
@@ -215,6 +264,32 @@ class LaunchCard(QFrame):
                 font-size: 9px;
                 font-weight: 700;
             }}
+            QLabel#LaunchFlagsInlineLabel {{
+                background: transparent;
+                border: none;
+                padding: 0px 0px 0px 4px;
+                color: #8fb3d9;
+                font-size: 8px;
+                font-weight: 600;
+            }}
+            QPushButton#DiagnosticsInlineButton {{
+                background-color: transparent;
+                color: #d9e8ff;
+                border: 1px solid #5f7088;
+                border-radius: 10px;
+                padding: 2px 8px;
+                font-size: 9px;
+                font-weight: 700;
+            }}
+            QPushButton#DiagnosticsInlineButton:checked {{
+                background-color: #1f4d37;
+                border-color: #2f8f5f;
+                color: #d8ffe9;
+            }}
+            QPushButton#DiagnosticsInlineButton:hover:!disabled {{
+                border-color: #8ca3bd;
+                background-color: rgba(255, 255, 255, 0.04);
+            }}
             QPushButton#LaunchButton {{
                 background-color: {theme.accent};
                 color: white;
@@ -260,8 +335,66 @@ class LaunchCard(QFrame):
         if self.profile_cycle_callback is not None:
             self.profile_cycle_callback()
 
+    def _toggle_diagnostics(self, *_args) -> None:
+        if self.diagnostics_toggle_callback is not None:
+            self.diagnostics_toggle_callback()
+
+    def _toggle_diagnostics_info_logs(self, *_args) -> None:
+        if self.diagnostics_info_logs_toggle_callback is not None:
+            self.diagnostics_info_logs_toggle_callback()
+
     def _update_profile_chip(self) -> None:
         self._update_mode_label()
+        self._update_launch_flags_label()
+
+    def _update_diagnostics_button(self) -> None:
+        if self.target.key != "slspr_acq" or self.diagnostics_button is None or self.diagnostics_enabled_callback is None:
+            return
+        enabled = bool(self.diagnostics_enabled_callback())
+        self.diagnostics_button.blockSignals(True)
+        try:
+            self.diagnostics_button.setChecked(enabled)
+            self.diagnostics_button.setText(f"Quiet logs: {'On' if enabled else 'Off'}")
+            self.diagnostics_button.setToolTip(
+                "Toggle the quiet diagnostics launch mode for singleLSPR acquisition.\n"
+                "On: suppress GUI terminal log forwarding and keep only minimal session stats.\n"
+                "Off: launch with the full diagnostic UI log stream."
+            )
+        finally:
+            self.diagnostics_button.blockSignals(False)
+
+    def _update_diagnostics_info_logs_button(self) -> None:
+        if (
+            self.target.key != "slspr_acq"
+            or self.diagnostics_info_logs_button is None
+            or self.diagnostics_info_logs_enabled_callback is None
+        ):
+            return
+        suppressed = bool(self.diagnostics_info_logs_enabled_callback())
+        self.diagnostics_info_logs_button.blockSignals(True)
+        try:
+            self.diagnostics_info_logs_button.setChecked(suppressed)
+            self.diagnostics_info_logs_button.setText(f"File info: {'Off' if suppressed else 'On'}")
+            self.diagnostics_info_logs_button.setToolTip(
+                "Toggle file-side info diagnostics for singleLSPR acquisition.\n"
+                "On: keep INFO-level logs in the startup/session log file.\n"
+                "Off: suppress INFO-level diagnostics in the file log and keep warnings/errors."
+            )
+        finally:
+            self.diagnostics_info_logs_button.blockSignals(False)
+
+    def _update_launch_flags_label(self) -> None:
+        if self.target.key != "slspr_acq" or self.launch_flags_label is None:
+            return
+        quiet_enabled = bool(self.diagnostics_enabled_callback()) if self.diagnostics_enabled_callback is not None else False
+        info_logs_suppressed = (
+            bool(self.diagnostics_info_logs_enabled_callback())
+            if self.diagnostics_info_logs_enabled_callback is not None
+            else False
+        )
+        self.launch_flags_label.setText(
+            f"Flags: quiet={'on' if quiet_enabled else 'off'} | file={'off' if info_logs_suppressed else 'on'}"
+        )
 
     def _update_mode_label(self) -> None:
         if self.target.key != "slspr_acq" or self.mode_label is None or self.profile_text_callback is None:
@@ -328,6 +461,12 @@ class MainWindow(QMainWindow):
         self.settings = QSettings(SETTINGS_ORGANIZATION, SETTINGS_APPLICATION)
         self._countdown_remaining = 0
         self._auto_launch_target: AppTarget | None = None
+        self._quiet_diagnostics_enabled = _settings_bool(self.settings, SETTINGS_QUIET_DIAGNOSTICS_KEY, False)
+        self._suppress_diagnostic_info_logs_enabled = _settings_bool(
+            self.settings,
+            SETTINGS_SUPPRESS_DIAGNOSTIC_INFO_LOGS_KEY,
+            False,
+        )
         self._countdown_timer = QTimer(self)
         self._countdown_timer.setInterval(1000)
         self._countdown_timer.timeout.connect(self._tick_auto_launch_countdown)
@@ -374,6 +513,10 @@ class MainWindow(QMainWindow):
                 self._cycle_launch_profile if target.key == "slspr_acq" else None,
                 self._launch_profile_chip_text if target.key == "slspr_acq" else None,
                 self._launch_profile_chip_tooltip if target.key == "slspr_acq" else None,
+                self._is_quiet_diagnostics_enabled if target.key == "slspr_acq" else None,
+                self._toggle_quiet_diagnostics if target.key == "slspr_acq" else None,
+                self._is_suppress_diagnostic_info_logs_enabled if target.key == "slspr_acq" else None,
+                self._toggle_suppress_diagnostic_info_logs if target.key == "slspr_acq" else None,
             )
             self.cards[target.key] = card
             grid.addWidget(card, index // 2, index % 2)
@@ -495,6 +638,30 @@ class MainWindow(QMainWindow):
         card = self.cards.get("slspr_acq")
         if card is not None:
             card._update_profile_chip()
+            card._update_diagnostics_button()
+            card._update_diagnostics_info_logs_button()
+            card._update_launch_flags_label()
+
+    def _is_quiet_diagnostics_enabled(self) -> bool:
+        return self._quiet_diagnostics_enabled
+
+    def _toggle_quiet_diagnostics(self) -> None:
+        self._quiet_diagnostics_enabled = not self._quiet_diagnostics_enabled
+        self.settings.setValue(SETTINGS_QUIET_DIAGNOSTICS_KEY, 1 if self._quiet_diagnostics_enabled else 0)
+        self.settings.sync()
+        self._refresh_launch_profile_cards()
+
+    def _is_suppress_diagnostic_info_logs_enabled(self) -> bool:
+        return self._suppress_diagnostic_info_logs_enabled
+
+    def _toggle_suppress_diagnostic_info_logs(self) -> None:
+        self._suppress_diagnostic_info_logs_enabled = not self._suppress_diagnostic_info_logs_enabled
+        self.settings.setValue(
+            SETTINGS_SUPPRESS_DIAGNOSTIC_INFO_LOGS_KEY,
+            1 if self._suppress_diagnostic_info_logs_enabled else 0,
+        )
+        self.settings.sync()
+        self._refresh_launch_profile_cards()
 
     def _mark_started(self, target: AppTarget) -> None:
         card = self.cards.get(target.key)
@@ -539,7 +706,19 @@ class MainWindow(QMainWindow):
                 return
             extra_env = None
             if target.key == "slspr_acq":
-                extra_env = {LAUNCH_PROFILE_ENV_VAR: self._current_launch_profile_key()}
+                extra_env = {
+                    LAUNCH_PROFILE_ENV_VAR: self._current_launch_profile_key(),
+                    "LSPR_QUIET_DIAGNOSTICS": "1" if self._quiet_diagnostics_enabled else "0",
+                    "LSPR_SUPPRESS_DIAGNOSTIC_INFO_LOGS": "1"
+                    if self._suppress_diagnostic_info_logs_enabled
+                    else "0",
+                }
+                sys.stdout.write(
+                    f"[suite_launcher] launching {target.title} | "
+                    f"quiet={'on' if self._quiet_diagnostics_enabled else 'off'} | "
+                    f"file_info={'off' if self._suppress_diagnostic_info_logs_enabled else 'on'}\n"
+                )
+                sys.stdout.flush()
             command, cwd, env = target.build_command(extra_env=extra_env)
             process = subprocess.Popen(
                 command,

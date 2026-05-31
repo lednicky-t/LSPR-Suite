@@ -26,4 +26,10 @@ The launcher uses a target registry with:
 - optional legacy fallback paths
 - a launch command
 
+The singleLSPR acquisition card also carries visible launch-mode controls:
+
+- a launch-profile selector for `Full`, `Simulation`, or `Control editor`
+- a `Quiet logs` toggle that passes diagnostics mode to the acquisition app
+- a `File info` toggle that suppresses INFO-level diagnostics in the acquisition app log file
+
 This makes it possible to migrate each app into the suite without rewriting the launcher UI.

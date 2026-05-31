@@ -22,6 +22,17 @@ acquisition card itself as a clickable inline label. It cycles through:
 - `Simulation` skips startup device lookup and starts the acquisition UI in simulation mode.
 - `Control editor` opens the experiment-control editor without the runtime transport controls.
 
+The same acquisition card also has a visible `Quiet logs` toggle. When it is
+on, the launcher starts singleLSPR acquisition with quiet diagnostics enabled:
+
+- the GUI terminal log bridge stays off
+- only warning-and-above output is kept in the launcher window
+- the saved session statistics are reduced to the minimal stability signals
+
+There is also a separate `File info` toggle for a stricter A/B test. When it is
+off, INFO-level diagnostics are filtered out of the acquisition app's startup
+and session log file, while warnings and errors still remain.
+
 The launch button on each card now changes state:
 
 - `Launch` starts the app.

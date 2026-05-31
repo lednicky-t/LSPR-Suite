@@ -196,9 +196,9 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_session_stats_recording_snapshot_ms=3.3,
             _last_processing_ms=2.1,
             _processing_headroom_ratio=117.39,
-            _last_live_result_timer_delay_ms=0.0,
+            _last_live_result_poll_delay_ms=0.0,
             _last_live_acquisition_flush_ms=18.4,
-            _last_live_processed_timer_delay_ms=0.0,
+            _last_live_processed_poll_delay_ms=0.0,
             _last_live_processed_flush_ms=14.6,
             _last_stats_refresh_delay_ms=0.0,
             _last_summary_refresh_ms=6.3,
@@ -243,6 +243,7 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("Acquisition overhead: -0.6 ms", text)
         self.assertIn("Frame spacing: 1559.8 ms", text)
         self.assertIn("Simulation output rate: 1.33 Hz", text)
+        self.assertIn("Recent refresh:", text)
         self.assertIn("UI event loop heartbeat", text)
         self.assertIn("Current delay: 240.0 ms", text)
         self.assertIn("Max delay: 1038.2 ms", text)
@@ -261,6 +262,8 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("Stats refresh timer delay: 0.0 ms", text)
         self.assertIn("Session summary refresh: 6.3 ms", text)
         self.assertIn("Session stats refresh: 4.4 ms", text)
+        self.assertIn("Scheduler dispatch lag:", text)
+        self.assertIn("Scheduler dispatch time:", text)
         self.assertIn("Log buffer timer delay: 0.0 ms", text)
         self.assertIn("Log buffer flush: 3.2 ms", text)
         self.assertIn("Processing queue wait: 0.7 ms", text)
@@ -299,9 +302,9 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_acquisition_state_save_ms=5.6,
             _last_session_stats_recording_delay_ms=2.4,
             _last_session_stats_recording_snapshot_ms=3.3,
-            _last_live_result_timer_delay_ms=0.0,
+            _last_live_result_poll_delay_ms=0.0,
             _last_live_acquisition_flush_ms=18.4,
-            _last_live_processed_timer_delay_ms=0.0,
+            _last_live_processed_poll_delay_ms=0.0,
             _last_live_processed_flush_ms=14.6,
             _last_stats_refresh_delay_ms=0.0,
             _last_summary_refresh_ms=6.3,
@@ -354,9 +357,9 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_acquisition_state_save_ms=5.6,
             _last_session_stats_recording_delay_ms=2.4,
             _last_session_stats_recording_snapshot_ms=3.3,
-            _last_live_result_timer_delay_ms=0.0,
+            _last_live_result_poll_delay_ms=0.0,
             _last_live_acquisition_flush_ms=18.4,
-            _last_live_processed_timer_delay_ms=0.0,
+            _last_live_processed_poll_delay_ms=0.0,
             _last_live_processed_flush_ms=14.6,
             _last_stats_refresh_delay_ms=0.0,
             _last_summary_refresh_ms=6.3,
@@ -400,6 +403,29 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("procq 1", text)
         self.assertIn("ovh -0.6 ms", text)
         self.assertNotIn("%", text)
+
+    def test_build_session_statistics_text_quiet_mode_is_minimal(self) -> None:
+        window = SimpleNamespace(
+            _quiet_diagnostics_mode=True,
+            _suppress_diagnostic_info_logs=False,
+            _actual_plot_refresh_rate_hz=3.9,
+            _plot_refresh_rate_window_s=5.0,
+            _ui_task_scheduler=SimpleNamespace(_last_dispatch_lag_ms=42.0),
+            _last_live_result_poll_delay_ms=11.0,
+            _last_live_processed_poll_delay_ms=9.5,
+            _live_display_dropped_frames=4,
+        )
+
+        text = build_session_statistics_text_for(window)
+
+        self.assertIn("Recent refresh: 3.90 Hz (recent 5.0s avg)", text)
+        self.assertIn("Scheduler dispatch lag: 42.0 ms", text)
+        self.assertIn("Live acquisition timer delay: 11.0 ms", text)
+        self.assertIn("Live processing timer delay: 9.5 ms", text)
+        self.assertIn("Dropped frames: 4", text)
+        self.assertIn("Diagnostics mode: quiet", text)
+        self.assertIn("File info filter: on", text)
+        self.assertIn("GUI callback wall time", text)
 
 
 if __name__ == "__main__":

@@ -31,18 +31,6 @@ class _FakeSpectrometer:
         return SimpleNamespace(marker="capabilities")
 
 
-class _DummyTimer:
-    def __init__(self) -> None:
-        self.started: list[int | None] = []
-        self.stopped = 0
-
-    def start(self, interval: int | None = None) -> None:
-        self.started.append(interval)
-
-    def stop(self) -> None:
-        self.stopped += 1
-
-
 class _DummyContext:
     def Event(self):
         return object()
@@ -153,8 +141,6 @@ class AcquisitionControllerBackendHandoffTests(unittest.TestCase):
             _processing_debug_mode_enabled=False,
             live_rate_spin=SimpleNamespace(value=lambda: 8.0),
             sim_output_rate_spin=SimpleNamespace(value=lambda: 4.0),
-            _live_result_timer=_DummyTimer(),
-            _live_processed_timer=_DummyTimer(),
             _peak_history=[],
             _peak_history_buffers=[],
             _reset_live_accumulator=lambda: None,
