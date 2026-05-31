@@ -10,6 +10,10 @@ This folder documents the acquisition app moved from the standalone `LSPR` repos
 - export or import experiment plans for compatibility
 - provide lightweight live preview only
 
+## Architecture Notes
+
+- [Two-level GUI scheduler](./two_level_gui_scheduler.md) for the live-data and maintenance split
+
 ## Shareable Suite Dependencies
 
 These are strong candidates for shared suite packages:

@@ -72,7 +72,7 @@ class AppTarget:
             return True
         return (root / self.script).exists()
 
-    def build_command(self) -> tuple[list[str], Path, dict[str, str]]:
+    def build_command(self, extra_env: dict[str, str] | None = None) -> tuple[list[str], Path, dict[str, str]]:
         root = self.resolve_root()
         if root is None:
             raise FileNotFoundError(f"No available root found for {self.title}.")
@@ -83,6 +83,8 @@ class AppTarget:
         else:
             command.append(self.script)
         env = _build_environment(root, self.extra_paths)
+        if extra_env:
+            env.update({str(key): str(value) for key, value in extra_env.items()})
         return command, root, env
 
 

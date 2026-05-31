@@ -22,6 +22,7 @@ from lspr_app.domain.processing import (
     processing_debug_mode_enabled,
     set_processing_debug_mode_enabled,
 )
+from lspr_app.gui.processing_helpers import compute_metric_nm, get_analysis_metrics
 
 
 class ProcessingProfileTests(unittest.TestCase):
@@ -78,6 +79,20 @@ class ProcessingProfileTests(unittest.TestCase):
 
         self.assertIsNotNone(processed)
         self.assertIsNone(fit)
+
+    def test_all_nan_processed_spectrum_does_not_crash_peak_metrics(self) -> None:
+        spectrum = Spectrum(
+            wavelengths_nm=np.asarray([610.0, 620.0, 630.0], dtype=np.float64),
+            values=np.asarray([np.nan, np.nan, np.nan], dtype=np.float64),
+            y_label="sample",
+            acquired_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+        settings = ProcessingSettings()
+
+        analysis = get_analysis_metrics(spectrum, None, settings)
+        self.assertTrue(np.isnan(float(analysis["dense_max_nm"])))
+        self.assertTrue(np.isnan(compute_metric_nm("poly_max", spectrum, None, settings)))
+        self.assertTrue(np.isnan(compute_metric_nm("gaussian_center", spectrum, None, settings)))
 
 
 if __name__ == "__main__":

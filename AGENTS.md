@@ -41,6 +41,10 @@ When implementing:
 - Do not remove existing functionality unless explicitly requested.
 - Preserve user data, measurement data, configuration files, and calibration files.
 - Add or update tests for scientific calculations, data transformations, and critical workflows.
+- Keep startup popup behavior fail-closed:
+  - do not call `showPopup()` during widget construction unless an explicit ready flag is set
+  - default popup readiness to `False` and enable it only after the UI has finished startup wiring
+  - prefer explicit startup-state propagation over `getattr(..., True)` fallbacks for combo-box popups
 
 Before finishing:
 - Run relevant tests, type checks, linting, or a small manual verification when available.

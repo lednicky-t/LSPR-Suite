@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 
 import numpy as np
+from PyQt6.QtWidgets import QApplication
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
 
@@ -18,7 +19,8 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_app.domain.models import Spectrum
 from lspr_app.gui.acquisition_controller import append_processed_trace_history
-from lspr_app.gui.main_window_plotting import clear_trace_history_for
+import lspr_app.gui.main_window as main_window_module
+from lspr_app.gui.main_window_plotting import apply_processing_range_to_spectrum_plot_for, clear_trace_history_for
 from lspr_app.gui.processing_helpers import get_analysis_metrics
 from lspr_app.gui.plot_controller import (
     clip_series_to_window,
@@ -29,6 +31,10 @@ from lspr_app.gui.plot_controller import (
     render_sensorgram_heatmap,
     render_trace_series,
     request_trace_autoscale,
+)
+from lspr_app.gui.spectrum_plot_controller import (
+    clear_residual_display,
+    render_residual_display,
 )
 
 
@@ -120,6 +126,51 @@ class _FakeLegend:
 
     def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
         self.visible = bool(value)
+
+
+class _FakeResidualCurve:
+    def __init__(self) -> None:
+        self.data = None
+        self.pen = None
+
+    def setData(self, *args, **kwargs) -> None:  # noqa: N802 - Qt-style API
+        if args and len(args) >= 2:
+            x, y = args[0], args[1]
+        else:
+            x = kwargs.get("x", [])
+            y = kwargs.get("y", [])
+        self.data = (np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64))
+
+    def setPen(self, pen) -> None:  # noqa: N802 - Qt-style API
+        self.pen = pen
+
+
+class _FakeResidualView:
+    def __init__(self) -> None:
+        self.items = []
+        self.visible = None
+
+    def addItem(self, item) -> None:  # noqa: N802 - Qt-style API
+        self.items.append(item)
+
+    def removeItem(self, item) -> None:  # noqa: N802 - Qt-style API
+        if item in self.items:
+            self.items.remove(item)
+
+    def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
+        self.visible = bool(value)
+
+    def enableAutoRange(self, *args, **kwargs) -> None:  # noqa: N802 - Qt-style API
+        return None
+
+    def setYRange(self, *args, **kwargs) -> None:  # noqa: N802 - Qt-style API
+        return None
+
+    def setGeometry(self, *args, **kwargs) -> None:  # noqa: N802 - Qt-style API
+        return None
+
+    def linkedViewChanged(self, *args, **kwargs) -> None:  # noqa: N802 - Qt-style API
+        return None
 
 
 class _FakeTimer:
@@ -411,16 +462,55 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 0.0, places=6)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.1, places=6)
 
-    def test_sensorgram_freeze_blocks_autoscale_timer(self) -> None:
+    def test_residual_renderer_reuses_segment_items(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        _ = app
         window = SimpleNamespace(
-            _plots_frozen=False,
-            _sensorgram_frozen=True,
+            residual_view=_FakeResidualView(),
+            residual_curve=_FakeResidualCurve(),
+            _residual_segment_items=[],
+            _residual_pen_cache={},
+        )
+        x = np.asarray([600.0, 610.0, 620.0, 630.0], dtype=np.float64)
+        y = np.asarray([0.1, 0.2, 0.3, 0.4], dtype=np.float64)
+
+        render_residual_display(window, x, y)
+        first_items = list(window._residual_segment_items)
+        first_count = len(window.residual_view.items)
+
+        render_residual_display(window, x, y)
+
+        self.assertEqual(len(window.residual_view.items), first_count)
+        self.assertEqual(window._residual_segment_items, first_items)
+        self.assertEqual(len(window._residual_segment_items), 3)
+
+    def test_residual_renderer_caps_segment_count_for_dense_series(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        _ = app
+        window = SimpleNamespace(
+            residual_view=_FakeResidualView(),
+            residual_curve=_FakeResidualCurve(),
+            _residual_segment_items=[],
+            _residual_pen_cache={},
+        )
+        x = np.linspace(500.0, 800.0, 1200, dtype=np.float64)
+        y = np.sin(x / 13.0) * 0.5
+
+        render_residual_display(window, x, y)
+
+        self.assertLessEqual(len(window._residual_segment_items), 191)
+        self.assertLessEqual(len(window.residual_view.items), 191)
+
+    def test_spectrum_freeze_does_not_block_sensorgram_autoscale_timer(self) -> None:
+        window = SimpleNamespace(
+            _plots_frozen=True,
+            _sensorgram_frozen=False,
             _trace_autoscale_timer=_FakeTimer(),
         )
 
         request_trace_autoscale(window)
 
-        self.assertFalse(window._trace_autoscale_timer.started)
+        self.assertTrue(window._trace_autoscale_timer.started)
 
     def test_trace_downsampling_prefers_visible_window(self) -> None:
         x = np.arange(0.0, 1000.0, dtype=np.float64)
@@ -455,6 +545,50 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertGreaterEqual(float(sampled_x[0]), 499.0)
         self.assertLessEqual(float(sampled_x[-1]), 651.0)
         self.assertEqual(sampled_x.shape, sampled_y.shape)
+
+    def test_processing_range_autoscale_sets_spectrum_bounds_immediately(self) -> None:
+        class _FakeSpectrumPlot:
+            def __init__(self) -> None:
+                self.x_ranges: list[tuple[float, float]] = []
+
+            def setXRange(self, x_min, x_max, *, padding=0.0) -> None:  # noqa: N802 - Qt-style API
+                self.x_ranges.append((float(x_min), float(x_max)))
+
+        window = SimpleNamespace(
+            _current_processing_settings=lambda: SimpleNamespace(wavelength_min_nm=501.0, wavelength_max_nm=800.0),
+            spectrum_plot=_FakeSpectrumPlot(),
+            _spectrum_render_cache_key=("stale",),
+        )
+
+        apply_processing_range_to_spectrum_plot_for(window)
+
+        self.assertEqual(window.spectrum_plot.x_ranges, [(501.0, 800.0)])
+        self.assertIsNone(window._spectrum_render_cache_key)
+
+    def test_spectrum_autoscale_also_applies_processing_range_immediately(self) -> None:
+        window = SimpleNamespace(
+            spectrum_plot=SimpleNamespace(),
+            _current_processing_settings=lambda: SimpleNamespace(wavelength_min_nm=501.0, wavelength_max_nm=800.0),
+        )
+        calls: list[str] = []
+
+        def _autoscale_stub(_window) -> None:
+            calls.append("autoscale")
+
+        def _apply_stub(_window) -> None:
+            calls.append("apply")
+
+        original_autoscale = main_window_module.autoscale_spectrum_plot_for
+        original_apply = main_window_module.apply_processing_range_to_spectrum_plot_for
+        try:
+            main_window_module.autoscale_spectrum_plot_for = _autoscale_stub  # type: ignore[assignment]
+            main_window_module.apply_processing_range_to_spectrum_plot_for = _apply_stub  # type: ignore[assignment]
+            main_window_module.MainWindow._autoscale_spectrum_plot(window)  # type: ignore[arg-type]
+        finally:
+            main_window_module.autoscale_spectrum_plot_for = original_autoscale  # type: ignore[assignment]
+            main_window_module.apply_processing_range_to_spectrum_plot_for = original_apply  # type: ignore[assignment]
+
+        self.assertEqual(calls, ["autoscale", "apply"])
 
     def test_clip_series_to_window_limits_display_to_fit_region(self) -> None:
         x = np.asarray([400.0, 500.0, 600.0, 700.0, 800.0], dtype=np.float64)

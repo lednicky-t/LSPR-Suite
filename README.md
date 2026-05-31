@@ -15,6 +15,12 @@ The remaining suite-level content stays in this repository:
 - shared docs in `docs/`
 - bootstrap and workspace files in the repo root
 
+The suite launcher also exposes acquisition launch profiles for the singleLSPR app:
+
+- `Full`
+- `Simulation`
+- `Control editor`
+
 `LSPRimaging-Acquisition` is reserved as a separate repo for later work and is
 not started yet.
 

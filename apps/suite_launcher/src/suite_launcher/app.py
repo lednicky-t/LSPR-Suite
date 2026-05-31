@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import threading
@@ -23,6 +24,16 @@ from PyQt6.QtWidgets import (
 )
 
 from lspr_ui import apply_base_app_theme, app_icon, get_active_theme
+from lspr_core import (
+    DEFAULT_LAUNCH_PROFILE,
+    LAUNCH_PROFILE_ENV_VAR,
+    LAUNCH_PROFILE_CONTROL_EDITOR,
+    LAUNCH_PROFILE_FULL,
+    LAUNCH_PROFILE_SIMULATION,
+    launch_profile_spec,
+    launch_profile_specs,
+    normalize_launch_profile,
+)
 
 from .targets import TARGETS, AppTarget
 from .version import APP_NAME, APP_VERSION
@@ -34,6 +45,19 @@ class CardTheme:
     accent_soft: str
 
 
+class ClickableLabel(QLabel):
+    def __init__(self, text: str = "", clicked_callback: Callable[[], None] | None = None, parent=None) -> None:
+        super().__init__(text, parent)
+        self._clicked_callback = clicked_callback
+
+    def mouseReleaseEvent(self, event) -> None:  # pragma: no cover - GUI runtime path
+        if event.button() == Qt.MouseButton.LeftButton and self._clicked_callback is not None:
+            self._clicked_callback()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 CARD_THEMES = [
     CardTheme("#4C8BF5", "#183563"),
     CardTheme("#3AAFA9", "#163B3B"),
@@ -43,8 +67,11 @@ CARD_THEMES = [
 
 AUTO_LAUNCH_DELAY_MS = 3000
 SETTINGS_LAST_TARGET_KEY = "lastTargetKey"
+SETTINGS_LAUNCH_PROFILE_KEY = "launchProfileKey"
 SETTINGS_ORGANIZATION = "LSPR Suite"
 SETTINGS_APPLICATION = "Suite Launcher"
+_LOG_LEVEL_RE = re.compile(r"^(?P<level>[A-Z]+):(?P<logger>[^:]+):")
+_LOG_LEVEL_BRACKET_RE = re.compile(r"^\[(?P<level>[A-Z]+)\]")
 
 
 class LaunchCard(QFrame):
@@ -53,25 +80,43 @@ class LaunchCard(QFrame):
         target: AppTarget,
         theme: CardTheme,
         launch_callback: Callable[[AppTarget], None],
-        kill_callback: Callable[[AppTarget], None],
+        profile_key_callback: Callable[[], str] | None = None,
+        profile_cycle_callback: Callable[[], None] | None = None,
+        profile_text_callback: Callable[[], str] | None = None,
+        profile_tooltip_callback: Callable[[], str] | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.target = target
         self.theme = theme
         self.launch_callback = launch_callback
-        self.kill_callback = kill_callback
+        self.profile_key_callback = profile_key_callback
+        self.profile_cycle_callback = profile_cycle_callback
+        self.profile_text_callback = profile_text_callback
+        self.profile_tooltip_callback = profile_tooltip_callback
         self._launch_button_base_text = "Launch"
-        self._kill_button_base_text = "Kill"
+        self._launch_pending = False
+        self._launch_pending_seconds = 0
+        self._running = False
+        self._launch_profile_text_colors = {
+            LAUNCH_PROFILE_FULL: "#9FD7A6",
+            LAUNCH_PROFILE_SIMULATION: "#F39C12",
+            LAUNCH_PROFILE_CONTROL_EDITOR: "#8E6CFF",
+        }
+        self._launch_profile_text_colors = {
+            LAUNCH_PROFILE_FULL: "#9FD7A6",
+            LAUNCH_PROFILE_SIMULATION: "#F39C12",
+            LAUNCH_PROFILE_CONTROL_EDITOR: "#8E6CFF",
+        }
         self.setObjectName("LaunchCard")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMinimumHeight(180)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.setMinimumHeight(0)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
 
         top_row = QHBoxLayout()
-        top_row.setSpacing(10)
+        top_row.setSpacing(6)
         title = QLabel(target.title)
         title.setObjectName("CardTitle")
         subtitle = QLabel(target.subtitle)
@@ -83,7 +128,7 @@ class LaunchCard(QFrame):
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         header_col = QVBoxLayout()
-        header_col.setSpacing(4)
+        header_col.setSpacing(2)
         header_col.addWidget(title)
         header_col.addWidget(subtitle)
         address = QLabel(target.address)
@@ -94,28 +139,34 @@ class LaunchCard(QFrame):
         top_row.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(top_row)
 
-        note = QLabel(target.note or "")
-        note.setObjectName("CardNote")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-
         self.state_label = QLabel("Status: closed")
         self.state_label.setObjectName("CardState")
         self.state_label.setWordWrap(True)
-        layout.addWidget(self.state_label)
-        layout.addStretch(1)
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(8)
+        status_row.addWidget(self.state_label, 0)
+        status_row.addStretch(1)
+
+        self.mode_label = None
+        if self.target.key == "slspr_acq":
+            self.mode_label = ClickableLabel(clicked_callback=self._cycle_launch_profile)
+            self.mode_label.setObjectName("ModeInlineLabel")
+            self.mode_label.setTextFormat(Qt.TextFormat.RichText)
+            self.mode_label.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.mode_label.setToolTip("Click to cycle the singleLSPR acquisition launch mode.")
+            status_row.addWidget(self.mode_label, 0, Qt.AlignmentFlag.AlignRight)
+            self._update_mode_label()
+
+        status_row_widget = QWidget()
+        status_row_widget.setLayout(status_row)
+        layout.addWidget(status_row_widget)
 
         self.button = QPushButton("Launch")
         self.button.setObjectName("LaunchButton")
         self.button.setEnabled(target.is_available())
         self.button.clicked.connect(self.request_launch)
         layout.addWidget(self.button)
-
-        self.kill_button = QPushButton("Kill")
-        self.kill_button.setObjectName("KillButton")
-        self.kill_button.setEnabled(False)
-        self.kill_button.clicked.connect(self.request_kill)
-        layout.addWidget(self.kill_button)
 
         self.setStyleSheet(
             f"""
@@ -126,45 +177,59 @@ class LaunchCard(QFrame):
             }}
             QLabel#CardTitle {{
                 color: #f5f8ff;
-                font-size: 18px;
+                font-size: 15px;
                 font-weight: 700;
             }}
             QLabel#CardSubtitle {{
                 color: #c6d0df;
-                font-size: 11px;
+                font-size: 9px;
             }}
             QLabel#CardAddress {{
                 color: #92a0b3;
-                font-size: 10px;
+                font-size: 8px;
                 font-family: Consolas, 'Courier New', monospace;
             }}
             QLabel#CardBadge {{
-                min-width: 92px;
-                padding: 6px 10px;
+                min-width: 84px;
+                padding: 5px 9px;
                 border-radius: 999px;
                 background-color: {theme.accent_soft};
                 color: #f4f7ff;
-                font-size: 11px;
+                font-size: 10px;
                 font-weight: 600;
             }}
             QLabel#CardNote {{
                 color: #a6b2c4;
-                font-size: 11px;
+                font-size: 9px;
             }}
             QLabel#CardState {{
                 color: #8fb3d9;
-                font-size: 10px;
+                font-size: 8px;
                 font-weight: 600;
-                padding-top: 2px;
+                padding-top: 0px;
+            }}
+            QLabel#ModeInlineLabel {{
+                background: transparent;
+                border: none;
+                padding: 0px;
+                font-size: 9px;
+                font-weight: 700;
             }}
             QPushButton#LaunchButton {{
                 background-color: {theme.accent};
                 color: white;
                 border: none;
                 border-radius: 12px;
-                padding: 10px 14px;
-                font-size: 12px;
+                padding: 7px 12px;
+                font-size: 10px;
                 font-weight: 700;
+            }}
+            QPushButton#LaunchButton[launchState="pending"] {{
+                background-color: #b08924;
+                color: #fff6cc;
+            }}
+            QPushButton#LaunchButton[launchState="pending"]:hover:!disabled {{
+                background-color: #d39d2e;
             }}
             QPushButton#LaunchButton[autoLaunchPending="true"] {{
                 background-color: #b08924;
@@ -180,67 +245,81 @@ class LaunchCard(QFrame):
             QPushButton#LaunchButton:hover:!disabled {{
                 background-color: #5a9af7;
             }}
-            QPushButton#KillButton {{
-                background-color: #3a4454;
-                color: #d8e0eb;
-                border: none;
-                border-radius: 12px;
-                padding: 10px 14px;
-                font-size: 12px;
-                font-weight: 700;
-            }}
-            QPushButton#KillButton[activeRun="true"] {{
-                background-color: #8a2f2f;
-                color: #ffe0e0;
-            }}
-            QPushButton#KillButton[activeRun="true"]:hover:!disabled {{
-                background-color: #a63a3a;
-            }}
-            QPushButton#KillButton:disabled {{
-                background-color: #2c3440;
-                color: #6f7b89;
-            }}
             """
         )
+        self._refresh_primary_button_state()
+        self._update_mode_label()
 
     def request_launch(self) -> None:
         self.launch_callback(self.target)
 
-    def request_kill(self) -> None:
-        self.kill_callback(self.target)
-
     def mark_started(self) -> None:
         self.set_running(True)
 
-    def set_auto_launch_pending(self, pending: bool, seconds: int | None = None) -> None:
-        self.button.setProperty("autoLaunchPending", bool(pending))
-        if pending:
-            if seconds is None:
-                self.button.setText("Launching soon")
+    def _cycle_launch_profile(self) -> None:
+        if self.profile_cycle_callback is not None:
+            self.profile_cycle_callback()
+
+    def _update_profile_chip(self) -> None:
+        self._update_mode_label()
+
+    def _update_mode_label(self) -> None:
+        if self.target.key != "slspr_acq" or self.mode_label is None or self.profile_text_callback is None:
+            return
+        raw_text = str(self.profile_text_callback() or "").strip() or "Full"
+        profile_key = self.profile_key_callback() if self.profile_key_callback is not None else LAUNCH_PROFILE_FULL
+        profile_key = normalize_launch_profile(profile_key)
+        color = self._launch_profile_text_colors.get(profile_key, "#9FD7A6")
+        self.mode_label.setText(
+            f"Mode: <span style='color:#d9e8ff; font-weight:400;'>&lt;</span> "
+            f"<span style='color:{color}; font-weight:800;'>{raw_text}</span> "
+            f"<span style='color:#d9e8ff; font-weight:400;'>&gt;</span>"
+        )
+        if self.profile_tooltip_callback is not None:
+            self.mode_label.setToolTip(self.profile_tooltip_callback())
+
+    def _refresh_primary_button_state(self) -> None:
+        self.button.blockSignals(True)
+        try:
+            if self._running:
+                self.button.setText("Kill")
+                self.button.setProperty("launchState", "running")
+                self.button.setToolTip(f"Stop {self.target.title}.")
+            elif self._launch_pending:
+                if self._launch_pending_seconds > 0:
+                    self.button.setText(f"Stop launch ({self._launch_pending_seconds}s)")
+                else:
+                    self.button.setText("Stop launch")
+                self.button.setProperty("launchState", "pending")
+                self.button.setToolTip(f"Cancel the pending launch of {self.target.title}.")
             else:
-                self.button.setText(f"Launch in {max(int(seconds), 0)}s")
-            self.button.setToolTip(f"{self.target.title} will open automatically soon.")
-        else:
-            self.button.setText(self._launch_button_base_text)
-            self.button.setToolTip(f"Open {self.target.title}.")
+                self.button.setText(self._launch_button_base_text)
+                self.button.setProperty("launchState", "idle")
+                self.button.setToolTip(f"Open {self.target.title}.")
+        finally:
+            self.button.blockSignals(False)
         self.button.style().unpolish(self.button)
         self.button.style().polish(self.button)
         self.button.update()
 
+    def set_auto_launch_pending(self, pending: bool, seconds: int | None = None) -> None:
+        self._launch_pending = bool(pending)
+        self._launch_pending_seconds = max(int(seconds), 0) if seconds is not None else 0
+        self.button.setProperty("autoLaunchPending", bool(pending))
+        self._refresh_primary_button_state()
+
     def set_running(self, running: bool) -> None:
+        self._running = bool(running)
+        if self._running:
+            self._launch_pending = False
         if running:
             self.state_label.setText("Status: running")
             self.state_label.setStyleSheet("color: #86efac; font-size: 10px; font-weight: 700; padding-top: 2px;")
-            self.kill_button.setProperty("activeRun", True)
-            self.kill_button.setEnabled(True)
         else:
             self.state_label.setText("Status: closed")
             self.state_label.setStyleSheet("color: #8fb3d9; font-size: 10px; font-weight: 600; padding-top: 2px;")
-            self.kill_button.setProperty("activeRun", False)
-            self.kill_button.setEnabled(False)
-        self.kill_button.style().unpolish(self.kill_button)
-        self.kill_button.style().polish(self.kill_button)
-        self.kill_button.update()
+        self._refresh_primary_button_state()
+        self._update_profile_chip()
 
 
 class MainWindow(QMainWindow):
@@ -261,29 +340,20 @@ class MainWindow(QMainWindow):
         self._process_poll_timer.timeout.connect(self._refresh_running_app_statuses)
 
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(1120, 720)
+        self.setMinimumSize(900, 560)
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(28, 28, 28, 28)
-        root_layout.setSpacing(20)
+        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setSpacing(12)
 
         header = QFrame()
         header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(8, 8, 8, 8)
-        header_layout.setSpacing(10)
+        header_layout.setContentsMargins(6, 3, 6, 3)
+        header_layout.setSpacing(2)
         title = QLabel("LSPR Suite")
         title.setObjectName("MainTitle")
-        subtitle = QLabel("Choose the acquisition or evaluation workspace you want to open.")
-        subtitle.setObjectName("MainSubtitle")
-        subtitle.setWordWrap(True)
         header_layout.addWidget(title)
-        header_layout.addWidget(subtitle)
-
-        self.hub_label = QLabel("Hub mode: the launcher stays open so you can start multiple apps.")
-        self.hub_label.setObjectName("HubModeText")
-        self.hub_label.setWordWrap(True)
-        header_layout.addWidget(self.hub_label)
 
         self.countdown_label = QLabel()
         self.countdown_label.setObjectName("CountdownText")
@@ -291,23 +361,23 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.countdown_label)
         root_layout.addWidget(header)
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(18)
-        grid.setVerticalSpacing(18)
         self.cards: dict[str, LaunchCard] = {}
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
         for index, target in enumerate(TARGETS):
-            card = LaunchCard(target, CARD_THEMES[index % len(CARD_THEMES)], self.handle_launch_request, self.handle_kill_request)
+            card = LaunchCard(
+                target,
+                CARD_THEMES[index % len(CARD_THEMES)],
+                self.handle_launch_request,
+                self._current_launch_profile_key if target.key == "slspr_acq" else None,
+                self._cycle_launch_profile if target.key == "slspr_acq" else None,
+                self._launch_profile_chip_text if target.key == "slspr_acq" else None,
+                self._launch_profile_chip_tooltip if target.key == "slspr_acq" else None,
+            )
             self.cards[target.key] = card
             grid.addWidget(card, index // 2, index % 2)
-        root_layout.addLayout(grid)
-
-        footer = QLabel(
-            "Shared logic lives in `packages/lspr_core` and `packages/lspr_io`. "
-            "This launcher prefers the suite copies when they exist."
-        )
-        footer.setObjectName("FooterText")
-        footer.setWordWrap(True)
-        root_layout.addWidget(footer)
+        root_layout.addLayout(grid, 1)
 
         self.setCentralWidget(root)
         self.setStyleSheet(
@@ -318,29 +388,14 @@ class MainWindow(QMainWindow):
             }
             QLabel#MainTitle {
                 color: #ffffff;
-                font-size: 34px;
+                font-size: 22px;
                 font-weight: 800;
-                letter-spacing: 1px;
-            }
-            QLabel#MainSubtitle {
-                color: #c0ccdb;
-                font-size: 13px;
-            }
-            QLabel#HubModeText {
-                color: #d9e8ff;
-                font-size: 12px;
-                font-weight: 600;
-                padding-top: 2px;
+                letter-spacing: 0.3px;
             }
             QLabel#CountdownText {
                 color: #a6d4ff;
-                font-size: 12px;
-                padding-top: 4px;
-            }
-            QLabel#FooterText {
-                color: #8fa0b8;
-                font-size: 11px;
-                padding-top: 2px;
+                font-size: 10px;
+                padding-top: 1px;
             }
             """
         )
@@ -409,19 +464,57 @@ class MainWindow(QMainWindow):
         self.settings.setValue(SETTINGS_LAST_TARGET_KEY, target.key)
         self.settings.sync()
 
+    def _current_launch_profile_key(self) -> str:
+        key = self.settings.value(SETTINGS_LAUNCH_PROFILE_KEY, DEFAULT_LAUNCH_PROFILE, type=str) or DEFAULT_LAUNCH_PROFILE
+        return normalize_launch_profile(key)
+
+    def _current_launch_profile_spec(self):
+        return launch_profile_spec(self._current_launch_profile_key())
+
+    def _launch_profile_chip_text(self) -> str:
+        return self._current_launch_profile_spec().label
+
+    def _launch_profile_chip_tooltip(self) -> str:
+        spec = self._current_launch_profile_spec()
+        return f"{spec.description} Click to cycle to the next launch mode."
+
+    def _cycle_launch_profile(self) -> None:
+        specs = launch_profile_specs()
+        keys = [spec.key for spec in specs]
+        current_key = self._current_launch_profile_key()
+        try:
+            index = keys.index(current_key)
+        except ValueError:
+            index = 0
+        next_key = keys[(index + 1) % len(keys)]
+        self.settings.setValue(SETTINGS_LAUNCH_PROFILE_KEY, next_key)
+        self.settings.sync()
+        self._refresh_launch_profile_cards()
+
+    def _refresh_launch_profile_cards(self) -> None:
+        card = self.cards.get("slspr_acq")
+        if card is not None:
+            card._update_profile_chip()
+
     def _mark_started(self, target: AppTarget) -> None:
         card = self.cards.get(target.key)
         if card is not None:
             card.set_running(True)
 
     def handle_launch_request(self, target: AppTarget) -> None:
+        pending_key = getattr(self._auto_launch_target, "key", None)
+        if pending_key == target.key and self._countdown_remaining > 0:
+            self._clear_auto_launch()
+            return
+
+        processes = self._processes_by_key.get(target.key, [])
+        if any(process.poll() is None for process in processes):
+            self._kill_target(target)
+            return
+
         self._clear_auto_launch()
         self._remember_target(target)
         self._launch_target(target)
-
-    def handle_kill_request(self, target: AppTarget) -> None:
-        self._clear_auto_launch()
-        self._kill_target(target)
 
     def _launch_pending_target(self) -> None:
         target = self._auto_launch_target
@@ -444,7 +537,10 @@ class MainWindow(QMainWindow):
                     f"{target.title} was already launched from this hub.",
                 )
                 return
-            command, cwd, env = target.build_command()
+            extra_env = None
+            if target.key == "slspr_acq":
+                extra_env = {LAUNCH_PROFILE_ENV_VAR: self._current_launch_profile_key()}
+            command, cwd, env = target.build_command(extra_env=extra_env)
             process = subprocess.Popen(
                 command,
                 cwd=str(cwd),
@@ -492,6 +588,9 @@ class MainWindow(QMainWindow):
             )
             return
         QMessageBox.information(self, "Stopped", f"Stopped running instance(s) of {target.title}.")
+        card = self.cards.get(target.key)
+        if card is not None:
+            card.set_running(False)
 
     def _refresh_running_app_statuses(self) -> None:
         for target in TARGETS:
@@ -510,13 +609,26 @@ class MainWindow(QMainWindow):
         if stream is None:
             return
 
+        def _should_forward_line(line: str) -> bool:
+            text = line.strip()
+            if not text:
+                return False
+            match = _LOG_LEVEL_RE.match(text)
+            if match is not None:
+                return match.group("level") in {"WARNING", "ERROR", "CRITICAL"}
+            match = _LOG_LEVEL_BRACKET_RE.match(text)
+            if match is not None:
+                return match.group("level") in {"WARNING", "ERROR", "CRITICAL"}
+            return False
+
         def _pump_output() -> None:
             try:
                 for line in iter(stream.readline, ""):
                     if not line:
                         break
-                    sys.stdout.write(f"[{title}] {line}")
-                    sys.stdout.flush()
+                    if _should_forward_line(line):
+                        sys.stdout.write(f"[{title}] {line}")
+                        sys.stdout.flush()
             finally:
                 try:
                     stream.close()
