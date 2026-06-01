@@ -135,6 +135,12 @@ class MainWindowTitleBarTests(unittest.TestCase):
         def _set_log_buffering_enabled(self, enabled: bool) -> None:
             self.called_set_log_buffering_enabled = bool(enabled)
 
+        def _set_sensorgram_heatmap_enabled(self, enabled: bool) -> None:
+            self.called_set_sensorgram_heatmap_enabled = bool(enabled)
+
+        def _set_metric_plot_enabled(self, enabled: bool) -> None:
+            self.called_set_metric_plot_enabled = bool(enabled)
+
         def _show_about_dialog(self) -> None:
             pass
 
@@ -279,6 +285,12 @@ class MainWindowTitleBarTests(unittest.TestCase):
         action = next(item for item in performance_menu.actions() if item.text() == "Log buffering")
         action.trigger()
         self.assertIsNotNone(window.called_set_log_buffering_enabled)
+        action = next(item for item in performance_menu.actions() if item.text() == "Sensorgram heatmap")
+        action.trigger()
+        self.assertIsNotNone(getattr(window, "called_set_sensorgram_heatmap_enabled", None))
+        action = next(item for item in performance_menu.actions() if item.text() == "Metric plot")
+        action.trigger()
+        self.assertIsNotNone(getattr(window, "called_set_metric_plot_enabled", None))
 
     def test_disconnect_all_devices_action_is_disabled_while_hardware_init_runs(self) -> None:
         window = SimpleNamespace(

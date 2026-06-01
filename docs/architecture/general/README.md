@@ -6,3 +6,4 @@ Use this folder for decisions that apply to the whole ecosystem:
 - schema rules
 - shared package ownership
 - compatibility policy
+- plot view caching and display-layer performance

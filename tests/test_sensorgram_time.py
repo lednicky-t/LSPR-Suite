@@ -106,6 +106,7 @@ class _FakeImageItem:
         self.visible = None
         self.image = None
         self.rect = None
+        self.levels = None
 
     def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
         self.visible = bool(value)
@@ -118,6 +119,29 @@ class _FakeImageItem:
 
     def setLookupTable(self, table) -> None:  # noqa: N802 - Qt-style API
         self.lookup_table = np.asarray(table)
+
+    def setLevels(self, levels) -> None:  # noqa: N802 - Qt-style API
+        self.levels = tuple(float(value) for value in levels)
+
+
+class _FakeTextItem:
+    def __init__(self) -> None:
+        self.visible = None
+        self.text = ""
+        self.html = ""
+        self.pos = None
+
+    def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
+        self.visible = bool(value)
+
+    def setText(self, value) -> None:  # noqa: N802 - Qt-style API
+        self.text = str(value)
+
+    def setHtml(self, value) -> None:  # noqa: N802 - Qt-style API
+        self.html = str(value)
+
+    def setPos(self, x, y) -> None:  # noqa: N802 - Qt-style API
+        self.pos = (float(x), float(y))
 
 
 class _FakeLegend:
@@ -377,6 +401,69 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertAlmostEqual(window.trace_plot.y_ranges[-1][0], 610.0, places=6)
         self.assertAlmostEqual(window.trace_plot.y_ranges[-1][1], 620.0, places=6)
         self.assertLessEqual(window.trace_heatmap_image.image.shape[1], 2)
+
+    def test_heatmap_renderer_disabled_shows_placeholder(self) -> None:
+        wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)
+        history = [
+            (0.0, np.asarray([0.1, 0.2], dtype=np.float64)),
+            (5.0, np.asarray([0.3, 0.4], dtype=np.float64)),
+        ]
+        window = SimpleNamespace(
+            trace_heatmap_image=_FakeImageItem(),
+            trace_heatmap_notice_item=_FakeTextItem(),
+            trace_plot=_FakeTracePlot(view_range=[[0.0, 10.0], [600.0, 630.0]]),
+            trace_curves={"smoothed_max": _FakeCurve()},
+            trace_legend=_FakeLegend(),
+            _sensorgram_heatmap_wavelengths=wavelengths,
+            _visible_trace_x=None,
+            _visible_trace_y=None,
+            _visible_trace_mode=None,
+            _sensorgram_view_mode="absolute",
+            _trace_view_locked=False,
+            _trace_display_window_s=5.0,
+            _sensorgram_heatmap_enabled=False,
+        )
+
+        render_sensorgram_heatmap(window, history, clock_mode=False)
+
+        self.assertFalse(window.trace_heatmap_image.visible)
+        self.assertTrue(window.trace_heatmap_notice_item.visible)
+        self.assertIn("Heatmap unavailable", window.trace_heatmap_notice_item.html or window.trace_heatmap_notice_item.text)
+        self.assertFalse(window.trace_curves["smoothed_max"].visible)
+        self.assertFalse(window.trace_legend.visible)
+
+    def test_metric_renderer_disabled_shows_placeholder(self) -> None:
+        window = SimpleNamespace(
+            trace_heatmap_image=_FakeImageItem(),
+            trace_heatmap_notice_item=_FakeTextItem(),
+            trace_plot=_FakeTracePlot(),
+            trace_curves={"smoothed_max": _FakeCurve()},
+            trace_legend=_FakeLegend(),
+            trace_time_axis=_FakeTraceAxis("elapsed"),
+            _measurement_active=False,
+            _sensorgram_content_mode="metric",
+            _metric_plot_enabled=False,
+            _sensorgram_heatmap_history=[],
+            _sensorgram_heatmap_wavelengths=None,
+            _visible_trace_x=None,
+            _visible_trace_y=None,
+            _visible_trace_mode=None,
+            _sensorgram_view_mode="absolute",
+            _trace_view_locked=False,
+            _sensorgram_downsampling_enabled=True,
+            _trace_display_window_s=5.0,
+            _plots_frozen=False,
+            _active_trace_series=lambda: {"smoothed_max": (np.asarray([0.0, 1.0]), np.asarray([1.0, 2.0]))},
+        )
+
+        from lspr_app.gui.plot_controller import refresh_metric_plot
+
+        refresh_metric_plot(window, "Peak position (nm)")
+
+        self.assertFalse(window.trace_heatmap_image.visible)
+        self.assertTrue(window.trace_heatmap_notice_item.visible)
+        self.assertIn("Metric plot unavailable", window.trace_heatmap_notice_item.html or window.trace_heatmap_notice_item.text)
+        self.assertFalse(window.trace_curves["smoothed_max"].visible)
 
     def test_trace_renderer_absolute_ignores_stale_viewport(self) -> None:
         window = SimpleNamespace(

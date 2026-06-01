@@ -86,3 +86,4 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
         self.assertIn("File info filter: on", "\n".join(lines))
         self.assertIn("Scheduler dispatch lag: 22.0 ms", "\n".join(lines))
         self.assertIn("Live processed queue: 6 | max: 7", "\n".join(lines))
+        self.assertIn("Runtime drift probe", "\n".join(lines))
