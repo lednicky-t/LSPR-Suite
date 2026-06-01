@@ -120,6 +120,23 @@ class PlotViewCacheTests(unittest.TestCase):
         self.assertTrue(np.all(first_x == second_x[: len(first_x)]))
         self.assertTrue(np.all(first_y == second_y[: len(first_y)]))
 
+    def test_absolute_metric_sampling_preserves_extrema(self) -> None:
+        x = np.arange(0.0, 120.0, dtype=np.float64)
+        y = np.zeros_like(x)
+        y[17] = 10.0
+        y[88] = -5.0
+        sampled_x, sampled_y = sample_absolute_metric_series_for_view(
+            x,
+            y,
+            view_width_px=4.0,
+            minimum_points=2,
+            default_points=8,
+        )
+
+        self.assertIn(10.0, sampled_y.tolist())
+        self.assertIn(-5.0, sampled_y.tolist())
+        self.assertGreaterEqual(len(sampled_x), 4)
+
     def test_absolute_heatmap_sampling_is_tail_stable(self) -> None:
         times = np.arange(0.0, 30.0, dtype=np.float64)
         matrix = np.stack([np.array([row, row + 1.0], dtype=np.float64) for row in times], axis=0)

@@ -15,11 +15,14 @@ The `PlotViewCache` layer exists to bridge that gap:
 - metric traces and sensorgram heatmaps use the same cache model
 - cache entries are bounded and invalidated by source revision, so the cache does not grow without limit
 - display resolutions are quantized into level-of-detail buckets so nearby viewport sizes reuse the same view cache
+- absolute metric display uses a min/max envelope sampler so peaks and dips are preserved while the visible point count stays screen-sized
+- the absolute metric cache keeps explicit source length and stride metadata so tail updates can reuse earlier display work
 
 ## What It Caches
 
 - active trace-series extraction from the retained metric histories
 - metric plot view slices for the current viewport
+- absolute metric view slices using a min/max envelope display cache
 - heatmap row matrices reconstructed from the retained sensorgram history
 - heatmap view slices for the current viewport
 
