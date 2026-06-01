@@ -43,7 +43,8 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
             _last_session_stats_recording_snapshot_ms=11.0,
             _last_session_stats_recording_total_ms=12.0,
             _last_plot_refresh_total_ms=13.0,
-            _last_deferred_ui_refresh_total_ms=14.0,
+            _last_deferred_display_refresh_ms=14.0,
+            _last_deferred_stats_refresh_ms=14.5,
             _last_deferred_ui_live_estimate_ms=15.0,
             _last_deferred_ui_telemetry_ms=16.0,
             _last_deferred_ui_trace_plot_ms=17.0,
@@ -51,6 +52,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
             _last_deferred_ui_stats_ms=19.0,
             _last_session_summary_refresh_total_ms=20.0,
             _last_session_stats_refresh_total_ms=21.0,
+            _gui_housekeeping_enabled=False,
             _ui_task_scheduler=SimpleNamespace(
                 _last_dispatch_lag_ms=22.0,
                 _last_dispatch_duration_ms=23.0,
@@ -84,6 +86,9 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
         lines = build_session_statistics_lines(snapshot)
         self.assertIn("Diagnostics mode: quiet", "\n".join(lines))
         self.assertIn("File info filter: on", "\n".join(lines))
+        self.assertIn("GUI housekeeping switch: disabled", "\n".join(lines))
+        self.assertIn("Deferred display total: 14.0 ms", "\n".join(lines))
+        self.assertIn("Deferred stats total: 14.5 ms", "\n".join(lines))
         self.assertIn("Scheduler dispatch lag: 22.0 ms", "\n".join(lines))
         self.assertIn("Live processed queue: 6 | max: 7", "\n".join(lines))
         self.assertIn("Runtime drift probe", "\n".join(lines))

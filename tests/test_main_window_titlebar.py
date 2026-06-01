@@ -77,6 +77,7 @@ class MainWindowTitleBarTests(unittest.TestCase):
             self.called_set_acquisition_state_autosave_enabled = None
             self.called_set_ui_state_autosave_enabled = None
             self.called_set_log_buffering_enabled = None
+            self.called_set_gui_housekeeping_enabled = None
 
         def _save_processing_settings_dialog(self) -> None:
             pass
@@ -134,6 +135,9 @@ class MainWindowTitleBarTests(unittest.TestCase):
 
         def _set_log_buffering_enabled(self, enabled: bool) -> None:
             self.called_set_log_buffering_enabled = bool(enabled)
+
+        def _set_gui_housekeeping_enabled(self, enabled: bool) -> None:
+            self.called_set_gui_housekeeping_enabled = bool(enabled)
 
         def _set_sensorgram_heatmap_enabled(self, enabled: bool) -> None:
             self.called_set_sensorgram_heatmap_enabled = bool(enabled)
@@ -285,6 +289,9 @@ class MainWindowTitleBarTests(unittest.TestCase):
         action = next(item for item in performance_menu.actions() if item.text() == "Log buffering")
         action.trigger()
         self.assertIsNotNone(window.called_set_log_buffering_enabled)
+        action = next(item for item in performance_menu.actions() if item.text() == "GUI housekeeping")
+        action.trigger()
+        self.assertIsNotNone(window.called_set_gui_housekeeping_enabled)
         action = next(item for item in performance_menu.actions() if item.text() == "Sensorgram heatmap")
         action.trigger()
         self.assertIsNotNone(getattr(window, "called_set_sensorgram_heatmap_enabled", None))

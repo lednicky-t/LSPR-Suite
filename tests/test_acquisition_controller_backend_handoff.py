@@ -17,7 +17,12 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_app.domain.models import AcquisitionSettings
-from lspr_app.gui.acquisition_controller import _restore_spectrometer_backend_after_live, _suspend_spectrometer_backend_for_live
+from lspr_app.gui.acquisition_controller import (
+    _restore_spectrometer_backend_after_live,
+    _suspend_spectrometer_backend_for_live,
+    _update_live_source_rate_from_event,
+)
+from lspr_app.gui.workers import AcquisitionResult, LiveAcquisitionEvent
 
 
 class _FakeSpectrometer:
@@ -90,6 +95,31 @@ class _DummyLiveProcessingWorker:
 
 
 class AcquisitionControllerBackendHandoffTests(unittest.TestCase):
+    def test_live_source_rate_uses_producer_sequence_not_delivery_gap(self) -> None:
+        window = SimpleNamespace(
+            _raw_last_finish_ts=0.0,
+            _raw_last_sample_index=1,
+            _last_spacing_ms=None,
+            _effective_raw_rate_hz=None,
+        )
+        event = LiveAcquisitionEvent(
+            result=AcquisitionResult(
+                spectrum=None,  # type: ignore[arg-type]
+                elapsed_ms=0.0,
+                settings=AcquisitionSettings(),
+                source_epoch=1,
+            ),
+            source_epoch=1,
+            source_sample_index=3,
+            produced_at_perf=0.4,
+        )
+
+        _update_live_source_rate_from_event(window, event, 0.4)
+
+        self.assertAlmostEqual(window._last_spacing_ms, 200.0)
+        self.assertAlmostEqual(window._effective_raw_rate_hz, 5.0)
+        self.assertEqual(window._raw_last_sample_index, 3)
+
     def test_spectrometer_backend_is_suspended_and_restored_for_live_mode(self) -> None:
         original = _FakeSpectrometer()
         restored = _FakeSpectrometer()

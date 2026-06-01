@@ -213,6 +213,8 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_plot_refresh_ms=93.2,
             _last_sensorgram_render_ms=65.9,
             _last_sensorgram_heatmap_render_ms=1.8,
+            _last_deferred_display_refresh_ms=3.0,
+            _last_deferred_stats_refresh_ms=3.2,
             _last_deferred_ui_refresh_ms=6.2,
             _last_deferred_ui_live_estimate_ms=0.4,
             _last_deferred_ui_telemetry_ms=1.1,
@@ -271,6 +273,7 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("Plot render: 93.2 ms", text)
         self.assertIn("Sensorgram render: 65.9 ms", text)
         self.assertIn("Sensorgram heatmap render: 1.8 ms", text)
+        self.assertIn("Stats refresh timer delay: 0.0 ms", text)
         self.assertIn("Deferred UI flush: 6.2 ms", text)
         self.assertIn("Deferred UI live estimate: 0.4 ms", text)
         self.assertIn("Deferred UI telemetry: 1.1 ms", text)
@@ -306,7 +309,6 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_live_acquisition_flush_ms=18.4,
             _last_live_processed_poll_delay_ms=0.0,
             _last_live_processed_flush_ms=14.6,
-            _last_stats_refresh_delay_ms=0.0,
             _last_summary_refresh_ms=6.3,
             _last_session_stats_refresh_ms=4.4,
             _last_log_buffer_delay_ms=0.0,
@@ -317,6 +319,8 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_plot_refresh_ms=93.2,
             _last_sensorgram_render_ms=65.9,
             _last_sensorgram_heatmap_render_ms=1.8,
+            _last_deferred_display_refresh_ms=3.0,
+            _last_deferred_stats_refresh_ms=3.2,
             _last_deferred_ui_refresh_ms=6.2,
             _last_deferred_ui_live_estimate_ms=0.4,
             _last_deferred_ui_telemetry_ms=1.1,
@@ -372,6 +376,8 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_plot_refresh_ms=93.2,
             _last_sensorgram_render_ms=65.9,
             _last_sensorgram_heatmap_render_ms=1.8,
+            _last_deferred_display_refresh_ms=3.0,
+            _last_deferred_stats_refresh_ms=3.2,
             _last_deferred_ui_refresh_ms=6.2,
             _last_deferred_ui_live_estimate_ms=0.4,
             _last_deferred_ui_telemetry_ms=1.1,
@@ -397,7 +403,8 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("acq 39.4 ms", text)
         self.assertIn("proc 2.8 ms", text)
         self.assertIn("plot 93.2 ms", text)
-        self.assertIn("ui 6.2 ms", text)
+        self.assertIn("disp 3.0 ms", text)
+        self.assertIn("stats 3.2 ms", text)
         self.assertIn("idle 1303.6 ms", text)
         self.assertIn("srcq 2", text)
         self.assertIn("procq 1", text)

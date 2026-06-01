@@ -20,7 +20,8 @@ class RuntimeProbeTests(unittest.TestCase):
             scheduler_pending=1,
             gui_housekeeping_total_ms=3.0,
             log_buffer_total_ms=4.0,
-            deferred_ui_total_ms=5.0,
+            deferred_display_total_ms=5.0,
+            deferred_stats_total_ms=5.5,
             plot_refresh_total_ms=6.0,
             live_result_queue_size=0,
             live_processed_queue_size=1,
@@ -41,7 +42,8 @@ class RuntimeProbeTests(unittest.TestCase):
             scheduler_pending=4,
             gui_housekeeping_total_ms=13.0,
             log_buffer_total_ms=14.0,
-            deferred_ui_total_ms=15.0,
+            deferred_display_total_ms=15.0,
+            deferred_stats_total_ms=15.5,
             plot_refresh_total_ms=16.0,
             live_result_queue_size=2,
             live_processed_queue_size=3,
@@ -66,6 +68,8 @@ class RuntimeProbeTests(unittest.TestCase):
         self.assertIn("Samples: 2 | interval: 60s", joined)
         self.assertIn("Scheduler lag: 1.0 ms -> 11.0 ms", joined)
         self.assertIn("GUI housekeeping total: 3.0 ms -> 13.0 ms", joined)
+        self.assertIn("Deferred display total: 5.0 ms -> 15.0 ms", joined)
+        self.assertIn("Deferred stats total: 5.5 ms -> 15.5 ms", joined)
         self.assertIn("Log history entries: 10 -> 20", joined)
         self.assertIn("Working set: 123.4 MB -> 223.4 MB", joined)
         self.assertIn("Per-minute scheduler lag:", joined)
