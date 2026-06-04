@@ -83,6 +83,41 @@ class SimulatedSpectrometerTests(unittest.TestCase):
 
         self.assertGreater(float(high.values.max()), float(low.values.max()))
 
+    def test_second_peak_parameters_control_the_secondary_feature(self) -> None:
+        narrow = SimulatedSpectrometer(
+            SimulationParameters(
+                peak_center_nm=600.0,
+                peak_width_nm=20.0,
+                peak_height=1000.0,
+                secondary_peak_offset_nm=80.0,
+                secondary_peak_height_percent=200.0,
+                secondary_peak_width_percent=50.0,
+                baseline=0.0,
+                slope=0.0,
+                noise=0.0,
+            )
+        ).acquire_kind_spectrum("sample", AcquisitionSettings())
+        wide = SimulatedSpectrometer(
+            SimulationParameters(
+                peak_center_nm=600.0,
+                peak_width_nm=20.0,
+                peak_height=1000.0,
+                secondary_peak_offset_nm=80.0,
+                secondary_peak_height_percent=200.0,
+                secondary_peak_width_percent=200.0,
+                baseline=0.0,
+                slope=0.0,
+                noise=0.0,
+            )
+        ).acquire_kind_spectrum("sample", AcquisitionSettings())
+
+        secondary_center_nm = 680.0
+        center_index = int(np.argmin(np.abs(wide.wavelengths_nm - secondary_center_nm)))
+        offset_index = int(np.argmin(np.abs(wide.wavelengths_nm - (secondary_center_nm + 40.0))))
+        self.assertAlmostEqual(float(wide.wavelengths_nm[center_index]), secondary_center_nm, places=6)
+        self.assertAlmostEqual(float(wide.values[center_index]), 2000.0, delta=1.0)
+        self.assertGreater(float(wide.values[offset_index]), float(narrow.values[offset_index]))
+
     def test_linear_slope_is_visible_in_reference_spectrum(self) -> None:
         spectrometer = SimulatedSpectrometer(
             SimulationParameters(

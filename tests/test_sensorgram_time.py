@@ -58,8 +58,10 @@ class _FakeCurve:
     def __init__(self) -> None:
         self.data: tuple[np.ndarray, np.ndarray] | None = None
         self.visible: bool | None = None
+        self.set_data_calls = 0
 
     def setData(self, x, y) -> None:  # noqa: N802 - Qt-style API
+        self.set_data_calls += 1
         self.data = (np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64))
 
     def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
@@ -464,6 +466,62 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertTrue(window.trace_heatmap_notice_item.visible)
         self.assertIn("Metric plot unavailable", window.trace_heatmap_notice_item.html or window.trace_heatmap_notice_item.text)
         self.assertFalse(window.trace_curves["smoothed_max"].visible)
+
+    def test_metric_renderer_skips_redundant_setdata_for_unchanged_series(self) -> None:
+        class _CopyingBuffer:
+            def __init__(self) -> None:
+                self._times = np.asarray([0.0, 1.0, 2.0], dtype=np.float64)
+                self._values = np.asarray([10.0, 11.0, 12.0], dtype=np.float64)
+
+            def __len__(self) -> int:
+                return len(self._times)
+
+            @property
+            def revision(self) -> int:
+                return 7
+
+            def to_arrays(self) -> tuple[np.ndarray, np.ndarray]:
+                return self._times.copy(), self._values.copy()
+
+        curve = _FakeCurve()
+        buffer = _CopyingBuffer()
+        window = SimpleNamespace(
+            trace_heatmap_image=_FakeImageItem(),
+            trace_heatmap_notice_item=_FakeTextItem(),
+            trace_plot=_FakeTracePlot(),
+            trace_curves={"smoothed_max": curve},
+            trace_legend=_FakeLegend(),
+            trace_time_axis=_FakeTraceAxis("elapsed"),
+            _measurement_active=False,
+            _sensorgram_content_mode="metric",
+            _metric_plot_enabled=True,
+            _sensorgram_heatmap_history=[],
+            _sensorgram_heatmap_wavelengths=None,
+            _visible_trace_x=None,
+            _visible_trace_y=None,
+            _visible_trace_mode=None,
+            _sensorgram_view_mode="absolute",
+            _trace_view_locked=False,
+            _sensorgram_downsampling_enabled=True,
+            _trace_display_window_s=5.0,
+            _plots_frozen=False,
+            _selected_trace_metrics=lambda: ["smoothed_max"],
+            _primary_trace_metric=lambda: "smoothed_max",
+            _peak_history={"smoothed_max": buffer},
+            _peak_history_buffers={},
+            _plot_view_cache=None,
+        )
+
+        from lspr_app.gui.plot_controller import render_metric_series
+
+        history = {"smoothed_max": [(0.0, 10.0), (1.0, 11.0), (2.0, 12.0)]}
+        render_metric_series(window, history, clock_mode=True)
+        render_metric_series(window, history, clock_mode=True)
+
+        self.assertEqual(curve.set_data_calls, 1)
+        self.assertIsNotNone(curve.data)
+        self.assertListEqual(curve.data[0].tolist(), [0.0, 1.0, 2.0])
+        self.assertListEqual(curve.data[1].tolist(), [10.0, 11.0, 12.0])
 
     def test_trace_renderer_absolute_ignores_stale_viewport(self) -> None:
         window = SimpleNamespace(

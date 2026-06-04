@@ -176,6 +176,49 @@ class PlotViewCacheTests(unittest.TestCase):
 
         self.assertLessEqual(len(cache._absolute_metric_view_cache), 1)
 
+    def test_append_only_metric_history_buffer_reports_incremental_exports(self) -> None:
+        buffer = AppendOnlyMetricHistoryBuffer(4)
+
+        buffer.append(1.0, 2.0)
+        buffer.append(2.0, 3.0)
+        first_x, first_y = buffer.to_arrays()
+        first_mode = buffer.last_export_mode
+
+        buffer.append(3.0, 4.0)
+        second_x, second_y = buffer.to_arrays()
+        second_mode = buffer.last_export_mode
+
+        self.assertEqual(first_mode, "full_rebuild")
+        self.assertIn(second_mode, {"hit", "incremental", "full_rebuild"})
+        self.assertEqual(first_x.tolist(), [1.0, 2.0])
+        self.assertEqual(second_x.tolist(), [1.0, 2.0, 3.0])
+        self.assertEqual(first_y.tolist(), [2.0, 3.0])
+        self.assertEqual(second_y.tolist(), [2.0, 3.0, 4.0])
+
+    def test_absolute_metric_view_cache_tracks_incremental_mode(self) -> None:
+        cache = PlotViewCache()
+        token = ("series", "absolute", 123, 1)
+        x = np.arange(0.0, 2048.0, dtype=np.float64)
+        y = np.sin(x / 15.0)
+
+        first_x, first_y = cache.absolute_metric_view(token, x, y, view_width_px=220.0)
+        first_snapshot = cache.metric_cache_debug_snapshot()
+
+        x2 = np.arange(0.0, 2300.0, dtype=np.float64)
+        y2 = np.sin(x2 / 15.0)
+        second_x, second_y = cache.absolute_metric_view(token, x2, y2, view_width_px=220.0)
+        second_snapshot = cache.metric_cache_debug_snapshot()
+
+        self.assertLessEqual(len(cache._absolute_metric_view_cache), 1)
+        self.assertGreaterEqual(len(second_x), 1)
+        self.assertGreaterEqual(len(second_y), 1)
+        self.assertTrue(first_snapshot)
+        self.assertTrue(second_snapshot)
+        entry = next(iter(second_snapshot.values()))
+        self.assertIn(entry["last_mode"], {"full_rebuild", "incremental", "hit"})
+        self.assertGreaterEqual(int(entry["incremental"]) + int(entry["rebuilds"]) + int(entry["hits"]), 1)
+        self.assertIsNotNone(cache.absolute_metric_display_state(token))
+
     def test_absolute_heatmap_view_cache_extends_tail_without_reflowing_prefix(self) -> None:
         cache = PlotViewCache()
         token = ("heatmap", "absolute", 1, 10)
