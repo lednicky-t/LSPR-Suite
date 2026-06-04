@@ -52,6 +52,7 @@ class _DummyLiveAcquisitionWorker:
         request,
         result_queue,
         processing_queue,
+        recording_queue,
         stop_event,
         *,
         source_mode: str,
@@ -62,6 +63,7 @@ class _DummyLiveAcquisitionWorker:
         self.request = request
         self.result_queue = result_queue
         self.processing_queue = processing_queue
+        self.recording_queue = recording_queue
         self.stop_event = stop_event
         self.source_mode = source_mode
         self.simulation_parameters = simulation_parameters
@@ -184,6 +186,7 @@ class AcquisitionControllerBackendHandoffTests(unittest.TestCase):
             _log_warning=lambda _message: None,
             _log_debug=lambda _message: None,
             _log_throttled=lambda *args, **kwargs: None,
+            _live_recording_timer=SimpleNamespace(start=lambda: None, stop=lambda: None),
         )
 
         with (

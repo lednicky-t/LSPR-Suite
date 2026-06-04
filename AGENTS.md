@@ -199,6 +199,9 @@ Rules:
 - Keep export code separate from analysis code.
 - Validate file formats and show clear errors for incompatible files.
 - Avoid hardcoded absolute paths.
+- For the `sLSPR acq` runtime pipeline, follow `apps/sLSPR/acq/docs/runtime_pipeline_architecture.md` as the authoritative rule set for lossless raw acquisition, asynchronous file writing, and UI drop accounting.
+- For future architecture and performance work, treat `apps/sLSPR/acq/docs/CODEX_ARCHITECTURE_RAILS_V7.md` as the controlling guide for the split between lossless acquisition/storage and lossy UI/analysis.
+- For step-by-step implementation work on that split, follow `apps/sLSPR/acq/docs/CODEX_IMPLEMENTATION_GUIDE_V8_LOSSLESS_ACQ_AND_LOSSY_UI.md`.
 
 ## Error Handling And Logging
 

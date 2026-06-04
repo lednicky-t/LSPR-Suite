@@ -141,15 +141,18 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
         stop_event = ctx.Event()
         result_queue = ctx.Queue(maxsize=4)
         processing_queue = ctx.Queue(maxsize=4)
+        recording_queue = ctx.Queue(maxsize=4)
         log_queue = ctx.Queue(maxsize=8)
         worker = LiveAcquisitionWorker(
             AcquisitionRequest(
                 kind="sample",
                 settings=AcquisitionSettings(),
                 source_epoch=7,
+                archive_enabled=True,
             ),
             result_queue,
             processing_queue,
+            recording_queue,
             stop_event,
             source_mode="simulation",
             simulation_parameters=SimulationParameters(wavelength_resolution_nm=1.0),
@@ -174,21 +177,27 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
         self.assertEqual(event.result.source_epoch, 7)
         self.assertEqual(event.source_epoch, 7)
         self.assertIsNotNone(processing_queue.get(timeout=5.0).result)
+        recording_event = recording_queue.get(timeout=5.0)
+        self.assertIsNotNone(recording_event.result)
+        self.assertEqual(recording_event.source_epoch, 7)
 
     def test_live_acquisition_worker_relays_child_logs(self) -> None:
         ctx = mp.get_context("spawn")
         stop_event = ctx.Event()
         result_queue = ctx.Queue(maxsize=4)
         processing_queue = ctx.Queue(maxsize=4)
+        recording_queue = ctx.Queue(maxsize=4)
         log_queue = ctx.Queue(maxsize=8)
         worker = LiveAcquisitionWorker(
             AcquisitionRequest(
                 kind="sample",
                 settings=AcquisitionSettings(),
                 source_epoch=11,
+                archive_enabled=True,
             ),
             result_queue,
             processing_queue,
+            recording_queue,
             stop_event,
             source_mode="simulation",
             simulation_parameters=SimulationParameters(wavelength_resolution_nm=1.0),
