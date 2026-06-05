@@ -150,6 +150,15 @@ Performance guidelines:
 - Add comments explaining non-obvious performance optimizations.
 
 Do not add complex optimization techniques unless they are justified by data size, profiling, or obvious performance needs.
+Prefer simple, explicit runtime architecture over layered helper machinery.
+Do not solve performance or coordination problems by adding more schedulers, deferred tasks, queues, throttles, wrappers, or diagnostics unless there is a measured need and no simpler alternative.
+Keep raw acquisition/recording, processing, and GUI plotting as separate layers with clear ownership:
+- acquisition and recording must be continuous and lossless
+- processing and plotting may be freshness-based and may skip stale frames
+Use queues only at real thread/process/disk/device boundaries, and use a single clear GUI refresh cadence where possible.
+Avoid chaining callbacks such as queue -> scheduler -> deferred flush -> throttle -> log -> GUI update.
+Before adding a helper or abstraction, explain what concrete boundary or repeated logic it simplifies, and verify it does not create hidden control flow, duplicate state, or event-loop work.
+Prefer deleting or bypassing unnecessary orchestration over adding new coordination code.
 
 ## GUI And UX Rules
 
@@ -202,6 +211,7 @@ Rules:
 - For the `sLSPR acq` runtime pipeline, follow `apps/sLSPR/acq/docs/runtime_pipeline_architecture.md` as the authoritative rule set for lossless raw acquisition, asynchronous file writing, and UI drop accounting.
 - For future architecture and performance work, treat `apps/sLSPR/acq/docs/CODEX_ARCHITECTURE_RAILS_V7.md` as the controlling guide for the split between lossless acquisition/storage and lossy UI/analysis.
 - For step-by-step implementation work on that split, follow `apps/sLSPR/acq/docs/CODEX_IMPLEMENTATION_GUIDE_V8_LOSSLESS_ACQ_AND_LOSSY_UI.md`.
+- For runtime simplification and anti-orchestration guidance, follow `apps/sLSPR/acq/docs/CODEX_RUNTIME_SIMPLICITY_GUIDE_V12.md`.
 
 ## Error Handling And Logging
 
@@ -262,6 +272,7 @@ When acting as a coding agent on this repository:
 - When adding scientific algorithms, include units, assumptions, and tests.
 - When optimizing, explain the bottleneck and why the chosen approach helps.
 - If a quick fix would create technical debt, mention the cleaner alternative.
+- When fixing bugs, first simplify the data path. Do not wrap a bad flow in more helpers. A correct fix should make the live pipeline easier to explain, not harder.
 
 ## Reusable Task Prompts
 
