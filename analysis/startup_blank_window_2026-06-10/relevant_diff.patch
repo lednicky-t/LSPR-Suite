@@ -1,0 +1,699 @@
+﻿diff --git a/src/lspr_app/app.py b/src/lspr_app/app.py
+index 7c1997f..3c5954f 100644
+--- a/src/lspr_app/app.py
++++ b/src/lspr_app/app.py
+@@ -406,7 +406,8 @@ def discover_pump():
+     return None
+ 
+ 
+-def _attach_startup_file_logging() -> logging.Handler | None:
++def _attach_startup_file_logging() -> tuple[logging.Handler | None, DiagnosticsConfig]:
++    diagnostics = DiagnosticsConfig.from_env()
+     project_destination = str(load_app_setting("recording_project_destination", "") or "").strip()
+     experiment_name = str(load_app_setting("recording_experiment_name", "") or "").strip()
+     try:
+@@ -417,23 +418,26 @@ def _attach_startup_file_logging() -> logging.Handler | None:
+             suffix=".log",
+         )
+     except Exception:
+-        return None
++        return None, diagnostics
+ 
+     handler = logging.FileHandler(log_path, encoding="utf-8")
+     handler.setLevel(logging.DEBUG)
+     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s %(message)s", "%H:%M:%S"))
+-    apply_diagnostic_info_filter(handler, DiagnosticsConfig.from_env())
++    apply_diagnostic_info_filter(handler, diagnostics)
+ 
+     root_logger = logging.getLogger()
+-    root_logger.setLevel(logging.INFO)
++    root_logger.setLevel(int(diagnostics.file_log_min_level))
+     root_logger.addHandler(handler)
+-    logging.getLogger("lspr_app").setLevel(logging.INFO)
+-    logging.getLogger("lspr_app.bootstrap").setLevel(logging.INFO)
+-    return handler
++    logging.getLogger("lspr_app").setLevel(int(diagnostics.gui_log_min_level))
++    logging.getLogger("lspr_app.bootstrap").setLevel(int(diagnostics.gui_log_min_level))
++    return handler, diagnostics
+ 
+ 
+ def main() -> None:
+-    file_handler = _attach_startup_file_logging()
++    file_handler, diagnostics = _attach_startup_file_logging()
++    bootstrap_logger = logging.getLogger("lspr_app.bootstrap")
++    bootstrap_level = logging.WARNING if diagnostics.profile == "off" else logging.INFO
++    bootstrap_logger.log(bootstrap_level, diagnostics.startup_summary_text())
+     app = QApplication(sys.argv)
+     app.setApplicationDisplayName("LSPR Acquisition")
+     app.setApplicationVersion(__version__)
+@@ -480,7 +484,9 @@ def main() -> None:
+             return
+         bootstrap_logger.info("Main window constructed.")
+         app.main_window = window
++        window._startup_splash = splash
+         window._startup_show_requested_t0 = perf_counter()
++        window.setWindowOpacity(0.0)
+         if bool(getattr(window, "_start_maximized", False)):
+             window._screen_fitted = True
+             window.showMaximized()
+@@ -488,7 +494,6 @@ def main() -> None:
+             window._fit_window_to_available_screen()
+             window._screen_fitted = True
+             window.show()
+-        splash.close()
+ 
+     def _handle_startup_failure(message: str) -> None:
+         splash.close()
+diff --git a/src/lspr_app/gui/acquisition_controller.py b/src/lspr_app/gui/acquisition_controller.py
+index 211ae6a..37d37a9 100644
+--- a/src/lspr_app/gui/acquisition_controller.py
++++ b/src/lspr_app/gui/acquisition_controller.py
+@@ -69,7 +69,7 @@ def _queue_size_safe(queue_obj) -> int | None:
+ 
+ 
+ def _log_live_timing(window, key: str, message: str) -> None:
+-    if not processing_debug_mode_enabled():
++    if not bool(getattr(window, "_deep_timing_enabled", False)):
+         return
+     window._log_throttled(key, message, level=logging.INFO, min_interval=0.5)
+ 
+@@ -129,7 +129,6 @@ def _handle_measurement_file_compression_finished(window, result: object) -> Non
+         window._measurement_path = None
+         window.status_label.setText("Measurement stopped.")
+         window._log_warning("Measurement file compression finished with an unexpected result payload.")
+-        window._log_success("Measurement recording stopped.")
+         window._refresh_plot()
+         window._refresh_trace_plot("Metric position (nm)")
+         window._request_trace_autoscale()
+@@ -139,7 +138,6 @@ def _handle_measurement_file_compression_finished(window, result: object) -> Non
+     window._measurement_path = None
+     window.status_label.setText("Measurement stopped.")
+     window._log_success("Measurement file compression finished.")
+-    window._log_success("Measurement recording stopped.")
+     window._refresh_plot()
+     window._refresh_trace_plot("Metric position (nm)")
+     window._request_trace_autoscale()
+@@ -154,7 +152,6 @@ def _handle_measurement_file_compression_failed(window, message: str) -> None:
+     window._measurement_path = None
+     window.status_label.setText("Measurement stopped.")
+     window._log_warning(f"Measurement file compression failed: {message}")
+-    window._log_success("Measurement recording stopped.")
+     window._refresh_plot()
+     window._refresh_trace_plot("Metric position (nm)")
+     window._request_trace_autoscale()
+@@ -295,7 +292,6 @@ def request_manual_acquisition(window, kind: str) -> None:
+         window._update_dark_reference_button_icons()
+         window._request_deferred_ui_refresh(telemetry=True)
+         window._schedule_acquisition_state_persist()
+-        window._log_success(f"{kind.capitalize()} spectrum cached from live sample without pausing acquisition.")
+         window.status_label.setText(f"{kind.capitalize()} cached from live sample.")
+         return
+     if window._live_worker is not None and window._live_worker.is_alive():
+@@ -371,14 +367,13 @@ def handle_acquisition_success(window, kind: str, result: AcquisitionResult) ->
+         if selected_plot is not None:
+             window._refresh_spectrum_plot(selected_plot, None)
+         window._update_dark_reference_button_icons()
+-        window._log_debug(f"Plot selector switched to {target_plot} after {kind} acquisition.")
+-        window._log_success(f"{kind.capitalize()} spectrum acquired in {result.elapsed_ms:.1f} ms.")
++        window._log_success(f"{kind.capitalize()} spectrum acquired.")
+     elif kind == "sample" and not window._live_active:
+-        window._log_success(f"Sample spectrum acquired in {result.elapsed_ms:.1f} ms.")
++        window._log_success("Sample spectrum acquired.")
+     elif kind == "sample":
+         window._log_throttled(
+             "live_sample",
+-            f"Live sample updated in {result.elapsed_ms:.1f} ms.",
++            "Live sample updated.",
+             level=logging.DEBUG,
+             min_interval=1.0,
+         )
+@@ -403,7 +398,6 @@ def handle_acquisition_success(window, kind: str, result: AcquisitionResult) ->
+         pass
+     else:
+         window.status_label.setText(f"{kind.capitalize()} spectrum acquired successfully.")
+-        window._log_debug(f"{kind.capitalize()} acquisition completed.")
+         if window._pending_manual_kind is not None:
+             pending = window._pending_manual_kind
+             window._pending_manual_kind = None
+@@ -489,7 +483,7 @@ def flush_live_acquisition_results(window) -> None:
+                 window._last_overhead_ms = max(result.elapsed_ms - float(expected_budget_ms), 0.0)
+             else:
+                 window._last_overhead_ms = None
+-        if window._effective_raw_rate_hz is not None:
++        if window._effective_raw_rate_hz is not None and bool(getattr(window, "_deep_timing_enabled", False)):
+             window._log_throttled(
+                 "raw_rate",
+                 (
+@@ -511,7 +505,7 @@ def flush_live_acquisition_results(window) -> None:
+                 f"gap={spacing_text} | dropped={dropped_events}"
+             ),
+         )
+-        if processing_debug_mode_enabled():
++        if bool(getattr(window, "_deep_timing_enabled", False)):
+             window._log_throttled(
+                 "live_acq_flush",
+                 f"Live acquisition flush: {drain_ms:.2f} ms | dropped={dropped_events}",
+@@ -618,7 +612,7 @@ def flush_live_processed_results(window) -> None:
+                 f"wait={result.queue_wait_ms:.1f} ms | dropped={dropped_events}"
+         ),
+     )
+-    if processing_debug_mode_enabled():
++    if bool(getattr(window, "_deep_timing_enabled", False)):
+         window._log_throttled(
+             "live_processed_flush",
+             f"Live processing flush: {drain_ms:.2f} ms | dropped={dropped_events}",
+@@ -683,12 +677,6 @@ def flush_live_processed_results(window) -> None:
+     refresh_state.live_estimate_dirty = True
+     refresh_state.telemetry_dirty = True
+     window._append_processed_trace_history(processed, fit)
+-    window._log_throttled(
+-        "live_display",
+-        f"Live display updated | dropped={dropped_events}",
+-        level=logging.DEBUG,
+-        min_interval=1.0,
+-    )
+     if window._live_processing_worker is not None and window._live_processing_worker.is_alive() and window._live_active:
+         _request_live_acquisition_poll_for(window, window._live_ui_refresh_delay_ms)
+ 
+@@ -1298,7 +1286,6 @@ def stop_measurement_run(window) -> None:
+         window._set_recording_blink_indicator(False)
+     window._sync_simulation_backend_from_controls()
+     window._trace_view_locked = False
+-    window._trace_display_cursor_s = 0.0
+     window._live_trace_started_at = None
+     window._metric_reference_processed = None
+     window._refresh_session_statistics(force=True)
+@@ -1335,7 +1322,7 @@ def append_processed_trace_history(window, processed: Spectrum, fit: Spectrum |
+         if started_at is not None:
+             elapsed_s = max((processed.acquired_at - started_at).total_seconds(), 0.0)
+         else:
+-            elapsed_s = float(processed.acquired_at.timestamp())
++            elapsed_s = float(getattr(window, "_trace_display_cursor_s", 0.0) or 0.0)
+ 
+     display_step_s = max(1.0 / max(window.live_rate_spin.value(), 1e-9), 1e-3)
+     metrics = window._get_analysis_metrics(processed, fit)
+@@ -1395,6 +1382,12 @@ def append_processed_trace_history(window, processed: Spectrum, fit: Spectrum |
+         writer.append_metrics([metric_row])
+         window._request_deferred_ui_refresh(trace_plot=True, trace_label="Metric position (nm)")
+         window._request_trace_autoscale()
++        notify_startup_data_rendered = getattr(window, "_notify_startup_data_rendered", None)
++        if callable(notify_startup_data_rendered):
++            try:
++                notify_startup_data_rendered("trace")
++            except Exception:
++                pass
+         window._log_throttled(
+             "trace_append",
+             (
+diff --git a/src/lspr_app/gui/main_window.py b/src/lspr_app/gui/main_window.py
+index a6f258f..1d3e211 100644
+--- a/src/lspr_app/gui/main_window.py
++++ b/src/lspr_app/gui/main_window.py
+@@ -454,6 +454,9 @@ class TimedPlotWidget(pg.PlotWidget):
+                     setattr(owner, recent_total_name, 0.0)
+                     setattr(owner, recent_max_name, 0.0)
+                     setattr(owner, recent_avg_name, 0.0)
++            notify_startup_paint = getattr(owner, "_notify_startup_plot_painted", None)
++            if callable(notify_startup_paint):
++                notify_startup_paint(prefix)
+         except Exception:
+             return
+ 
+@@ -837,6 +840,18 @@ class MainWindow(QMainWindow):
+         self._diagnostic_export_events = deque(maxlen=4000)
+         self._diagnostic_snapshot_export_events = deque(maxlen=4000)
+         self._log_append_events = deque(maxlen=4000)
++        self._diagnostics = DiagnosticsConfig.from_env()
++        self._diagnostics_profile = self._diagnostics.profile
++        self._quiet_diagnostics_mode = self._diagnostics.quiet_mode
++        self._suppress_diagnostic_info_logs = self._diagnostics.suppress_info_logs
++        self._export_diagnostic_events = self._diagnostics.export_diagnostic_events
++        self._runtime_drift_probe_enabled = self._diagnostics.runtime_drift_probe_enabled
++        self._session_stats_recording_enabled_by_default = (
++            self._diagnostics.session_stats_recording_enabled_by_default
++        )
++        self._debug_timing_enabled = self._diagnostics.debug_timing_enabled
++        self._deep_timing_enabled = self._diagnostics.deep_timing_enabled
++        self._diagnostics_panel_enabled = self._diagnostics.diagnostics_panel_enabled
+         self._ui_state_timer = QTimer(self)
+         self._ui_state_timer.setSingleShot(True)
+         self._ui_state_timer.setInterval(250)
+@@ -914,6 +929,10 @@ class MainWindow(QMainWindow):
+         _startup_mark("application style applied")
+ 
+         self._initialize_logging_ui()
++        self._processing_debug_mode_enabled = bool(
++            self._processing_debug_mode_enabled or self._diagnostics.debug_timing_enabled
++        )
++        set_processing_debug_mode_enabled(self._processing_debug_mode_enabled)
+         if self._startup_timing_buffer:
+             for message in self._startup_timing_buffer:
+                 self._ui_logger.info(message)
+@@ -1565,13 +1584,11 @@ class MainWindow(QMainWindow):
+         self._refresh_telemetry()
+         self._refresh_session_statistics(force=True)
+         self._refresh_session_summary(force=True)
++        if bool(self._session_stats_recording_enabled_by_default):
++            self._set_session_stats_recording_active(True)
+         self._log_info(
+             f"Ready | source={self._source_mode} | backend={self._spectrometer.device_name()}"
+         )
+-        if self._discovered_pump_probe is not None and hasattr(self._discovered_pump_probe, "port"):
+-            self._log_success(f"Pump discovered on {getattr(self._discovered_pump_probe.port, 'device', 'unknown')}")
+-        else:
+-            self._log_debug("Pump not discovered at startup.")
+         if isinstance(self._spectrometer, SimulatedSpectrometer) and self._launch_profile_spec.key != LAUNCH_PROFILE_CONTROL_EDITOR:
+             self.source_tabs.blockSignals(True)
+             self.source_tabs.setCurrentIndex(1)
+@@ -1580,7 +1597,8 @@ class MainWindow(QMainWindow):
+         else:
+             self._refresh_plot()
+         self._set_measurement_buttons_enabled(True)
+-        initialize_runtime_drift_probe_for_runtime(self)
++        if bool(self._runtime_drift_probe_enabled):
++            initialize_runtime_drift_probe_for_runtime(self)
+         self.hardware_init_progress.connect(self._update_startup_loading_indicator)
+         self.hardware_init_finished.connect(lambda: self._set_startup_loading_indicator(False))
+         if self._launch_profile_spec.scan_devices:
+@@ -2495,6 +2513,8 @@ class MainWindow(QMainWindow):
+                 self._log_info(
+                     f"Startup +{(perf_counter() - startup_show_t0) * 1000.0:.1f} ms: first showEvent reached"
+                 )
++            self._log_startup_widget_snapshot()
++        self._sync_main_view_visibility()
+         if not self._screen_fitted:
+             self._screen_fitted = True
+             if self._start_maximized:
+@@ -2511,6 +2531,225 @@ class MainWindow(QMainWindow):
+             self._flow_panel_bootstrap_pending = False
+             QTimer.singleShot(250, self._ensure_flow_panel)
+ 
++    def paintEvent(self, event) -> None:  # pragma: no cover - GUI runtime path
++        started = perf_counter()
++        super().paintEvent(event)
++        elapsed_ms = (perf_counter() - started) * 1000.0
++        if not getattr(self, "_startup_paint_event_reported", False):
++            self._startup_paint_event_reported = True
++            startup_show_t0 = getattr(self, "_startup_show_requested_t0", None)
++            if startup_show_t0 is not None:
++                self._log_info(
++                    f"Startup +{(perf_counter() - startup_show_t0) * 1000.0:.1f} ms: first paintEvent reached | "
++                    f"paint={elapsed_ms:.2f} ms"
++                )
++                self._log_startup_plot_state()
++
++    def _log_startup_widget_snapshot(self) -> None:
++        diagnostics = getattr(self, "_diagnostics", None)
++        debug_enabled = bool(getattr(diagnostics, "debug_timing_enabled", False))
++        deep_enabled = bool(getattr(diagnostics, "deep_timing_enabled", False))
++        if not debug_enabled and not deep_enabled:
++            return
++        try:
++            app = QApplication.instance()
++            top_level_widgets: list[QWidget] = []
++            if app is not None:
++                top_level_widgets = list(app.topLevelWidgets())
++            current_widget = None
++            stack_pages: list[str] = []
++            stack_index = -1
++            if hasattr(self, "_top_content_stack") and self._top_content_stack is not None:
++                stack_index = int(self._top_content_stack.currentIndex())
++                try:
++                    for page_index in range(self._top_content_stack.count()):
++                        page = self._top_content_stack.widget(page_index)
++                        if page is None:
++                            continue
++                        page_label = "page"
++                        if page is getattr(self, "_spectra_block", None):
++                            page_label = "spectra_block"
++                        elif page is getattr(self, "_sensorgram_block", None):
++                            page_label = "sensorgram_block"
++                        elif page is getattr(self, "_experiment_control_panel_placeholder", None):
++                            page_label = "flow_placeholder"
++                        page_current = page_index == stack_index
++                        stack_pages.append(
++                            f"{page_index}:{page_label}:{page.__class__.__name__}(objectName={page.objectName()!r}, "
++                            f"visible={page.isVisible()}, current={page_current})"
++                        )
++                except Exception:
++                    stack_pages = []
++                stack_widget = self._top_content_stack.currentWidget()
++                if stack_widget is not None:
++                    current_widget = (
++                        f"{stack_widget.__class__.__name__}(objectName={stack_widget.objectName()!r}, "
++                        f"visible={stack_widget.isVisible()}, window={stack_widget.isWindow()})"
++                    )
++            flow_widget = getattr(self, "_experiment_control_window", None)
++            flow_widget_text = (
++                f"{flow_widget.__class__.__name__}(visible={flow_widget.isVisible()}, window={flow_widget.isWindow()})"
++                if flow_widget is not None
++                else "None"
++            )
++            top_level_summary: list[str] = []
++            for widget in top_level_widgets:
++                try:
++                    top_level_summary.append(
++                        f"{widget.__class__.__name__}(title={widget.windowTitle()!r}, "
++                        f"visible={widget.isVisible()}, window={widget.isWindow()})"
++                    )
++                except Exception:
++                    top_level_summary.append(widget.__class__.__name__)
++            self._log_info(
++                "Startup widget snapshot | "
++                f"main_visible={self.isVisible()} | "
++                f"main_content_visible={bool(self._main_content_widget.isVisible()) if self._main_content_widget is not None else False} | "
++                f"top_view={getattr(self, '_top_view_mode', '-')} | "
++                f"stack_index={stack_index} | "
++                f"stack_current={current_widget or '-'} | "
++                f"flow_widget={flow_widget_text} | "
++                f"flow_bootstrap_pending={bool(getattr(self, '_flow_panel_bootstrap_pending', False))} | "
++                f"ui_startup_ready={bool(getattr(self, '_ui_startup_ready', False))} | "
++                f"stack_pages=[{' ; '.join(stack_pages) if stack_pages else '-'}] | "
++                f"top_levels=[{' ; '.join(top_level_summary) if top_level_summary else '-'}]"
++            )
++            if deep_enabled:
++                self._log_startup_widget_trace(top_level_widgets)
++        except Exception as exc:
++            self._log_warning(f"Startup widget snapshot failed: {exc}")
++
++    def _log_startup_widget_trace(self, widgets: list[QWidget]) -> None:
++        if not widgets:
++            self._log_info("Startup widget trace | count=0")
++            return
++
++        def _format_flags(widget: QWidget) -> str:
++            try:
++                flags = widget.windowFlags()
++                raw_value = getattr(flags, "value", flags)
++                return f"0x{int(raw_value):x}"
++            except Exception:
++                return "-"
++
++        def _format_geometry(widget: QWidget) -> str:
++            try:
++                geo = widget.geometry()
++                frame = widget.frameGeometry()
++                return (
++                    f"geo=({geo.x()},{geo.y()},{geo.width()},{geo.height()}) "
++                    f"frame=({frame.x()},{frame.y()},{frame.width()},{frame.height()})"
++                )
++            except Exception:
++                return "geo=- frame=-"
++
++        def _format_parent_chain(widget: QWidget) -> str:
++            chain: list[str] = []
++            parent = widget.parentWidget()
++            depth = 0
++            while isinstance(parent, QWidget) and depth < 6:
++                try:
++                    chain.append(
++                        f"{parent.__class__.__name__}(objectName={parent.objectName()!r}, "
++                        f"title={parent.windowTitle()!r}, visible={parent.isVisible()}, window={parent.isWindow()})"
++                    )
++                except Exception:
++                    chain.append(parent.__class__.__name__)
++                parent = parent.parentWidget()
++                depth += 1
++            return " -> ".join(chain) if chain else "-"
++
++        visible_count = 0
++        self._log_info(f"Startup widget trace | count={len(widgets)}")
++        for index, widget in enumerate(widgets, start=1):
++            try:
++                is_visible = bool(widget.isVisible())
++                visible_count += int(is_visible)
++                self._log_info(
++                    "Startup widget trace | "
++                    f"#{index} class={widget.__class__.__name__} "
++                    f"objectName={widget.objectName()!r} "
++                    f"title={widget.windowTitle()!r} "
++                    f"visible={is_visible} "
++                    f"window={widget.isWindow()} "
++                    f"flags={_format_flags(widget)} "
++                    f"{_format_geometry(widget)} "
++                    f"parent_chain={_format_parent_chain(widget)}"
++                )
++            except Exception as exc:
++                self._log_warning(f"Startup widget trace entry {index} failed: {exc}")
++        self._log_info(f"Startup widget trace | visible_count={visible_count}")
++
++    def _log_startup_plot_state(self) -> None:
++        try:
++            spectrum_paints = int(getattr(self, "_spectrum_plot_paint_count", 0) or 0)
++            trace_paints = int(getattr(self, "_trace_plot_paint_count", 0) or 0)
++            spectrum_visible = bool(getattr(self, "spectrum_plot", None).isVisible()) if hasattr(self, "spectrum_plot") else False
++            trace_visible = bool(getattr(self, "trace_plot", None).isVisible()) if hasattr(self, "trace_plot") else False
++            self._log_info(
++                "Startup plot state | "
++                f"spectrum_paints={spectrum_paints} | "
++                f"trace_paints={trace_paints} | "
++                f"spectrum_visible={spectrum_visible} | "
++                f"trace_visible={trace_visible}"
++            )
++        except Exception as exc:
++            self._log_warning(f"Startup plot state failed: {exc}")
++
++    def _notify_startup_plot_painted(self, prefix: str) -> None:
++        if prefix not in {"spectrum_plot", "trace_plot"}:
++            return
++        painted = getattr(self, "_startup_plot_painted", None)
++        if not isinstance(painted, set):
++            painted = set()
++            self._startup_plot_painted = painted
++        if prefix in painted:
++            return
++        painted.add(prefix)
++        startup_show_t0 = getattr(self, "_startup_show_requested_t0", None)
++        if startup_show_t0 is not None:
++            self._log_info(f"Startup +{(perf_counter() - startup_show_t0) * 1000.0:.1f} ms: first plot paint on {prefix}")
++
++    def _notify_startup_data_rendered(self, source: str) -> None:
++        if source not in {"spectrum", "trace"}:
++            return
++        rendered = getattr(self, "_startup_data_rendered", None)
++        if not isinstance(rendered, set):
++            rendered = set()
++            self._startup_data_rendered = rendered
++        if source in rendered:
++            return
++        rendered.add(source)
++        startup_show_t0 = getattr(self, "_startup_show_requested_t0", None)
++        if startup_show_t0 is not None:
++            self._log_info(f"Startup +{(perf_counter() - startup_show_t0) * 1000.0:.1f} ms: first data render on {source}")
++        if source == "spectrum":
++            self._reveal_startup_window()
++            splash = getattr(self, "_startup_splash", None)
++            if splash is not None and not getattr(self, "_startup_splash_close_scheduled", False):
++                self._startup_splash_close_scheduled = True
++                self._log_info("Startup data renders complete; closing splash.")
++                QTimer.singleShot(0, self._close_startup_splash)
++
++    def _reveal_startup_window(self) -> None:
++        if getattr(self, "_startup_window_revealed", False):
++            return
++        self._startup_window_revealed = True
++        try:
++            self.setWindowOpacity(1.0)
++        except Exception:
++            pass
++
++    def _close_startup_splash(self) -> None:
++        splash = getattr(self, "_startup_splash", None)
++        if splash is None:
++            return
++        self._startup_splash = None
++        try:
++            splash.close()
++        except Exception:
++            pass
++
+     def _restore_ui_state(self) -> None:
+         restore_ui_state_for(self)
+ 
+@@ -2873,12 +3112,6 @@ class MainWindow(QMainWindow):
+             if self._source_mode == "simulation" and not self._live_active:
+                 self._session.set_sample(self._build_simulation_spectrum("sample"))
+                 self._refresh_plot()
+-            self._log_throttled(
+-                "simulation_params",
+-                "Simulation parameters updated.",
+-                level=logging.DEBUG,
+-                min_interval=0.75,
+-            )
+ 
+         self._run_gui_callback_timed("simulation_parameter_flush", _callback)
+ 
+@@ -2922,7 +3155,6 @@ class MainWindow(QMainWindow):
+         self._update_simulation_controls_enabled()
+         self._schedule_acquisition_state_persist()
+         if restart_live:
+-            self._log_debug("Restarting live acquisition after source switch.")
+             QTimer.singleShot(0, self._start_live_acquisition)
+ 
+     def _default_simulation_resolution_nm(self) -> float:
+@@ -3614,6 +3846,41 @@ class MainWindow(QMainWindow):
+             if event_type == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                 self._choose_recording_project_destination()
+                 return True
++        if event.type() == QEvent.Type.Paint:
++            startup_painted = False
++            startup_widget_label = None
++            if obj is getattr(self, "_main_content_widget", None):
++                startup_widget_label = "main_content"
++                startup_painted = True
++            elif obj is getattr(self, "_spectra_block", None):
++                startup_widget_label = "spectra_block"
++                startup_painted = True
++            elif obj is getattr(self, "_sensorgram_block", None):
++                startup_widget_label = "sensorgram_block"
++                startup_painted = True
++            else:
++                spectrum_viewport = getattr(getattr(self, "spectrum_plot", None), "viewport", None)
++                if spectrum_viewport is not None and obj is spectrum_viewport():
++                    startup_widget_label = "spectrum_viewport"
++                    startup_painted = True
++                else:
++                    trace_viewport = getattr(getattr(self, "trace_plot", None), "viewport", None)
++                    if trace_viewport is not None and obj is trace_viewport():
++                        startup_widget_label = "trace_viewport"
++                        startup_painted = True
++            if startup_painted:
++                startup_show_t0 = getattr(self, "_startup_show_requested_t0", None)
++                if startup_show_t0 is not None:
++                    startup_elapsed_ms = (perf_counter() - startup_show_t0) * 1000.0
++                    if not getattr(self, "_startup_widget_paint_reported", False):
++                        self._startup_widget_paint_reported = set()
++                    painted = getattr(self, "_startup_widget_paint_reported", set())
++                    if startup_widget_label not in painted:
++                        painted.add(startup_widget_label)
++                        self._startup_widget_paint_reported = painted
++                        self._log_info(
++                            f"Startup +{startup_elapsed_ms:.1f} ms: first paint on {startup_widget_label}"
++                        )
+         spectrum_viewport = getattr(getattr(self, "spectrum_plot", None), "viewport", None)
+         if spectrum_viewport is not None and obj is spectrum_viewport():
+             event_type = event.type()
+@@ -3683,6 +3950,7 @@ class MainWindow(QMainWindow):
+         QMessageBox.information(
+             self,
+             "Diagnostics legend",
++            f"{self._diagnostics.startup_summary_text()}\n\n"
+             "Status strip:\n"
+             "src = source acquisition rate\n"
+             "disp = GUI display refresh rate\n"
+@@ -3909,13 +4177,6 @@ class MainWindow(QMainWindow):
+         self._analysis_metrics_cache_key = None
+         self._analysis_metrics_cache_result = {}
+         self._update_poly_warning_indicator(fit)
+-        self._log_throttled(
+-            "plot_refresh",
+-            f"Plot refreshed | mode={self.plot_selector.currentText().lower()} | fit={'on' if fit is not None else 'off'}",
+-            level=logging.DEBUG,
+-            min_interval=0.75,
+-        )
+-
+         self._request_deferred_ui_refresh(trace_plot=True, trace_label="Metric position (nm)")
+         if self._pending_plot_request is not None:
+             pending = self._pending_plot_request
+@@ -4429,12 +4690,6 @@ class MainWindow(QMainWindow):
+             self.poly_marker.setData([], [])
+             self.centroid_marker.setData([], [])
+             self.gaussian_marker.setData([], [])
+-            self._log_throttled(
+-                "spectrum_refresh",
+-                f"Spectrum updated | points={len(processed.wavelengths_nm)} | fit={'yes' if fit is not None else 'no'} | invalid=all_nan",
+-                level=logging.DEBUG,
+-                min_interval=1.5,
+-            )
+             self._last_spectrum_marker_update_ms = (perf_counter() - marker_started) * 1000.0
+             return
+         max_index = int(finite_indices[int(np.argmax(np.asarray(processed.values, dtype=np.float64)[finite_indices]))])
+@@ -4467,13 +4722,7 @@ class MainWindow(QMainWindow):
+         self._set_scatter_marker(self.poly_marker, poly_x, poly_y, "poly")
+         self._set_scatter_marker(self.centroid_marker, centroid_x, centroid_y, "centroid")
+         self._last_spectrum_marker_update_ms = (perf_counter() - marker_started) * 1000.0
+-        self._log_throttled(
+-            "spectrum_refresh",
+-            f"Spectrum updated | points={len(processed.wavelengths_nm)} | fit={'yes' if fit is not None else 'no'}",
+-            level=logging.DEBUG,
+-            min_interval=1.5,
+-        )
+-
++        self._notify_startup_data_rendered("spectrum")
+     def _set_scatter_marker(self, marker: pg.ScatterPlotItem, x: float, y: float, label: str) -> None:
+         if not (np.isfinite(x) and np.isfinite(y)):
+             marker.setData([], [])
+@@ -4482,6 +4731,7 @@ class MainWindow(QMainWindow):
+ 
+     def _refresh_trace_plot(self, trace_label: str) -> None:
+         refresh_metric_plot_for(self, trace_label)
++        self._notify_startup_data_rendered("trace")
+ 
+     def _render_trace_series(
+         self,
+@@ -4662,8 +4912,10 @@ class MainWindow(QMainWindow):
+             return
+         if self._measurement_active and self._measurement_started_at is not None:
+             time_value = max((spectrum.acquired_at - self._measurement_started_at).total_seconds(), 0.0)
++        elif self._live_trace_started_at is not None:
++            time_value = max((spectrum.acquired_at - self._live_trace_started_at).total_seconds(), 0.0)
+         else:
+-            time_value = float(spectrum.acquired_at.timestamp())
++            time_value = float(getattr(self, "_trace_display_cursor_s", 0.0) or 0.0)
+         wavelengths = np.asarray(spectrum.wavelengths_nm, dtype=np.float64)
+         values = np.asarray(spectrum.values, dtype=np.float64)
+         axis_key = (
+@@ -4783,12 +5035,6 @@ class MainWindow(QMainWindow):
+             self._live_processing_worker.update_settings(self._current_processing_settings())
+         self._schedule_processing_refresh()
+         self._request_deferred_ui_refresh(summary=True)
+-        self._log_throttled(
+-            "processing_settings",
+-            "Processing settings updated.",
+-            level=logging.DEBUG,
+-            min_interval=1.0,
+-        )
+ 
+     def _apply_sensorgram_time_axis_mode(self, *, redraw: bool = True) -> None:
+         mode = str(getattr(self, "_sensorgram_time_axis_mode", "elapsed") or "elapsed").strip().lower()
+@@ -4807,12 +5053,6 @@ class MainWindow(QMainWindow):
+         current_mode = str(getattr(self, "_sensorgram_time_axis_mode", "elapsed") or "elapsed").strip().lower()
+         self._sensorgram_time_axis_mode = "clock" if current_mode != "clock" else "elapsed"
+         mode_text = "local" if self._sensorgram_time_axis_mode == "clock" else "elapsed"
+-        self._log_throttled(
+-            "trace_time_axis_mode",
+-            f"Trace time axis set to {mode_text} labels.",
+-            level=logging.INFO,
+-            min_interval=0.5,
+-        )
+         self._apply_sensorgram_time_axis_mode()
+ 
+     def _schedule_processing_refresh(self) -> None:
+diff --git a/src/lspr_app/gui/main_window_layout.py b/src/lspr_app/gui/main_window_layout.py
+index 6457103..bd4c020 100644
+--- a/src/lspr_app/gui/main_window_layout.py
++++ b/src/lspr_app/gui/main_window_layout.py
+@@ -254,6 +254,7 @@ def build_main_layout_for(window) -> None:
+     spectrum_layout.addWidget(window.spectrum_plot, 1)
+     spectrum_block.setLayout(spectrum_layout)
+     window._spectra_block = spectrum_block
++    spectrum_block.installEventFilter(window)
+ 
+     trace_block = QWidget()
+     trace_layout = QVBoxLayout()
+@@ -264,6 +265,7 @@ def build_main_layout_for(window) -> None:
+     trace_layout.addWidget(window.trace_plot, 1)
+     trace_block.setLayout(trace_layout)
+     window._sensorgram_block = trace_block
++    trace_block.installEventFilter(window)
+ 
+     window._top_content_stack = QStackedWidget()
+     window._top_content_stack.addWidget(spectrum_block)
+@@ -330,6 +332,7 @@ def build_main_layout_for(window) -> None:
+     container = QWidget()
+     container.setLayout(root_layout)
+     window._main_content_widget = container
++    container.installEventFilter(window)
+     window.setCentralWidget(container)
+     window._sensorgram_header_controls_ready = True
+     window._update_sensorgram_header_control_visibility()

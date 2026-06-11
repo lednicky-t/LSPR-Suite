@@ -1,0 +1,13 @@
+﻿ M src/lspr_app/app.py
+ M src/lspr_app/diagnostics.py
+ M src/lspr_app/gui/acquisition_controller.py
+ M src/lspr_app/gui/chrome.py
+ M src/lspr_app/gui/main_window.py
+ M src/lspr_app/gui/main_window_layout.py
+ M src/lspr_app/gui/main_window_logging.py
+ M src/lspr_app/gui/main_window_logging_ui.py
+ M src/lspr_app/gui/main_window_plotting.py
+ M src/lspr_app/gui/plot_controller.py
+ M src/lspr_app/gui/runtime_diagnostics.py
+ M src/lspr_app/gui/runtime_probe.py
+ M src/lspr_app/gui/workers.py
