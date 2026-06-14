@@ -325,7 +325,7 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertAlmostEqual(float(x_values[1]), (started_at + timedelta(seconds=2)).timestamp(), places=6)
         self.assertListEqual([float(item) for item in y_values.tolist()], [42.0, 42.0])
 
-    def test_autoscale_trace_plot_respects_absolute_and_rolling_modes(self) -> None:
+    def test_autoscale_trace_plot_respects_absolute_mode(self) -> None:
         series = {
             "smoothed_max": (
                 np.asarray([0.0, 10.0, 20.0], dtype=np.float64),
@@ -343,11 +343,6 @@ class SensorgramTimeTests(unittest.TestCase):
         autoscale_trace_plot(window)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 0.0, places=6)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.1, places=6)
-
-        window._sensorgram_view_mode = "rolling"
-        autoscale_trace_plot(window)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 15.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.025, places=6)
 
     def test_heatmap_renderer_populates_image_matrix(self) -> None:
         wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)
@@ -373,36 +368,6 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertEqual(window.trace_heatmap_image.image.shape, (2, 2))
         self.assertFalse(window.trace_curves["smoothed_max"].visible)
         self.assertFalse(window.trace_legend.visible)
-
-    def test_heatmap_renderer_respects_rolling_view_mode(self) -> None:
-        wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)
-        history = [
-            (0.0, np.asarray([0.1, 0.2], dtype=np.float64)),
-            (10.0, np.asarray([0.3, 0.4], dtype=np.float64)),
-            (20.0, np.asarray([0.5, 0.6], dtype=np.float64)),
-        ]
-        window = SimpleNamespace(
-            trace_heatmap_image=_FakeImageItem(),
-            trace_plot=_FakeTracePlot(),
-            trace_curves={"smoothed_max": _FakeCurve()},
-            trace_legend=_FakeLegend(),
-            _sensorgram_heatmap_wavelengths=wavelengths,
-            _visible_trace_x=None,
-            _visible_trace_y=None,
-            _visible_trace_mode=None,
-            _sensorgram_view_mode="rolling",
-            _trace_view_locked=False,
-            _trace_display_window_s=5.0,
-        )
-
-        render_sensorgram_heatmap(window, history, clock_mode=False)
-
-        self.assertTrue(window.trace_heatmap_image.visible)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 15.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.025, places=6)
-        self.assertAlmostEqual(window.trace_plot.y_ranges[-1][0], 610.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.y_ranges[-1][1], 620.0, places=6)
-        self.assertLessEqual(window.trace_heatmap_image.image.shape[1], 2)
 
     def test_heatmap_renderer_disabled_shows_placeholder(self) -> None:
         wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)

@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import threading
+import ctypes
 from dataclasses import dataclass
 from typing import Callable
 
@@ -91,6 +92,31 @@ SETTINGS_APPLICATION = "Suite Launcher"
 _LOG_LEVEL_RE = re.compile(r"^(?P<level>[A-Z]+):(?P<logger>[^:]+):")
 _LOG_LEVEL_BRACKET_RE = re.compile(r"^\[(?P<level>[A-Z]+)\]")
 _DIAGNOSTICS_PROFILES = ("off", "normal", "debug", "deep")
+_WM_CLOSE = 0x0010
+
+
+def _post_close_message_to_process(pid: int) -> bool:
+    if os.name != "nt":
+        return False
+    user32 = ctypes.windll.user32
+    result = {"sent": False}
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def _enum_windows(hwnd, _lparam):
+        proc_id = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(proc_id))
+        if int(proc_id.value) != int(pid):
+            return True
+        if user32.IsWindowVisible(ctypes.c_void_p(hwnd)) and user32.PostMessageW(ctypes.c_void_p(hwnd), _WM_CLOSE, 0, 0):
+            result["sent"] = True
+            return False
+        return True
+
+    try:
+        user32.EnumWindows(_enum_windows, 0)
+    except Exception:
+        return False
+    return bool(result["sent"])
 
 
 def _normalize_diagnostics_profile(value: object, default: str = "normal") -> str:
@@ -165,6 +191,7 @@ class LaunchCard(QFrame):
         self._launch_pending = False
         self._launch_pending_seconds = 0
         self._running = False
+        self._stopping = False
         self._launch_profile_text_colors = {
             LAUNCH_PROFILE_FULL: "#9FD7A6",
             LAUNCH_PROFILE_SIMULATION: "#F39C12",
@@ -332,6 +359,13 @@ class LaunchCard(QFrame):
             QPushButton#LaunchButton[launchState="pending"]:hover:!disabled {{
                 background-color: #d39d2e;
             }}
+            QPushButton#LaunchButton[launchState="closing"] {{
+                background-color: #8c6b1f;
+                color: #fff2c6;
+            }}
+            QPushButton#LaunchButton[launchState="closing"]:hover:!disabled {{
+                background-color: #a88327;
+            }}
             QPushButton#LaunchButton[autoLaunchPending="true"] {{
                 background-color: #b08924;
                 color: #fff6cc;
@@ -397,7 +431,11 @@ class LaunchCard(QFrame):
     def _refresh_primary_button_state(self) -> None:
         self.button.blockSignals(True)
         try:
-            if self._running:
+            if self._stopping:
+                self.button.setText("Closing...")
+                self.button.setProperty("launchState", "closing")
+                self.button.setToolTip(f"Waiting for {self.target.title} to close.")
+            elif self._running:
                 self.button.setText("Kill")
                 self.button.setProperty("launchState", "running")
                 self.button.setToolTip(f"Stop {self.target.title}.")
@@ -428,7 +466,24 @@ class LaunchCard(QFrame):
         self._running = bool(running)
         if self._running:
             self._launch_pending = False
+        self._stopping = False
         if running:
+            self.state_label.setText("Status: running")
+            self.state_label.setStyleSheet("color: #86efac; font-size: 10px; font-weight: 700; padding-top: 2px;")
+        else:
+            self.state_label.setText("Status: closed")
+            self.state_label.setStyleSheet("color: #8fb3d9; font-size: 10px; font-weight: 600; padding-top: 2px;")
+        self._refresh_primary_button_state()
+        self._update_profile_chip()
+
+    def set_stopping(self, stopping: bool) -> None:
+        self._stopping = bool(stopping)
+        if self._stopping:
+            self._launch_pending = False
+        if self._stopping:
+            self.state_label.setText("Status: closing")
+            self.state_label.setStyleSheet("color: #f0b45a; font-size: 10px; font-weight: 700; padding-top: 2px;")
+        elif self._running:
             self.state_label.setText("Status: running")
             self.state_label.setStyleSheet("color: #86efac; font-size: 10px; font-weight: 700; padding-top: 2px;")
         else:
@@ -719,27 +774,68 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Not running", f"{target.title} does not have a running instance from this hub.")
             return
 
+        card = self.cards.get(target.key)
+        if card is not None:
+            card.set_stopping(True)
+
         failed: list[int] = []
+        forced: list[int] = []
         for process in alive:
             try:
-                subprocess.run(
-                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
+                try:
+                    close_sent = _post_close_message_to_process(process.pid)
+                except Exception:
+                    close_sent = False
+                if close_sent:
+                    try:
+                        process.wait(timeout=6.0)
+                    except subprocess.TimeoutExpired:
+                        pass
+                if process.poll() is None:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    try:
+                        process.wait(timeout=3.0)
+                    except subprocess.TimeoutExpired:
+                        pass
+                if process.poll() is None:
+                    forced.append(process.pid)
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    try:
+                        process.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        pass
+                if process.poll() is None:
+                    failed.append(process.pid)
             except Exception:
                 failed.append(process.pid)
         self._refresh_running_app_statuses()
         if failed:
+            if card is not None:
+                card.set_running(False)
             QMessageBox.warning(
                 self,
                 "Kill request",
                 f"Tried to stop {target.title}, but some processes could not be reached: {', '.join(str(pid) for pid in failed)}.",
             )
             return
-        QMessageBox.information(self, "Stopped", f"Stopped running instance(s) of {target.title}.")
-        card = self.cards.get(target.key)
+        if forced:
+            QMessageBox.information(
+                self,
+                "Stopped",
+                f"Stopped running instance(s) of {target.title}. Some processes required a forced stop: {', '.join(str(pid) for pid in forced)}.",
+            )
+        else:
+            QMessageBox.information(self, "Stopped", f"Stopped running instance(s) of {target.title}.")
         if card is not None:
             card.set_running(False)
 
