@@ -175,6 +175,7 @@ TARGETS = [
         ),
         script="src/main.py",
         python_candidates=_candidate_paths(
+            *_venv_python(SUITE_ROOT / "apps" / "LSPRi" / "eva"),
             *_venv_python(LSPRIMAGING_ROOT),
         ),
         note="Implemented in this workspace. Set LSPR_LEGACY_IMAGING_ROOT to point at a legacy workspace if needed.",

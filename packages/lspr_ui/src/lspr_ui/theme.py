@@ -527,6 +527,38 @@ def startup_app_stylesheet(theme: GuiTheme | None = None) -> str:
         selection-background-color: {theme.primary_action_bg};
         font-size: 9pt;
     }}
+    QSpinBox, QDoubleSpinBox {{
+        padding-right: 18px;
+    }}
+    QSpinBox::up-button, QSpinBox::down-button,
+    QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+        subcontrol-origin: padding;
+        width: 16px;
+        background: {theme.control_bg};
+        border-left: 1px solid {theme.control_border};
+    }}
+    QSpinBox::up-button, QDoubleSpinBox::up-button {{
+        subcontrol-position: top right;
+        border-top-right-radius: 5px;
+        border-bottom: 1px solid {theme.control_border};
+    }}
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{
+        subcontrol-position: bottom right;
+        border-bottom-right-radius: 5px;
+    }}
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover,
+    QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
+        background: {theme.control_bg_hover};
+    }}
+    QSpinBox::up-button:pressed, QSpinBox::down-button:pressed,
+    QDoubleSpinBox::up-button:pressed, QDoubleSpinBox::down-button:pressed {{
+        background: {theme.control_bg_pressed};
+    }}
+    QSpinBox::up-arrow, QSpinBox::down-arrow,
+    QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow {{
+        width: 7px;
+        height: 7px;
+    }}
     QMenuBar {{ background: {theme.toolbar_section_bg}; border-bottom: 1px solid {theme.toolbar_border}; padding: 2px 4px; }}
     QMenuBar::item {{ background: transparent; color: {theme.text_secondary}; padding: 4px 8px; margin: 0 1px; border-radius: 5px; }}
     QMenuBar::item:selected {{ background: {theme.primary_action_bg}; color: {theme.text_primary}; }}
