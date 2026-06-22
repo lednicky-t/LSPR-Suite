@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="188.98" height="188.98" version="1.1" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<defs>
+<linearGradient id="a">
+<stop stop-color="#ab1aff" offset="0"/>
+<stop stop-color="#8bdb7c" offset=".16907"/>
+<stop stop-color="#ffd11a" offset=".41443"/>
+<stop stop-color="#72e06d" offset=".66804"/>
+<stop stop-color="#ab1aff" offset="1"/>
+</linearGradient>
+<linearGradient id="c" x1="61.268" x2="61.268" y1="47.072" y2="112.82" gradientTransform="translate(-38.193 -54.402)" gradientUnits="userSpaceOnUse" xlink:href="#a"/>
+<linearGradient id="b" x1="61.268" x2="61.268" y1="47.072" y2="112.82" gradientTransform="translate(-30.348 -54.402)" gradientUnits="userSpaceOnUse">
+<stop stop-color="#ab1aff" offset="0"/>
+<stop stop-color="#8bdb7c" offset=".081004"/>
+<stop stop-color="#ffd420" offset=".32636"/>
+<stop stop-color="#72e06d" offset=".60678"/>
+<stop stop-color="#bf4aff" offset="1"/>
+</linearGradient>
+<linearGradient id="h" x1="61.268" x2="61.268" y1="47.072" y2="112.82" gradientTransform="translate(-22.503 -54.402)" gradientUnits="userSpaceOnUse" xlink:href="#a"/>
+<linearGradient id="g" x1="61.268" x2="61.268" y1="47.072" y2="112.82" gradientTransform="translate(-14.658 -54.402)" gradientUnits="userSpaceOnUse" xlink:href="#a"/>
+<linearGradient id="f" x1="61.268" x2="61.268" y1="47.072" y2="112.82" gradientTransform="translate(-6.8123 -54.402)" gradientUnits="userSpaceOnUse">
+<stop stop-color="#ab1aff" offset="0"/>
+<stop stop-color="#8bdb7c" offset=".25728"/>
+<stop stop-color="#ffd11a" offset=".57068"/>
+<stop stop-color="#72e06d" offset=".82429"/>
+<stop stop-color="#ab1aff" offset="1"/>
+</linearGradient>
+<linearGradient id="e" x1="61.268" x2="61.268" y1="47.072" y2="112.82" gradientTransform="translate(1.0329 -54.402)" gradientUnits="userSpaceOnUse" xlink:href="#a"/>
+<linearGradient id="d" x1="61.268" x2="61.268" y1="47.072" y2="112.82" gradientTransform="translate(-46.039 -54.402)" gradientUnits="userSpaceOnUse" xlink:href="#a"/>
+</defs>
+<g transform="translate(-15.229 7.3306)">
+<g transform="matrix(.91047 0 0 .76045 1.3635 -1.7561)" stroke-width=".26458">
+<rect x="38.765" y="-7.3306" width="7.8453" height="65.751" fill="url(#h)"/>
+<rect x="23.074" y="-7.3306" width="7.8453" height="65.751" fill="url(#c)"/>
+<rect x="46.61" y="-7.3306" width="7.8453" height="65.751" fill="url(#g)"/>
+<rect x="54.456" y="-7.3306" width="7.8453" height="65.751" fill="url(#f)"/>
+<rect x="62.301" y="-7.3306" width="7.8453" height="65.751" fill="url(#e)"/>
+<rect x="15.229" y="-7.3306" width="7.8453" height="65.751" fill="url(#d)"/>
+<rect x="30.92" y="-7.3306" width="7.8453" height="65.751" fill="url(#b)"/>
+</g>
+</g>
+</svg>

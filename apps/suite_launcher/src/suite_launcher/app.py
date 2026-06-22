@@ -9,7 +9,7 @@ import ctypes
 from dataclasses import dataclass
 from typing import Callable
 
-from PyQt6.QtCore import QSettings, Qt, QTimer
+from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QApplication,
@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -494,16 +495,24 @@ class LaunchCard(QFrame):
 
 
 class MainWindow(QMainWindow):
+    launch_progress_changed = pyqtSignal(str, int, str)
+
     def __init__(self) -> None:
         super().__init__()
         self.settings = QSettings(SETTINGS_ORGANIZATION, SETTINGS_APPLICATION)
         self._countdown_remaining = 0
+        self._countdown_elapsed_ms = 0
         self._auto_launch_target: AppTarget | None = None
+        self._launch_progress_target_key: str | None = None
+        self._launch_progress_percent = 0
+        self._launch_progress_stage = "Idle"
+        self._launch_progress_detail = "Ready."
         self._diagnostics_profile = _settings_diagnostics_profile(self.settings)
         self.settings.setValue(SETTINGS_DIAGNOSTICS_PROFILE_KEY, self._diagnostics_profile)
         self.settings.sync()
+        self.launch_progress_changed.connect(self._handle_launch_progress_changed)
         self._countdown_timer = QTimer(self)
-        self._countdown_timer.setInterval(1000)
+        self._countdown_timer.setInterval(250)
         self._countdown_timer.timeout.connect(self._tick_auto_launch_countdown)
         self._auto_launch_timer = QTimer(self)
         self._auto_launch_timer.setSingleShot(True)
@@ -533,6 +542,20 @@ class MainWindow(QMainWindow):
         self.countdown_label.setObjectName("CountdownText")
         self.countdown_label.setWordWrap(True)
         header_layout.addWidget(self.countdown_label)
+
+        self.launch_progress_bar = QProgressBar()
+        self.launch_progress_bar.setObjectName("LaunchProgressBar")
+        self.launch_progress_bar.setRange(0, 100)
+        self.launch_progress_bar.setValue(0)
+        self.launch_progress_bar.setTextVisible(False)
+        self.launch_progress_bar.setFixedHeight(8)
+        self.launch_progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        header_layout.addWidget(self.launch_progress_bar)
+
+        self.launch_stage_label = QLabel("Idle")
+        self.launch_stage_label.setObjectName("LaunchStageText")
+        self.launch_stage_label.setWordWrap(True)
+        header_layout.addWidget(self.launch_stage_label)
         root_layout.addWidget(header)
 
         self.cards: dict[str, LaunchCard] = {}
@@ -574,6 +597,22 @@ class MainWindow(QMainWindow):
                 font-size: 10px;
                 padding-top: 1px;
             }
+            QProgressBar#LaunchProgressBar {
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 4px;
+            }
+            QProgressBar#LaunchProgressBar::chunk {
+                border-radius: 4px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                            stop:0 #4C8BF5, stop:0.55 #3AAFA9, stop:1 #F39C12);
+            }
+            QLabel#LaunchStageText {
+                color: #d7e7ff;
+                font-size: 9px;
+                font-weight: 600;
+                padding-top: 1px;
+            }
             """
         )
 
@@ -592,13 +631,21 @@ class MainWindow(QMainWindow):
         target = self._get_last_target()
         if target is None:
             self.countdown_label.setText("No recent app selected yet. Choose one to remember it for next time.")
+            self._set_launch_progress(None, 0, "Idle", "Waiting for a remembered app.")
             return
 
         self._auto_launch_target = target
         self._countdown_remaining = AUTO_LAUNCH_DELAY_MS // 1000
+        self._countdown_elapsed_ms = 0
         self._update_auto_launch_card_state()
         self.countdown_label.setText(
             f"Last opened app remembered: {target.title}. Launching automatically in {self._countdown_remaining}s."
+        )
+        self._set_launch_progress(
+            target.key,
+            8,
+            "Queued",
+            f"Remembered app selected: {target.title}. Preparing automatic launch.",
         )
         self._countdown_timer.start()
         self._auto_launch_timer.start(AUTO_LAUNCH_DELAY_MS)
@@ -607,8 +654,17 @@ class MainWindow(QMainWindow):
         if self._auto_launch_target is None:
             self._countdown_timer.stop()
             return
-        self._countdown_remaining -= 1
-        if self._countdown_remaining <= 0:
+        self._countdown_elapsed_ms += self._countdown_timer.interval()
+        remaining_ms = max(AUTO_LAUNCH_DELAY_MS - self._countdown_elapsed_ms, 0)
+        self._countdown_remaining = int((remaining_ms + 999) // 1000)
+        progress = int(round(8 + ((AUTO_LAUNCH_DELAY_MS - remaining_ms) / max(AUTO_LAUNCH_DELAY_MS, 1)) * 12))
+        self._set_launch_progress(
+            self._auto_launch_target.key,
+            progress,
+            "Queued",
+            f"Auto-launch in {max(self._countdown_remaining, 0)}s for {self._auto_launch_target.title}.",
+        )
+        if remaining_ms <= 0:
             self.countdown_label.setText(f"Launching {self._auto_launch_target.title}...")
             self._countdown_timer.stop()
             self._update_auto_launch_card_state()
@@ -625,6 +681,9 @@ class MainWindow(QMainWindow):
         self._countdown_timer.stop()
         self._auto_launch_target = None
         self._countdown_remaining = 0
+        self._countdown_elapsed_ms = 0
+        if self._launch_progress_stage == "Queued":
+            self._set_launch_progress(None, 0, "Idle", "Ready.")
 
     def _update_auto_launch_card_state(self, *, clear: bool = False) -> None:
         pending_key = None if clear else getattr(self._auto_launch_target, "key", None)
@@ -693,6 +752,7 @@ class MainWindow(QMainWindow):
         card = self.cards.get(target.key)
         if card is not None:
             card.set_running(True)
+        self._set_launch_progress(target.key, 100, "Running", f"{target.title} is running.")
 
     def handle_launch_request(self, target: AppTarget) -> None:
         pending_key = getattr(self._auto_launch_target, "key", None)
@@ -719,6 +779,7 @@ class MainWindow(QMainWindow):
 
     def _launch_target(self, target: AppTarget) -> None:
         try:
+            self._set_launch_progress(target.key, 22, "Preparing", f"Preparing launch for {target.title}.")
             processes = self._processes_by_key.get(target.key, [])
             if any(process.poll() is None for process in processes):
                 card = self.cards.get(target.key)
@@ -734,19 +795,29 @@ class MainWindow(QMainWindow):
             if target.key == "slspr_acq":
                 diagnostics_profile = self._current_diagnostics_profile()
                 diagnostics_export_enabled = diagnostics_profile == "deep"
+                self._set_launch_progress(
+                    target.key,
+                    35,
+                    "Configuring",
+                    f"Configuring diagnostics and launch profile for {target.title}.",
+                )
                 extra_env = {
                     LAUNCH_PROFILE_ENV_VAR: self._current_launch_profile_key(),
                     "LSPR_DIAGNOSTICS_PROFILE": diagnostics_profile,
                     "LSPR_QUIET_DIAGNOSTICS": "1" if diagnostics_profile == "off" else "0",
                     "LSPR_SUPPRESS_DIAGNOSTIC_INFO_LOGS": "1" if diagnostics_profile == "off" else "0",
                     "LSPR_DISABLE_DIAGNOSTIC_EXPORT": "0" if diagnostics_export_enabled else "1",
+                    "TOP_CONTENT_TRACE": os.environ.get("TOP_CONTENT_TRACE", "1" if diagnostics_profile == "deep" else "0"),
                 }
                 sys.stdout.write(
                     f"[suite_launcher] launching {target.title} | "
-                    f"diagnostics={diagnostics_profile}\n"
+                    f"diagnostics={diagnostics_profile} | "
+                    f"top_content_trace={extra_env['TOP_CONTENT_TRACE']}\n"
                 )
                 sys.stdout.flush()
+            self._set_launch_progress(target.key, 45, "Spawning", f"Starting {target.title} process.")
             command, cwd, env = target.build_command(extra_env=extra_env)
+            self._set_launch_progress(target.key, 58, "Spawning", f"Launching from {cwd}.")
             process = subprocess.Popen(
                 command,
                 cwd=str(cwd),
@@ -757,10 +828,12 @@ class MainWindow(QMainWindow):
                 bufsize=1,
             )
             self._processes_by_key.setdefault(target.key, []).append(process)
-            self._forward_process_output(process, target.title)
+            self._set_launch_progress(target.key, 70, "Running", f"{target.title} is starting up.")
+            self._forward_process_output(process, target)
             self._mark_started(target)
             self._refresh_running_app_statuses()
         except Exception as exc:
+            self._set_launch_progress(None, 0, "Failed", f"Launch failed: {exc}")
             QMessageBox.critical(self, "Launch failed", f"Could not open {target.title}:\n{exc}")
             return
 
@@ -851,7 +924,7 @@ class MainWindow(QMainWindow):
             if card is not None:
                 card.set_running(bool(alive))
 
-    def _forward_process_output(self, process: subprocess.Popen[object], title: str) -> None:
+    def _forward_process_output(self, process: subprocess.Popen[object], target: AppTarget) -> None:
         stream = process.stdout
         if stream is None:
             return
@@ -868,13 +941,39 @@ class MainWindow(QMainWindow):
                 return match.group("level") in {"WARNING", "ERROR", "CRITICAL"}
             return False
 
+        def _maybe_emit_progress(text: str) -> None:
+            key = target.key
+            if key != "slspr_acq":
+                return
+            progress_map: list[tuple[str, int, str]] = [
+                ("Constructing main window...", 78, "Constructing main window"),
+                ("Main window constructed.", 84, "Main window constructed"),
+                ("startup wiring complete", 90, "Startup wiring complete"),
+                ("first showEvent reached", 94, "Main window shown"),
+                ("first data render on trace", 97, "First sensorgram data rendered"),
+                ("first data render on spectrum", 100, "First spectrum data rendered"),
+                ("Ready | source=", 88, "Application ready"),
+            ]
+            lowered = text.casefold()
+            for needle, percent, stage in progress_map:
+                if needle.casefold() in lowered:
+                    self.launch_progress_changed.emit(
+                        key,
+                        percent,
+                        stage,
+                    )
+                    return
+
         def _pump_output() -> None:
             try:
                 for line in iter(stream.readline, ""):
                     if not line:
                         break
+                    text = line.strip()
+                    if text:
+                        _maybe_emit_progress(text)
                     if _should_forward_line(line):
-                        sys.stdout.write(f"[{title}] {line}")
+                        sys.stdout.write(f"[{target.title}] {line}")
                         sys.stdout.flush()
             finally:
                 try:
@@ -883,6 +982,28 @@ class MainWindow(QMainWindow):
                     pass
 
         threading.Thread(target=_pump_output, daemon=True).start()
+
+    def _set_launch_progress(self, target_key: str | None, percent: int, stage: str, detail: str) -> None:
+        self._launch_progress_target_key = target_key
+        self._launch_progress_percent = max(0, min(int(percent), 100))
+        self._launch_progress_stage = str(stage).strip() or "Working"
+        self._launch_progress_detail = str(detail).strip() or "Working..."
+        self.launch_progress_bar.setValue(self._launch_progress_percent)
+        self.launch_stage_label.setText(f"{self._launch_progress_stage}: {self._launch_progress_detail}")
+        if target_key is None:
+            self.launch_progress_bar.setFormat("")
+        else:
+            self.launch_progress_bar.setFormat(f"{self._launch_progress_percent}%")
+        self.launch_progress_bar.setVisible(True)
+
+    def _handle_launch_progress_changed(self, target_key: str, percent: int, stage: str) -> None:
+        if self._launch_progress_target_key is not None and target_key != self._launch_progress_target_key:
+            return
+        target = TARGETS_BY_KEY.get(target_key)
+        detail = stage
+        if target is not None:
+            detail = f"{target.title}: {stage}"
+        self._set_launch_progress(target_key, percent, stage, detail)
 
 
 def _apply_palette(app: QApplication) -> None:

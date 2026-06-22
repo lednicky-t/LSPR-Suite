@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lspr-acquisition"
+description = "Desktop LSPR acquisition and experiment-control application."
+readme = "README.md"
+requires-python = ">=3.12"
+dynamic = ["version"]
+dependencies = [
+    "h5py",
+    "numpy",
+    "PyQt6",
+    "pyqtgraph",
+    "pyserial",
+    "PyYAML",
+    "scipy",
+    "seabreeze",
+    "tabler-qicon",
+    "lspr-ui>=0.1.0",
+    "lspr-core>=0.1.0",
+    "lspr-io>=0.1.0",
+]
+
+[project.scripts]
+lspr-acquisition = "lspr_app.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "lspr_app.__version__"}
+
+[tool.setuptools.package-data]
+"lspr_app.resources" = ["icons/*.svg"]
