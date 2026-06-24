@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Iterable
 
 
-SUITE_ROOT = Path(__file__).resolve().parents[4]
+def _suite_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[4]
+
+
+SUITE_ROOT = _suite_root()
 
 
 def _env_path(name: str) -> Path | None:
