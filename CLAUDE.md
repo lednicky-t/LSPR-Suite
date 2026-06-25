@@ -1,0 +1,216 @@
+# CLAUDE.md — LSPR Suite
+
+This file is for AI coding agents. It describes what this repo is, how to navigate it, and what rules to follow.
+
+See `AGENTS.md` for the full engineering policy, scientific computing rules, GUI/UX rules, and prompt templates.
+This file focuses on repo topology, commands, and quick-reference maps.
+
+---
+
+## What This Repo Is
+
+Python scientific software suite for LSPR (Localized Surface Plasmon Resonance) measurements.
+Target users: scientists and students, not IT professionals.
+
+Four apps, three as git submodules, one (suite launcher) living directly in this repo:
+
+| App | Path | Package | Entry point |
+|-----|------|---------|-------------|
+| singleLSPR Acquisition | `apps/sLSPR/acq` | `lspr_app` | `lspr-acquisition` |
+| singleLSPR Evaluation | `apps/sLSPR/eva` | `lspr_single_evaluation` | `lspr-single-evaluation` |
+| LSPRimaging Evaluation | `apps/LSPRi/eva` | `lspr_imaging_app` | `lspri-evaluation` |
+| Suite Launcher | `apps/suite_launcher` | `suite_launcher` | `lspr-suite` |
+
+`LSPRimaging Acquisition` is reserved for future work and does not exist yet.
+
+---
+
+## Shared Packages
+
+| Package | Path | Purpose |
+|---------|------|---------|
+| `lspr-core` | `packages/lspr_core` | Domain models, schema identity, experiment plan steps, units |
+| `lspr-io` | `packages/lspr_io` | HDF5/session file helpers, schema stamping, version readers |
+| `lspr-ui` | `packages/lspr_ui` | Qt theme tokens, icon helpers, app bootstrap utilities |
+
+Add cross-app logic here, not inside individual app packages.
+
+---
+
+## Setup
+
+```powershell
+git clone --recurse-submodules https://github.com/lednicky-t/LSPR-Suite.git
+cd LSPR-Suite
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+`requirements.txt` installs all three packages and all four apps in editable mode.
+
+Python ≥ 3.12 is required. On Windows, make sure `python` resolves to your system install, not the Inkscape-bundled interpreter.
+
+Optional hardware dependency (AMF M-Switch):
+```powershell
+python -m pip install AMFTools
+```
+Without it, M-Switch controls in the acquisition app are disabled.
+
+---
+
+## Running Apps
+
+```powershell
+lspr-suite                  # Suite launcher (recommended entry point)
+lspr-acquisition            # singleLSPR acquisition directly
+lspr-single-evaluation      # singleLSPR evaluation directly
+lspri-evaluation            # LSPRimaging evaluation directly
+```
+
+For VS Code "Run Python File", use the `run.py` file in each app directory.
+
+The launcher supports three profiles for the acquisition app (selectable inline in the card):
+- `Full` — real hardware discovery and auto-connect
+- `Simulation` — skips discovery, runs in simulation mode
+- `Control editor` — opens the experiment-control editor only
+
+---
+
+## Running Tests
+
+Tests live in `tests/` at the repo root, split into two subdirectories.
+
+```powershell
+python -m pytest tests/              # run everything
+python -m pytest tests/unit/        # pure-logic tests only (fast, no Qt, no files)
+python -m pytest tests/integration/ # Qt, HDF5, device-mock, and workflow tests
+```
+
+All tests pass without real hardware. Simulated instruments replace hardware for normal test runs.
+Use tolerances for floating-point assertions, not exact equality.
+
+---
+
+## Where Code Lives
+
+### singleLSPR Acquisition (`apps/sLSPR/acq/src/lspr_app/`)
+
+```
+app.py            — entry point
+gui/              — all Qt windows, widgets, dialogs
+  main_window*.py — main window split into lifecycle, layout, plotting, etc.
+  experiment_control_*.py — experiment control subsystem
+  workers.py      — background acquisition workers
+device/           — hardware interfaces (Ocean spectrometer, Arduino, Reglo ICC, AMF)
+  base.py         — device interface ABC
+  simulated.py    — simulated spectrometer for tests/simulation mode
+  ocean.py        — Ocean Insight seabreeze backend
+domain/           — typed data models (measurement, pump plan, session)
+storage/          — HDF5 recording and async file writing
+diagnostics.py    — runtime diagnostics and probe
+```
+
+### singleLSPR Evaluation (`apps/sLSPR/eva/src/lspr_single_evaluation/`)
+
+```
+app.py            — entry point
+gui/              — Qt windows
+analysis.py       — peak position, centroid, FWHM computations
+processing.py     — spectrum processing pipeline
+models.py         — data models
+io.py             — HDF5 / pump-plan file loading
+```
+
+### LSPRimaging Evaluation (`apps/LSPRi/eva/src/lspr_imaging_app/`)
+
+```
+app.py            — entry point
+gui/              — Qt windows and controllers
+  main_window.py
+  *_controller.py — dedicated controllers for dataset, image, analysis, ROI, etc.
+domain/           — models (ROI, image stack)
+processing/       — image analysis algorithms (ROI, chromatic, spot detection)
+io/               — TIFF loading, format versioning
+storage/          — session state persistence
+```
+
+### Suite Launcher (`apps/suite_launcher/src/suite_launcher/`)
+
+```
+app.py            — entry point, Qt window with four app cards
+targets.py        — app path resolution (workspace vs legacy paths)
+version.py
+```
+
+---
+
+## Submodule Workflow
+
+Each app repo has its own git history. To change app code:
+
+1. Edit files inside the submodule directory (`apps/sLSPR/acq`, etc.).
+2. Commit and push from within that directory (it is its own repo).
+3. Update the submodule pointer in this umbrella repo:
+   ```powershell
+   git add apps/sLSPR/acq
+   git commit -m "bump sLSPR/acq submodule"
+   ```
+
+Do not commit app changes directly to the umbrella repo — commit them in the submodule first.
+
+---
+
+## Key Settings and Config Files
+
+- `lspr_settings.json` — runtime state (window positions, UI mode). **Gitignored.** Do not commit it.
+- `apps/sLSPR/eva/lspr_evaluation_settings.json` — evaluation-app UI state. Also gitignored.
+- `docs/schemas/` — HDF5 format contracts (authoritative, do not change lightly).
+
+---
+
+## HDF5 Data Contract
+
+Shared rules for measurement files are in `docs/schemas/hdf_standard.md`. Short version:
+
+- Every file must carry: `schema_name`, `schema_version`, `app_name`, `app_version`, `created_at_utc`.
+- Raw data is appended, never overwritten.
+- Derived/processed data goes in separate groups.
+- Readers must reject unknown schema names and incompatible major versions.
+- Breaking changes → major version bump; additive changes → minor bump.
+
+---
+
+## Architecture Documents to Read Before Changing the Acquisition Pipeline
+
+These are in `apps/sLSPR/acq/docs/` and are referenced as authoritative in `AGENTS.md`:
+
+- `runtime_pipeline_architecture.md` — lossless raw acquisition vs lossy UI rules (read first)
+- `CODEX_ARCHITECTURE_RAILS_V7.md` — architecture split design
+- `CODEX_IMPLEMENTATION_GUIDE_V8_LOSSLESS_ACQ_AND_LOSSY_UI.md` — step-by-step implementation
+- `CODEX_RUNTIME_SIMPLICITY_GUIDE_V12.md` — anti-orchestration guidance
+
+Core rule: **acquisition and file writing must be lossless; processing and GUI display may skip stale frames.**
+
+---
+
+## Engineering Priority Order
+
+From `AGENTS.md` (do not reorder without explicit instruction):
+
+1. Correctness and scientific validity
+2. Data integrity and reproducibility
+3. Maintainability and readability
+4. Modularity and testability
+5. Performance
+6. GUI polish
+
+---
+
+## Common Pitfalls
+
+- **Startup popup bug pattern**: do not call `showPopup()` during widget construction. Default popup readiness to `False` and enable only after startup wiring is complete. Use explicit state propagation, not `getattr(..., True)` fallbacks.
+- **Main window is split across files**: `main_window.py`, `main_window_layout.py`, `main_window_lifecycle.py`, etc. Check all of them before assuming you know how a feature is wired.
+- **GUI thread blocking**: long acquisition, file loading, fitting, and image processing must run off the main thread. Workers are in `gui/workers.py`.
+- **Don't mix scientific code with GUI code.** Analysis functions must work without a running Qt application.
+- **Raw data is sacred**: never overwrite raw measurement data. Derived results live in separate groups/files.
