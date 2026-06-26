@@ -160,6 +160,18 @@ Avoid chaining callbacks such as queue -> scheduler -> deferred flush -> throttl
 Before adding a helper or abstraction, explain what concrete boundary or repeated logic it simplifies, and verify it does not create hidden control flow, duplicate state, or event-loop work.
 Prefer deleting or bypassing unnecessary orchestration over adding new coordination code.
 
+**Runtime pipeline invariant:**
+Raw acquisition and active recording are lossless and independent of GUI speed.
+Latest-only queues and skipped-frame policies are allowed only for processing,
+fitting, metric preview, and plotting.  Manual refresh rate controls
+processing/display freshness, not raw recording.  Any raw recording queue
+overflow is a serious acquisition/recording error and must be surfaced
+explicitly.
+
+See `apps/sLSPR/acq/docs/runtime_pipeline_architecture.md` for the full
+live acquisition/processing/display contract, queue inventory, counter
+definitions, and scheduler policy.
+
 ## GUI And UX Rules
 
 The GUI is for scientific users who may not be programmers.
