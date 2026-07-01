@@ -226,5 +226,82 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
         self.assertTrue(any("Live acquisition backend stopped" in message for _, _, message in records))
 
 
+class LiveProcessingWorkerDrainTest(unittest.TestCase):
+    """The processing worker must skip intermediate frames and process only the
+    latest one when multiple frames accumulate in the input queue faster than
+    the display rate can consume them."""
+
+    def _run_worker_with_n_frames(self, n_frames: int) -> list:
+        """Push *n_frames* into the input queue before the worker starts, then
+        collect all results."""
+        ctx = mp.get_context("spawn")
+        stop_event = ctx.Event()
+        result_queue = ctx.Queue(maxsize=n_frames + 4)
+        input_queue = ctx.Queue(maxsize=n_frames + 4)
+        worker = LiveProcessingWorker(
+            result_queue,
+            input_queue,
+            stop_event,
+            ProcessingSettings(),
+            debug_mode_enabled=False,
+            log_queue=ctx.Queue(maxsize=8),
+        )
+
+        spectrum = _build_test_spectrum()
+        for i in range(n_frames):
+            input_queue.put(
+                LiveAcquisitionEvent(
+                    result=AcquisitionResult(
+                        spectrum=spectrum,
+                        elapsed_ms=1.0,
+                        settings=AcquisitionSettings(),
+                        source_epoch=1,
+                    ),
+                    source_epoch=1,
+                    source_sample_index=i,
+                    produced_at_perf=perf_counter(),
+                )
+            )
+
+        worker.start()
+        results = []
+        deadline = perf_counter() + 8.0
+        try:
+            # Collect at most n_frames results (may be fewer due to drain-skip).
+            # Keep polling until the deadline — don't break on Empty, because
+            # the spawned process takes ~1-2 s to start.
+            while perf_counter() < deadline and len(results) < n_frames:
+                try:
+                    results.append(result_queue.get(timeout=0.2))
+                except queue.Empty:
+                    if results:
+                        # Got at least one result and queue is now empty — done.
+                        break
+                    # Still waiting for the process to start — keep polling.
+        finally:
+            stop_event.set()
+            worker.join(timeout=5.0)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=2.0)
+        return results
+
+    def test_single_frame_is_processed(self) -> None:
+        results = self._run_worker_with_n_frames(1)
+        self.assertEqual(len(results), 1)
+        self.assertIsNotNone(results[0].result)
+        self.assertIsNotNone(results[0].result.processed)
+
+    def test_multiple_queued_frames_produce_fewer_results(self) -> None:
+        # With 8 frames pre-queued, drain-and-skip means the worker processes
+        # far fewer than 8 — it collapses the burst to 1 or 2 results.
+        results = self._run_worker_with_n_frames(8)
+        self.assertGreater(len(results), 0, "at least one result must be produced")
+        self.assertLess(len(results), 8, "burst of 8 frames should be collapsed by drain-skip")
+        for r in results:
+            self.assertIsNotNone(r.result)
+            self.assertIsNotNone(r.result.processed)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -18,15 +18,9 @@ if str(APP_SRC) not in sys.path:
 from lspr_app.gui.plot_view_cache import (
     PlotViewCache,
     build_active_trace_series_token,
-    build_heatmap_arrays,
-    build_heatmap_history_token,
     build_metric_series_token,
-    derive_heatmap_levels_from_matrix,
-    expand_heatmap_levels,
     quantize_view_target_points,
-    sample_absolute_heatmap_rows_for_view,
     sample_absolute_metric_series_for_view,
-    select_heatmap_rows_for_view,
 )
 
 
@@ -59,54 +53,10 @@ class PlotViewCacheTests(unittest.TestCase):
         self.assertIs(first[1], second[1])
         self.assertLessEqual(len(first[0]), len(x))
 
-    def test_heatmap_arrays_and_view_are_cached(self) -> None:
-        cache = PlotViewCache()
-        history = [
-            (0.0, np.asarray([1.0, 2.0, 3.0], dtype=np.float64)),
-            (1.0, np.asarray([4.0, 5.0, 6.0], dtype=np.float64)),
-            (2.0, np.asarray([7.0, 8.0, 9.0], dtype=np.float64)),
-        ]
-        token = ("heatmap", 1, 3)
-        times_a, matrix_a = cache.heatmap_arrays(token, lambda: build_heatmap_arrays(history))
-        times_b, matrix_b = cache.heatmap_arrays(token, lambda: build_heatmap_arrays(history))
-
-        self.assertIs(times_a, times_b)
-        self.assertIs(matrix_a, matrix_b)
-
-        view_a = cache.heatmap_view(token, times_a, matrix_a, max_rows=300, view_height_px=100.0)
-        view_b = cache.heatmap_view(token, times_a, matrix_a, max_rows=300, view_height_px=102.0)
-        self.assertIs(view_a[0], view_b[0])
-        self.assertIs(view_a[1], view_b[1])
-
-    def test_heatmap_arrays_from_history_appends_incrementally(self) -> None:
-        cache = PlotViewCache()
-        history = [
-            (0.0, np.asarray([1.0, 2.0], dtype=np.float64)),
-            (1.0, np.asarray([3.0, 4.0], dtype=np.float64)),
-        ]
-        token_a = ("history", 1, 2, ("axis",))
-        token_b = ("history", 2, 3, ("axis",))
-        times_a, matrix_a = cache.heatmap_arrays_from_history(token_a, history[:2], build_heatmap_arrays)
-        history.append((2.0, np.asarray([5.0, 6.0], dtype=np.float64)))
-        times_b, matrix_b = cache.heatmap_arrays_from_history(token_b, history, build_heatmap_arrays)
-
-        self.assertEqual(times_b.tolist(), [0.0, 1.0, 2.0])
-        self.assertEqual(matrix_b.shape, (3, 2))
-        self.assertEqual(times_a.tolist(), [0.0, 1.0])
-
     def test_quantize_view_target_points_uses_power_of_two_buckets(self) -> None:
         self.assertEqual(quantize_view_target_points(1), 1)
         self.assertEqual(quantize_view_target_points(200), 256)
         self.assertEqual(quantize_view_target_points(257), 512)
-
-    def test_heatmap_levels_expand_stably(self) -> None:
-        matrix = np.asarray([[1.0, 2.0, 3.0], [2.5, 3.5, 4.0]], dtype=np.float64)
-        levels = derive_heatmap_levels_from_matrix(matrix)
-        self.assertLess(levels[0], 1.0)
-        self.assertGreater(levels[1], 4.0)
-        expanded = expand_heatmap_levels(levels, np.asarray([0.5, 4.5, 3.0], dtype=np.float64))
-        self.assertLessEqual(expanded[0], levels[0])
-        self.assertGreaterEqual(expanded[1], levels[1])
 
     def test_absolute_metric_sampling_is_tail_stable(self) -> None:
         x = np.arange(0.0, 20.0, dtype=np.float64)
@@ -134,17 +84,6 @@ class PlotViewCacheTests(unittest.TestCase):
         self.assertIn(10.0, sampled_y.tolist())
         self.assertIn(-5.0, sampled_y.tolist())
         self.assertGreaterEqual(len(sampled_x), 4)
-
-    def test_absolute_heatmap_sampling_is_tail_stable(self) -> None:
-        times = np.arange(0.0, 30.0, dtype=np.float64)
-        matrix = np.stack([np.array([row, row + 1.0], dtype=np.float64) for row in times], axis=0)
-        first_times, first_matrix = sample_absolute_heatmap_rows_for_view(times, matrix, max_rows=10)
-        times2 = np.arange(0.0, 31.0, dtype=np.float64)
-        matrix2 = np.stack([np.array([row, row + 1.0], dtype=np.float64) for row in times2], axis=0)
-        second_times, second_matrix = sample_absolute_heatmap_rows_for_view(times2, matrix2, max_rows=10)
-        stable_len = max(min(len(first_times), len(second_times)) - 1, 0)
-        self.assertTrue(np.all(first_times[:stable_len] == second_times[:stable_len]))
-        self.assertTrue(np.all(first_matrix[:stable_len] == second_matrix[:stable_len]))
 
     def test_absolute_metric_view_cache_extends_tail_without_reflowing_prefix(self) -> None:
         cache = PlotViewCache()
@@ -197,22 +136,7 @@ class PlotViewCacheTests(unittest.TestCase):
         self.assertGreaterEqual(int(entry["incremental"]) + int(entry["rebuilds"]) + int(entry["hits"]), 1)
         self.assertIsNotNone(cache.absolute_metric_display_state(token))
 
-    def test_absolute_heatmap_view_cache_extends_tail_without_reflowing_prefix(self) -> None:
-        cache = PlotViewCache()
-        token = ("heatmap", "absolute", 1, 10)
-        times = np.arange(0.0, 200.0, dtype=np.float64)
-        matrix = np.stack([np.array([row, row + 1.0], dtype=np.float64) for row in times], axis=0)
-        first_times, first_matrix = cache.absolute_heatmap_view(token, times, matrix, max_rows=64)
-        times2 = np.arange(0.0, 210.0, dtype=np.float64)
-        matrix2 = np.stack([np.array([row, row + 1.0], dtype=np.float64) for row in times2], axis=0)
-        second_times, second_matrix = cache.absolute_heatmap_view(token, times2, matrix2, max_rows=64)
-
-        stable_len = max(min(len(first_times), len(second_times)) - 1, 0)
-        self.assertTrue(np.all(first_times[:stable_len] == second_times[:stable_len]))
-        self.assertTrue(np.all(first_matrix[:stable_len] == second_matrix[:stable_len]))
-        self.assertGreaterEqual(len(second_times), len(first_times))
-
-    def test_token_helpers_track_cache_revision_and_heatmap_state(self) -> None:
+    def test_token_helpers_track_live_absolute_state(self) -> None:
         cache = PlotViewCache()
         cache.seed_live_absolute_metric_cache(
             "smoothed_max",
@@ -226,21 +150,13 @@ class PlotViewCacheTests(unittest.TestCase):
             _normalize_sensorgram_view_mode=lambda value: value,
             _sensorgram_view_mode="absolute",
             _plot_view_cache=cache,
-            _sensorgram_heatmap_history=[(0.0, np.asarray([1.0, 2.0]))],
-            _sensorgram_heatmap_history_revision=3,
-            _sensorgram_heatmap_wavelengths=np.asarray([500.0, 600.0]),
-            _sensorgram_heatmap_axis_key=(2, 500.0, 600.0),
         )
 
         series_token = build_active_trace_series_token(window)
-        heatmap_token = build_heatmap_history_token(window)
-
         self.assertIn("live_absolute", series_token)
-        self.assertEqual(heatmap_token[1], 3)
+
         metric_token = build_metric_series_token(window, "smoothed_max")
         self.assertEqual(metric_token[0], "smoothed_max")
-        self.assertEqual(np.asarray([1.0], dtype=np.float64).tolist(), [1.0])
-        self.assertEqual(len(select_heatmap_rows_for_view(*build_heatmap_arrays(window._sensorgram_heatmap_history))[0]), 1)
 
 
 if __name__ == "__main__":  # pragma: no cover

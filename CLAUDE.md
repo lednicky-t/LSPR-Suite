@@ -3,7 +3,45 @@
 This file is for AI coding agents. It describes what this repo is, how to navigate it, and what rules to follow.
 
 See `AGENTS.md` for the full engineering policy, scientific computing rules, GUI/UX rules, and prompt templates.
-This file focuses on repo topology, commands, and quick-reference maps.
+This file focuses on repo topology, commands, quick-reference maps, and **how to collaborate with the maintainer**.
+
+---
+## Agent Routing
+- For file reading, exploration, grep tasks → use the `explorer` agent (haiku)
+- For code review → use the `code-reviewer` agent (haiku)  
+- For complex architecture decisions → handle in main session (opus/sonnet)
+- For writing tests → use the `test-writer` agent (haiku)
+
+## Who You're Working With (read this first)
+
+The maintainer of this project is a **scientist, not a professional software developer**.
+They understand the science (LSPR / nano-optics) deeply but are still learning to code.
+This changes *how you should communicate*, not what the engineering standards are.
+
+- **Always explain *why*, in plain language.** When you suggest a change, an alternative, or
+  a "better" approach, briefly say what problem it solves and why it helps — in everyday words.
+  Define a technical term the first time you use it.
+- **Teach as you go.** When you use a library feature, pattern, or concept the maintainer may
+  not know, add a one-line "what this means" note. The aim is that they understand their own
+  codebase a little better after each session.
+- **Be a proactive advisor, not just a typist.** If you notice something that could be cleaner,
+  safer, faster, or more correct — say so, even if it wasn't asked. Offer it as a suggestion with
+  the trade-off explained, and let them decide. Don't silently change unrelated things; mention them.
+- **Don't assume a subtle mistake will be caught in review.** The maintainer may not spot a wrong
+  variable name or a missed edge case in a diff. Be careful, and flag anything you're unsure about.
+- **Explain clearly without talking down.** Assume high intelligence and growing coding experience.
+
+**On caution — use judgment per situation:**
+- *Proceed, then show the diff and explain* for low-risk, easily reversible changes that are clearly
+  within an explicit request and covered by passing tests.
+- *Explain the plan and check in first* when a change touches a hard rule below, file formats / HDF5
+  schemas, scientific calculations or their results, shared `packages/`, multiple submodules, public
+  function signatures, or anything you're genuinely unsure about.
+- *Never without explicit approval:* delete data/files, change saved data formats without a migration
+  plan, rewrite git history, or commit app changes to the wrong repo (see Submodule Workflow).
+
+When you finish, explain **what changed, where, and how to verify it**, and name which engineering
+priority the change serves (see below) so the maintainer can judge it.
 
 ---
 
@@ -127,13 +165,15 @@ io.py             — HDF5 / pump-plan file loading
 ```
 app.py            — entry point
 gui/              — Qt windows and controllers
-  main_window.py
+  main_window.py  — central window (~12k lines); delegates to controllers below
   *_controller.py — dedicated controllers for dataset, image, analysis, ROI, etc.
 domain/           — models (ROI, image stack)
 processing/       — image analysis algorithms (ROI, chromatic, spot detection)
-io/               — TIFF loading, format versioning
-storage/          — session state persistence
+io/               — TIFF / OME-Zarr loading, format versioning
+storage/          — session state persistence (processing profile JSON)
 ```
+
+When adding GUI behavior here, prefer the relevant **controller** over adding more to `main_window.py`.
 
 ### Suite Launcher (`apps/suite_launcher/src/suite_launcher/`)
 
@@ -147,7 +187,11 @@ version.py
 
 ## Submodule Workflow
 
-Each app repo has its own git history. To change app code:
+Each app repo has its own git history. Editing the files in a submodule folder is **not enough** —
+think of the folder as a shortcut to a separate project. You commit in the real project first, then
+tell the umbrella repo which version to use.
+
+To change app code:
 
 1. Edit files inside the submodule directory (`apps/sLSPR/acq`, etc.).
 2. Commit and push from within that directory (it is its own repo).
@@ -158,6 +202,7 @@ Each app repo has its own git history. To change app code:
    ```
 
 Do not commit app changes directly to the umbrella repo — commit them in the submodule first.
+**Tell the maintainer which repo a change will land in before committing**, since this is a common point of confusion.
 
 ---
 
@@ -196,7 +241,8 @@ Core rule: **acquisition and file writing must be lossless; processing and GUI d
 
 ## Engineering Priority Order
 
-From `AGENTS.md` (do not reorder without explicit instruction):
+From `AGENTS.md` (do not reorder without explicit instruction). When two goals conflict, prefer the
+higher one, and name which priority a change serves when you explain it:
 
 1. Correctness and scientific validity
 2. Data integrity and reproducibility
@@ -211,6 +257,9 @@ From `AGENTS.md` (do not reorder without explicit instruction):
 
 - **Startup popup bug pattern**: do not call `showPopup()` during widget construction. Default popup readiness to `False` and enable only after startup wiring is complete. Use explicit state propagation, not `getattr(..., True)` fallbacks.
 - **Main window is split across files**: `main_window.py`, `main_window_layout.py`, `main_window_lifecycle.py`, etc. Check all of them before assuming you know how a feature is wired.
-- **GUI thread blocking**: long acquisition, file loading, fitting, and image processing must run off the main thread. Workers are in `gui/workers.py`.
+- **GUI thread blocking**: long acquisition, file loading, fitting, and image processing must run off the main thread. Workers are in `gui/workers.py` (acquisition) or the thread pool (imaging).
 - **Don't mix scientific code with GUI code.** Analysis functions must work without a running Qt application.
 - **Raw data is sacred**: never overwrite raw measurement data. Derived results live in separate groups/files.
+- **`spot` → `roi` rename is partly finished** (LSPRimaging). Old: `spot`/`DetectedSpot`/`SpotGroup`; new: `roi`/`AreaRoi`/`AreaRoiGroup`. Backward-compat aliases exist. Watch for mismatched-variable bugs — e.g. a loop `for roi in ...` whose body still uses `spot.attr`. Flag any you see.
+- **`image_tools_enabled` preview flag** (LSPRimaging): toggled off while the crop/rotate tool is active so the full image shows; it must not be *persisted* as off, or crops silently won't re-apply on reload.
+- **ROI coordinates are in processed image space** (after rotation/flip/crop). Mixing coordinate spaces produces silently wrong results — be explicit about which space you're in.
