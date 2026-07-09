@@ -40,4 +40,3 @@ From the moved app requirements, the main split is:
 ## Next Normalization Step
 
 Add a local `pyproject.toml` here that depends on the shared suite packages instead of hard-coding everything in one place.
-

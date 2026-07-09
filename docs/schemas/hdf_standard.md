@@ -74,4 +74,3 @@ Unknown top-level groups may be ignored with a warning.
 The suite-level Python package for HDF standardization is:
 
 - `packages/lspr_io`
-

@@ -5,16 +5,16 @@ as Git submodules.
 
 ## Repositories
 
-- `LSPR-Suite`  
+- `LSPR-Suite`
   Umbrella repo for suite-wide docs, shared packages, the suite launcher, and
   submodule pointers.
-- `SingleSpotLSPR-Acquisition`  
+- `SingleSpotLSPR-Acquisition`
   singleLSPR acquisition app.
-- `SingleSpotLSPR-Evaluation`  
+- `SingleSpotLSPR-Evaluation`
   singleLSPR evaluation app.
-- `LSPRimaging-Evaluation`  
+- `LSPRimaging-Evaluation`
   LSPRimaging evaluation app.
-- `LSPRimaging-Acquisition`  
+- `LSPRimaging-Acquisition`
   Reserved for later. Not started yet.
 
 ## What lives where

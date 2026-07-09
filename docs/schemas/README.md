@@ -9,4 +9,3 @@ Current shared standards:
 - `hdf_experiment_plan_format.md` - experiment-plan and pump-plan row conventions
 
 App-specific schema docs should live under the relevant app architecture folder if they cannot be shared.
-

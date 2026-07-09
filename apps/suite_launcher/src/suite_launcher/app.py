@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,

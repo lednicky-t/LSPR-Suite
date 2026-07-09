@@ -157,4 +157,3 @@ Each release should include:
 4. Add a PR template that asks about compatibility and documentation.
 5. Add a `CONTRIBUTING.md` that explains branch and review expectations.
 6. Add compatibility tests for old JSON files and old CSV exports.
-

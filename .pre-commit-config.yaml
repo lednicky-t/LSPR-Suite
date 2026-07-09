@@ -11,3 +11,15 @@ repos:
       - id: check-ast
       - id: check-yaml
       - id: check-toml
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff-check
+  - repo: local
+    hooks:
+      - id: pyflakes
+        name: pyflakes
+        description: Undefined-name and correctness checks, kept alongside ruff.
+        entry: python -m pyflakes
+        language: system
+        types: [python]

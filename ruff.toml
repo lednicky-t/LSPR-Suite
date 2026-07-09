@@ -1,0 +1,8 @@
+target-version = "py312"
+
+[lint.per-file-ignores]
+# Test files and dev tools resolve submodule src/ paths via sys.path.insert()
+# before importing app modules - the import-after-sys.path-setup pattern is
+# intentional here, not a bug.
+"tests/**/*.py" = ["E402"]
+"tools/**/*.py" = ["E402"]

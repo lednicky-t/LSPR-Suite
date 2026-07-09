@@ -12,4 +12,3 @@ both singleLSPR and LSPRimaging need to agree on:
 
 App-specific GUI code, hardware drivers, and image processing should stay in the
 own app packages.
-

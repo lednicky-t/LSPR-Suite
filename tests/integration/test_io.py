@@ -284,7 +284,15 @@ class IoMetadataTests(unittest.TestCase):
                         f"ch{index + 1}_tube_mm" for index in range(6)
                     ]
                 )
-                empty_plan = np.empty((0, len(plan_columns)), dtype=h5py.string_dtype(encoding="utf-8"))
+                # FIXME: flagged during a pyflakes/ruff sweep - empty_plan is computed with the
+                # correct column count (mirroring runtime_table above, which IS used to create
+                # "experiment_control_runtime") but never applied to "experiment_plan", which was
+                # created earlier (shape=(0, 0), maxshape=(None, 0)) with a hard-capped 0-column
+                # maxshape - not resizable to match via h5py without recreating the dataset. Net
+                # effect: this fixture's "experiment_plan" dataset shape (0, 0) is inconsistent
+                # with its own "columns" attrs (26 entries) below. Not fixed here since it touches
+                # HDF5 schema/fixture mechanics - needs a maintainer decision, not a guess.
+                empty_plan = np.empty((0, len(plan_columns)), dtype=h5py.string_dtype(encoding="utf-8"))  # noqa: F841
                 metadata["experiment_plan"].attrs["columns"] = np.asarray(plan_columns, dtype=h5py.string_dtype(encoding="utf-8"))
 
             with h5py.File(path, "r") as handle:

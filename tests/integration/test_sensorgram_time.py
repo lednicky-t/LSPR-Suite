@@ -33,7 +33,6 @@ from lspr_app.gui.plot_controller import (
     request_trace_autoscale,
 )
 from lspr_app.gui.spectrum_plot_controller import (
-    clear_residual_display,
     render_residual_display,
 )
 

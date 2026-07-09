@@ -8,7 +8,7 @@ This file focuses on repo topology, commands, quick-reference maps, and **how to
 ---
 ## Agent Routing
 - For file reading, exploration, grep tasks → use the `explorer` agent (haiku)
-- For code review → use the `code-reviewer` agent (haiku)  
+- For code review → use the `code-reviewer` agent (haiku)
 - For complex architecture decisions → handle in main session (opus/sonnet)
 - For writing tests → use the `test-writer` agent (haiku)
 

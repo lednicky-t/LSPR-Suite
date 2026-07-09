@@ -44,4 +44,3 @@ From the copied app package metadata, these are present today:
 ## Next Normalization Step
 
 Give this app a local `pyproject.toml` that depends on the shared suite packages instead of carrying all reusable code in the app itself.
-

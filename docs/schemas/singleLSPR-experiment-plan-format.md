@@ -149,4 +149,3 @@ Step;Ch-1 Flow [ml/min];Ch-1 Direction;Ch-1 Tubesize [mm];...;Time;Valve;Color;D
 ```
 
 This remains useful for older scripts and external pump-plan tables. For new workflows, prefer `.flow.yaml`.
-

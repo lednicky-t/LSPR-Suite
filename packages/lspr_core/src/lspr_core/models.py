@@ -69,4 +69,3 @@ class ExperimentPlan(BaseModel):
 
     def ordered(self) -> list[ExperimentPlanStep]:
         return sorted(self.steps, key=lambda step: (step.start_s, step.id))
-

@@ -49,4 +49,3 @@ If we want consistent icon/theme resources across apps, keep those as UI assets 
 - If a dependency is about file formats, validation, or sensorgram math, it belongs in shared packages.
 - If a dependency talks to hardware or interprets imaging pixels, keep it in the specific app.
 - If a dependency only affects look and feel, keep it in the app UI layer.
-

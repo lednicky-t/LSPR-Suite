@@ -611,4 +611,3 @@ That is okay for now, but the v4 target should converge toward the structure abo
 - How much of the processing provenance should be written as structured fields versus JSON.
 - Whether tags should allow hierarchies like `sensor:type:spr` or remain flat strings.
 - How to version the experimental plan groups independently from the file format itself.
-

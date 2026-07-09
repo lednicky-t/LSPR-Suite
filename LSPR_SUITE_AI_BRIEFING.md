@@ -5,7 +5,7 @@ the LSPR Suite codebase. It covers scientific context, repository structure, dat
 processing pipelines, GUI architecture, persistence, engineering rules, and current development
 status. Read this before making any recommendations or code changes.
 
-**Date generated:** 2026-06-29  
+**Date generated:** 2026-06-29
 **Codebase root:** `C:\Users\Admin\Documents\GitHub\LSPR-Suite`
 
 ---
@@ -253,8 +253,8 @@ def hex_to_rgba(color: str, alpha: float) -> str
 
 ## 4. LSPRimaging Evaluation App — Full Detail
 
-**Package:** `lspr_imaging_app`  
-**Location:** `apps/LSPRi/eva/src/lspr_imaging_app/`  
+**Package:** `lspr_imaging_app`
+**Location:** `apps/LSPRi/eva/src/lspr_imaging_app/`
 **Entry point:** `app.py` → `main()`
 
 ### 4.1 Directory Map
@@ -1132,7 +1132,7 @@ analysis/live_preview
 
 ## 5. singleLSPR Acquisition App — Overview
 
-**Package:** `lspr_app`  
+**Package:** `lspr_app`
 **Location:** `apps/sLSPR/acq/src/lspr_app/`
 
 Primary purpose: real-time LSPR spectrum acquisition, live display, and HDF5 recording.
@@ -1168,7 +1168,7 @@ Core rule: **acquisition and file writing must be lossless; UI processing may sk
 
 ## 6. singleLSPR Evaluation App — Overview
 
-**Package:** `lspr_single_evaluation`  
+**Package:** `lspr_single_evaluation`
 **Location:** `apps/sLSPR/eva/src/lspr_single_evaluation/`
 
 Loads HDF5 files produced by the acquisition app, displays spectra and sensorgrams, allows

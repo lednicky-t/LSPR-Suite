@@ -34,7 +34,7 @@
     }
   ],
   "settings": {
-    "python.defaultInterpreterPath": "${workspaceFolder:LSPR_suite}\\.venv\\bin\\python.exe",
+    "python.defaultInterpreterPath": "${workspaceFolder:LSPR_suite}\\.venv\\Scripts\\python.exe",
     "python.analysis.autoSearchPaths": true,
     "python.analysis.extraPaths": [
       "packages/lspr_ui/src",

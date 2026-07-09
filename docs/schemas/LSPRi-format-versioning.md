@@ -188,4 +188,3 @@ As the format system grows, it will help to keep these files in the repo:
 3. Add migration helpers for older file variants.
 4. Add import tests for legacy examples.
 5. Record format changes in the changelog.
-

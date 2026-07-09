@@ -96,4 +96,3 @@ When you work in this checkout:
 - edit app-specific code inside the corresponding submodule repositories
 - commit app changes in the app repo first, then update the suite submodule
   pointer in this umbrella repo
-
