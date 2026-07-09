@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap, QPen
 from PyQt6.QtWidgets import QAbstractSpinBox, QSlider, QToolButton
 
@@ -12,10 +12,52 @@ def make_sim_slider(minimum: int, maximum: int, value: int) -> QSlider:
     return slider
 
 
+def _content_based_minimum_width(spinbox: QAbstractSpinBox) -> int:
+    """Widest text the box can ever show (its min/max, not just the current value),
+    plus breathing room for the shared theme's ~1px border and ~5px side padding."""
+    metrics = spinbox.fontMetrics()
+    text_from_value = getattr(spinbox, "textFromValue", None)
+    minimum = getattr(spinbox, "minimum", None)
+    maximum = getattr(spinbox, "maximum", None)
+    if callable(text_from_value) and callable(minimum) and callable(maximum):
+        prefix = spinbox.prefix() if hasattr(spinbox, "prefix") else ""
+        suffix = spinbox.suffix() if hasattr(spinbox, "suffix") else ""
+        candidates = [
+            f"{prefix}{text_from_value(minimum())}{suffix}",
+            f"{prefix}{text_from_value(maximum())}{suffix}",
+        ]
+    else:
+        candidates = [spinbox.text()]
+    text_width = max((metrics.horizontalAdvance(text) for text in candidates), default=0)
+    return text_width + 16
+
+
+# By the time _apply_content_based_minimum_width runs, Qt's own style polish has
+# typically already given the widget a frame-only minimum (border + padding, ~12px
+# with this theme) even though no one asked for one - that's well below any minimum
+# an app would deliberately set (40px+ in every real caller seen in this codebase),
+# so treat only values above this threshold as "already defined otherwise."
+_EXPLICIT_MINIMUM_WIDTH_THRESHOLD = 24
+
+
+def _apply_content_based_minimum_width(spinbox: QAbstractSpinBox) -> None:
+    if spinbox.minimumWidth() > _EXPLICIT_MINIMUM_WIDTH_THRESHOLD:
+        return  # caller already set a real explicit minimum/fixed width - leave it alone
+    try:
+        spinbox.setMinimumWidth(_content_based_minimum_width(spinbox))
+    except RuntimeError:
+        pass  # widget was deleted before this deferred call ran
+
+
 def make_compact_spinbox(spinbox: QAbstractSpinBox, *, height: int = 28) -> QAbstractSpinBox:
     spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
     spinbox.setFixedHeight(height)
     spinbox.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    # Deferred so it runs after the caller finishes setRange()/setSuffix()/setPrefix() -
+    # make_compact_spinbox() is conventionally called right after construction, before
+    # those, so computing the minimum width immediately would measure Qt's default
+    # 0-99 range instead of the field's real one.
+    QTimer.singleShot(0, lambda: _apply_content_based_minimum_width(spinbox))
     return spinbox
 
 
