@@ -31,6 +31,11 @@ Thumbs.db
 **/.appdata/
 **/tmp_*.txt
 apps/LSPRi/eva/.git_backup/
+/preprocessing.json
+/processing_profile.json
+
+# Local Claude Code tool state (personal, not project config)
+.claude/
 
 # Debug and analysis bundles (committed per-session for AI debugging, not source)
 analysis/
