@@ -148,6 +148,36 @@ class MainWindowTitleBarTests(unittest.TestCase):
         def _show_about_dialog(self) -> None:
             pass
 
+        def _show_preferences_dialog(self) -> None:
+            pass
+
+        def _show_import_from_measurement_dialog(self) -> None:
+            pass
+
+        def _open_recording_project_destination_in_explorer(self) -> None:
+            pass
+
+        def _apply_layout_preset(self, *_args, **_kwargs) -> None:
+            pass
+
+        def _save_current_layout_to_preset(self, *_args) -> None:
+            pass
+
+        def _reset_layout_presets_to_defaults(self, *_args) -> None:
+            pass
+
+        def _toggle_diagnostics_panel(self, *_args) -> None:
+            pass
+
+        def _set_always_on_top(self, *_args) -> None:
+            pass
+
+        def _show_device_manager_dialog(self) -> None:
+            pass
+
+        def _open_app_config_folder(self) -> None:
+            pass
+
     def test_device_status_state_supports_discovered_devices(self) -> None:
         self.assertEqual(device_status_state(True, False), "connected")
         self.assertEqual(device_status_state(False, True), "discovered")
@@ -262,10 +292,10 @@ class MainWindowTitleBarTests(unittest.TestCase):
         self.assertIsNotNone(app)
         window = self._FakeWindow()
         menu_bar = build_menu_bar(window)
-        hw_menu_action = next(action for action in menu_bar.actions() if action.text() == "HW")
+        hw_menu_action = next(action for action in menu_bar.actions() if action.text() == "Hardware")
         hw_menu = hw_menu_action.menu()
         self.assertIsNotNone(hw_menu)
-        disconnect_action = next(action for action in hw_menu.actions() if action.text() == "Disconnect all devices")
+        disconnect_action = next(action for action in hw_menu.actions() if action.text() == "Disconnect all")
         disconnect_action.trigger()
         self.assertTrue(window.called_disconnect_all_devices)
 

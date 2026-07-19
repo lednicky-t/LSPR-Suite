@@ -79,6 +79,12 @@ class _FakeExperimentControlWindow:
     def _set_record_with_flow_recording_active(self, _active: bool) -> None:
         return None
 
+    def setVisible(self, _visible: bool) -> None:
+        return None
+
+    def set_theme(self, _mode: str) -> None:
+        return None
+
 
 class MainWindowFlowPanelParentingTest(unittest.TestCase):
     def test_sensorgram_downsampling_button_is_not_shown_while_unparented(self) -> None:
@@ -112,6 +118,8 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         window._measurement_active = False
         window._ui_startup_ready = False
         window._top_content_stack = _DummyStack()
+        window._top_view_mode = "spectra"
+        window._pending_layout_preset_selected = ""
         window._experiment_control_panel_placeholder = SimpleNamespace()
         window._flow_panel_placeholder = window._experiment_control_panel_placeholder
         window.set_theme = lambda _theme: None  # type: ignore[method-assign]
@@ -119,6 +127,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         with (
             patch.object(MainWindow, "_log_info", lambda *args, **kwargs: None),
             patch("lspr_app.gui.experiment_control_window.ExperimentControlWindow", _FakeExperimentControlWindow),
+            patch("lspr_app.gui.main_window_lifecycle.ensure_visible_top_content_splitter", lambda *_args, **_kwargs: None),
         ):
             MainWindow._ensure_flow_panel(window)
 
@@ -137,6 +146,8 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         window._measurement_active = False
         window._ui_startup_ready = True
         window._top_content_stack = _DummyStack()
+        window._top_view_mode = "spectra"
+        window._pending_layout_preset_selected = ""
         window._experiment_control_panel_placeholder = SimpleNamespace()
         window._flow_panel_placeholder = window._experiment_control_panel_placeholder
         window._launch_profile_spec = launch_profile_spec(LAUNCH_PROFILE_CONTROL_EDITOR)
@@ -145,6 +156,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         with (
             patch.object(MainWindow, "_log_info", lambda *args, **kwargs: None),
             patch("lspr_app.gui.experiment_control_window.ExperimentControlWindow", _FakeExperimentControlWindow),
+            patch("lspr_app.gui.main_window_lifecycle.ensure_visible_top_content_splitter", lambda *_args, **_kwargs: None),
         ):
             MainWindow._ensure_flow_panel(window)
 
@@ -155,6 +167,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
     def test_hardware_init_finished_syncs_startup_after_ready_flag(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._hardware_init_task = None
+        window._closing = False
         window._hardware_init_ready_emitted = False
         window._experiment_control_window = None
         window._spectrometer = SimulatedSpectrometer()
@@ -169,21 +182,30 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         window._log_warning = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
         window._log_success = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
         window._emit_hardware_init_progress = lambda *_args, **_kwargs: calls.append("progress")  # type: ignore[method-assign]
-        window._sync_experiment_control_startup_ports = lambda: calls.append(("sync", bool(window._hardware_init_ready_emitted)))  # type: ignore[method-assign]
-        window._finish_hardware_initialization = lambda _text="": (calls.append(("finish", bool(window._hardware_init_ready_emitted))), setattr(window, "_hardware_init_ready_emitted", True))  # type: ignore[method-assign]
+
+        def _fake_finish(win, _text: str = "") -> None:
+            calls.append(("finish", bool(win._hardware_init_ready_emitted)))
+            win._hardware_init_ready_emitted = True
+
+        def _fake_sync(win) -> None:
+            calls.append(("sync", bool(win._hardware_init_ready_emitted)))
 
         result = HardwareInitResult(
             steps=[],
             pump_probe=None,
             pump_error=None,
-            mswitch_devices=[],
-            mswitch_error=None,
+            selector_devices=[],
+            selector_error=None,
             valve_probe=None,
             valve_error=None,
             spectrometer_name="Spectrometer backend active: USB2000PLUS.",
         )
 
-        MainWindow._handle_hardware_init_finished(window, result)
+        with (
+            patch("lspr_app.gui.main_window_lifecycle.finish_hardware_initialization_for", _fake_finish),
+            patch("lspr_app.gui.main_window_lifecycle.sync_experiment_control_startup_ports_for", _fake_sync),
+        ):
+            MainWindow._handle_hardware_init_finished(window, result)
 
         self.assertIn(("finish", False), calls)
         self.assertIn(("sync", True), calls)

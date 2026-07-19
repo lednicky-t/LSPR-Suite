@@ -153,6 +153,7 @@ class AcquisitionControllerBackendHandoffTests(unittest.TestCase):
 
     def test_start_live_acquisition_leaves_spectrometer_worker_unthrottled(self) -> None:
         from lspr_app.gui.acquisition_controller import start_live_acquisition
+        from lspr_app.gui.main_window_runtime_state import UiRefreshState
 
         _DummyLiveAcquisitionWorker.instances.clear()
         original_context_getter = _DummyContext()
@@ -175,6 +176,7 @@ class AcquisitionControllerBackendHandoffTests(unittest.TestCase):
             sim_output_rate_spin=SimpleNamespace(value=lambda: 4.0),
             _peak_history=[],
             _peak_history_buffers=[],
+            _ui_refresh_state=UiRefreshState(),
             _reset_live_accumulator=lambda: None,
             _current_settings=lambda: AcquisitionSettings(),
             _current_processing_settings=lambda: SimpleNamespace(),
