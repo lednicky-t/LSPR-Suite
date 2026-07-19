@@ -28,7 +28,7 @@ class _FakeTimer:
     def stop(self) -> None:
         self.active = False
 
-    def start(self) -> None:
+    def start(self, _interval_ms: int | None = None) -> None:
         self.active = True
 
 
@@ -56,6 +56,19 @@ class _FakeButton:
         self.checked = value
 
 
+class _FakeDeviceCommService:
+    def __init__(self, connection_state: dict[str, bool]) -> None:
+        self._connection_state = connection_state
+        self._label_to_key = {"pump_1": "pump", "switch_1": "switch", "selector_1": "selector"}
+
+    def is_connected(self, label: str) -> bool:
+        key = self._label_to_key.get(label)
+        return bool(self._connection_state.get(key, False))
+
+    def connection(self, label: str) -> object | None:
+        return object() if self.is_connected(label) else None
+
+
 def _make_step(step_index: int) -> SimpleNamespace:
     channels = [SimpleNamespace(flow_ul_min=0.0, direction="OFF") for _ in range(6)]
     return SimpleNamespace(
@@ -77,6 +90,9 @@ class ExperimentControlRuntimeTransitionTests(unittest.TestCase):
         controller._plan_running = False
         controller._plan_holding = False
         controller._plan_paused = False
+        controller.recording_controller = None
+        controller.record_with_flow_button = SimpleNamespace(isChecked=lambda: False)
+        controller._pending_experiment_control_start_after_recording = None
         controller._plan_elapsed_s = 7.5
         controller._plan_resume_elapsed_s = 5.0
         controller._plan_runtime_s = 4.0
@@ -225,10 +241,8 @@ class ExperimentControlRuntimeTransitionTests(unittest.TestCase):
         controller._startup_auto_connect_queue = []
         controller._port_refresh_in_progress = False
         controller._experiment_control_bootstrap_in_progress = False
-        connection_state = {"pump": False, "valve": False, "mswitch": False}
-        controller._client = SimpleNamespace(is_connected=lambda: connection_state["pump"])
-        controller._valve_client = SimpleNamespace(is_connected=lambda: connection_state["valve"])
-        controller._mswitch_client = SimpleNamespace(is_connected=lambda: connection_state["mswitch"])
+        connection_state = {"pump": False, "switch": False, "selector": False}
+        controller._device_comm_service = _FakeDeviceCommService(connection_state)
         controller._connect_in_progress = False
         controller._valve_connect_in_progress = False
         controller._valve_connect_task = None
@@ -247,12 +261,12 @@ class ExperimentControlRuntimeTransitionTests(unittest.TestCase):
 
         def connect_valve() -> bool:
             calls.append("valve")
-            connection_state["valve"] = True
+            connection_state["switch"] = True
             return True
 
         def connect_mswitch() -> bool:
             calls.append("mswitch")
-            connection_state["mswitch"] = True
+            connection_state["selector"] = True
             return True
 
         controller.connect_best_pump_controller = connect_pump
@@ -286,24 +300,24 @@ class ExperimentControlRuntimeTransitionTests(unittest.TestCase):
         self.assertEqual(len(scheduled), 1)
         scheduled[0][1]()
         self.assertEqual(calls, ["pump", "valve"])
-        self.assertEqual(controller._startup_auto_connect_stage, "valve")
+        self.assertEqual(controller._startup_auto_connect_stage, "switch")
 
         scheduled.clear()
         try:
             experiment_control_module.QTimer.singleShot = staticmethod(lambda interval, callback: scheduled.append((interval, callback)))
-            ExperimentControlWindow._finish_startup_device_auto_connect_stage(controller, "valve")
+            ExperimentControlWindow._finish_startup_device_auto_connect_stage(controller, "switch")
         finally:
             experiment_control_module.QTimer.singleShot = original_single_shot
 
         self.assertEqual(len(scheduled), 1)
         scheduled[0][1]()
         self.assertEqual(calls, ["pump", "valve", "mswitch"])
-        self.assertEqual(controller._startup_auto_connect_stage, "mswitch")
+        self.assertEqual(controller._startup_auto_connect_stage, "selector")
 
         scheduled.clear()
         try:
             experiment_control_module.QTimer.singleShot = staticmethod(lambda interval, callback: scheduled.append((interval, callback)))
-            ExperimentControlWindow._finish_startup_device_auto_connect_stage(controller, "mswitch")
+            ExperimentControlWindow._finish_startup_device_auto_connect_stage(controller, "selector")
         finally:
             experiment_control_module.QTimer.singleShot = original_single_shot
 
