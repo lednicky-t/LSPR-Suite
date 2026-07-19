@@ -6,7 +6,7 @@ import queue
 import sys
 import unittest
 from datetime import datetime, timezone
-from time import perf_counter
+from time import perf_counter, sleep
 
 import numpy as np
 
@@ -21,7 +21,14 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_app.domain.models import AcquisitionSettings, ProcessingSettings, Spectrum
 from lspr_app.device.simulated import SimulationParameters
-from lspr_app.gui.workers import AcquisitionRequest, AcquisitionResult, LiveAcquisitionEvent, LiveAcquisitionWorker, LiveProcessingWorker
+from lspr_app.gui.workers import (
+    AcquisitionRequest,
+    AcquisitionResult,
+    LiveAcquisitionEvent,
+    LiveAcquisitionWorker,
+    LiveProcessingWorker,
+    _queue_qsize_safe,
+)
 
 
 def _build_test_spectrum() -> Spectrum:
@@ -163,7 +170,15 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
         worker.start()
 
         try:
+            # Drain every queue we need while the worker is still running: it
+            # forwards the same event to result_queue, processing_queue, and
+            # recording_queue via separate mp.Queue.put() calls that go through
+            # an async feeder thread. Stopping/terminating the process before
+            # all three have been read can lose whichever puts hadn't finished
+            # flushing yet, so read everything first and only then tear down.
             event = result_queue.get(timeout=5.0)
+            processing_event = processing_queue.get(timeout=5.0)
+            recording_event = recording_queue.get(timeout=5.0)
         finally:
             stop_event.set()
             worker.join(timeout=5.0)
@@ -176,8 +191,7 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
         self.assertGreaterEqual(event.result.elapsed_ms, 0.0)
         self.assertEqual(event.result.source_epoch, 7)
         self.assertEqual(event.source_epoch, 7)
-        self.assertIsNotNone(processing_queue.get(timeout=5.0).result)
-        recording_event = recording_queue.get(timeout=5.0)
+        self.assertIsNotNone(processing_event.result)
         self.assertIsNotNone(recording_event.result)
         self.assertEqual(recording_event.source_epoch, 7)
 
@@ -262,6 +276,18 @@ class LiveProcessingWorkerDrainTest(unittest.TestCase):
                     produced_at_perf=perf_counter(),
                 )
             )
+
+        # mp.Queue.put() hands items to an internal feeder thread that flushes
+        # them to the OS pipe asynchronously -- put() returning doesn't mean the
+        # item is visible to a reader yet. Wait for the queue to report all
+        # n_frames as enqueued before starting the worker, otherwise a slow
+        # flush can race with a fast-starting worker: it would then drain items
+        # one at a time as they trickle in, instead of catching the whole
+        # burst in a single drain pass, defeating the collapsing behavior this
+        # test is meant to prove.
+        flush_deadline = perf_counter() + 5.0
+        while _queue_qsize_safe(input_queue) < n_frames and perf_counter() < flush_deadline:
+            sleep(0.01)
 
         worker.start()
         results = []
