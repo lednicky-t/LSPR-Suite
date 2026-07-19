@@ -4,6 +4,7 @@ import sys
 import unittest
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 from PyQt6.QtWidgets import QApplication
@@ -24,13 +25,11 @@ from lspr_app.gui.main_window_plotting import apply_processing_range_to_spectrum
 from lspr_app.gui.processing_helpers import get_analysis_metrics
 from lspr_app.gui.plot_controller import (
     clip_series_to_window,
-    autoscale_trace_plot,
-    downsample_sensorgram_history_for_view,
+    autoscale_metric_plot,
     downsample_spectrum_series_for_view,
-    downsample_trace_series_for_view,
-    render_sensorgram_heatmap,
-    render_trace_series,
-    request_trace_autoscale,
+    downsample_metric_series_for_view,
+    render_metric_series,
+    request_metric_autoscale,
 )
 from lspr_app.gui.spectrum_plot_controller import (
     render_residual_display,
@@ -59,12 +58,15 @@ class _FakeCurve:
         self.visible: bool | None = None
         self.set_data_calls = 0
 
-    def setData(self, x, y) -> None:  # noqa: N802 - Qt-style API
+    def setData(self, x, y, **_kwargs) -> None:  # noqa: N802 - Qt-style API
         self.set_data_calls += 1
         self.data = (np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64))
 
     def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
         self.visible = bool(value)
+
+    def setDownsampling(self, *, auto: bool = False, ds: int = 1) -> None:  # noqa: N802 - Qt-style API
+        return None
 
 
 class _FakeTracePlot:
@@ -96,53 +98,13 @@ class _FakeTracePlot:
     def sceneBoundingRect(self):  # noqa: N802 - Qt-style API
         return SimpleNamespace(width=lambda: 320.0, height=lambda: 240.0)
 
+    def setLabel(self, *args, **kwargs) -> None:  # noqa: N802 - Qt-style API
+        return None
+
 
 class _FakeTraceAxis:
     def __init__(self, mode: str) -> None:
         self._mode = mode
-
-
-class _FakeImageItem:
-    def __init__(self) -> None:
-        self.visible = None
-        self.image = None
-        self.rect = None
-        self.levels = None
-
-    def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
-        self.visible = bool(value)
-
-    def setImage(self, image, autoLevels=True) -> None:  # noqa: N802 - Qt-style API
-        self.image = np.asarray(image, dtype=np.float64)
-
-    def setRect(self, rect) -> None:  # noqa: N802 - Qt-style API
-        self.rect = rect
-
-    def setLookupTable(self, table) -> None:  # noqa: N802 - Qt-style API
-        self.lookup_table = np.asarray(table)
-
-    def setLevels(self, levels) -> None:  # noqa: N802 - Qt-style API
-        self.levels = tuple(float(value) for value in levels)
-
-
-class _FakeTextItem:
-    def __init__(self) -> None:
-        self.visible = None
-        self.text = ""
-        self.html = ""
-        self.pos = None
-
-    def setVisible(self, value) -> None:  # noqa: N802 - Qt-style API
-        self.visible = bool(value)
-
-    def setText(self, value) -> None:  # noqa: N802 - Qt-style API
-        self.text = str(value)
-
-    def setHtml(self, value) -> None:  # noqa: N802 - Qt-style API
-        self.html = str(value)
-
-    def setPos(self, x, y) -> None:  # noqa: N802 - Qt-style API
-        self.pos = (float(x), float(y))
 
 
 class _FakeLegend:
@@ -168,6 +130,9 @@ class _FakeResidualCurve:
 
     def setPen(self, pen) -> None:  # noqa: N802 - Qt-style API
         self.pen = pen
+
+    def setSymbol(self, symbol) -> None:  # noqa: N802 - Qt-style API
+        return None
 
 
 class _FakeResidualView:
@@ -205,6 +170,37 @@ class _FakeTimer:
     def start(self) -> None:
         self.started = True
 
+    def isActive(self) -> bool:  # noqa: N802 - Qt-style API
+        return self.started
+
+
+class _FakeMetricCache:
+    """Minimal stand-in for the real PlotViewCache's live-absolute metric API.
+
+    append_processed_trace_history() no longer keeps its own in-memory history
+    buffer; it forwards each point to window._plot_view_cache instead. This fake
+    just records the calls so tests can assert on the elapsed-time value computed.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float, float]] = []
+
+    def append_live_absolute_metric_point(self, metric_name, x_value, y_value, **_kwargs) -> None:
+        self.calls.append((metric_name, float(x_value), float(y_value)))
+
+
+class _FakeAbsoluteViewCache:
+    """Minimal fake for the non-live "absolute view" downsampling path in
+    render_metric_series: passes the series through unchanged and reports a
+    stable per-series state so repeated renders of the same data are deduped.
+    """
+
+    def absolute_metric_view(self, series_token, x, y, **_kwargs):
+        return x, y
+
+    def absolute_metric_display_state(self, series_token):
+        return ("stable", series_token)
+
 
 class SensorgramTimeTests(unittest.TestCase):
     def _make_window(self, *, measurement_active: bool, measurement_started_at: datetime | None) -> SimpleNamespace:
@@ -213,6 +209,8 @@ class SensorgramTimeTests(unittest.TestCase):
             _measurement_active=measurement_active,
             _measurement_started_at=measurement_started_at,
             _measurement_writer=_FakeWriter() if measurement_active else None,
+            _live_trace_started_at=None,
+            _plot_view_cache=_FakeMetricCache(),
             _peak_history={},
             _trace_display_window_s=60.0,
             _trace_display_cursor_s=0.0,
@@ -235,16 +233,15 @@ class SensorgramTimeTests(unittest.TestCase):
         )
         window = self._make_window(measurement_active=True, measurement_started_at=started_at)
 
-        append_processed_trace_history(window, processed, None)
+        with patch("lspr_app.storage.measurement_archive.ensure_session_writer", return_value=None):
+            append_processed_trace_history(window, processed, None)
 
-        self.assertIn("smoothed_max", window._peak_history_buffers)
-        x_values, y_values = window._peak_history_buffers["smoothed_max"].to_arrays()
-        self.assertAlmostEqual(float(x_values[0]), 5.0, places=6)
-        self.assertAlmostEqual(float(y_values[0]), 42.0, places=6)
+        self.assertEqual(window._plot_view_cache.calls, [("smoothed_max", 5.0, 42.0)])
         self.assertEqual(window._measurement_writer.rows[0]["t_ms"], 5000)
 
-    def test_live_trace_uses_local_timestamp(self) -> None:
-        acquired_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    def test_live_trace_uses_elapsed_time_since_live_start(self) -> None:
+        live_started_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        acquired_at = live_started_at + timedelta(seconds=3)
         processed = Spectrum(
             wavelengths_nm=np.asarray([610.0, 620.0], dtype=np.float64),
             values=np.asarray([1.0, 2.0], dtype=np.float64),
@@ -252,13 +249,12 @@ class SensorgramTimeTests(unittest.TestCase):
             acquired_at=acquired_at,
         )
         window = self._make_window(measurement_active=False, measurement_started_at=None)
+        window._live_trace_started_at = live_started_at
 
-        append_processed_trace_history(window, processed, None)
+        with patch("lspr_app.storage.measurement_archive.ensure_session_writer", return_value=None):
+            append_processed_trace_history(window, processed, None)
 
-        self.assertIn("smoothed_max", window._peak_history_buffers)
-        x_values, y_values = window._peak_history_buffers["smoothed_max"].to_arrays()
-        self.assertAlmostEqual(float(x_values[0]), acquired_at.timestamp(), places=6)
-        self.assertAlmostEqual(float(y_values[0]), 42.0, places=6)
+        self.assertEqual(window._plot_view_cache.calls, [("smoothed_max", 3.0, 42.0)])
 
     def test_trace_renderer_accepts_float_timestamps(self) -> None:
         window = SimpleNamespace(
@@ -275,7 +271,7 @@ class SensorgramTimeTests(unittest.TestCase):
             ]
         }
 
-        render_trace_series(window, history, clock_mode=True)
+        render_metric_series(window, history, clock_mode=True)
 
         self.assertIsNotNone(window.trace_curves["smoothed_max"].data)
         x_values, y_values = window.trace_curves["smoothed_max"].data
@@ -299,32 +295,23 @@ class SensorgramTimeTests(unittest.TestCase):
             acquired_at=started_at + timedelta(seconds=5),
         )
 
-        append_processed_trace_history(window, first, None)
-        append_processed_trace_history(window, second, None)
+        with patch("lspr_app.storage.measurement_archive.ensure_session_writer", return_value=None):
+            append_processed_trace_history(window, first, None)
+            append_processed_trace_history(window, second, None)
 
-        self.assertEqual(len(window._peak_history_buffers["smoothed_max"]), 2)
+        # Recording writes must stay lossless regardless of the display window:
+        # both points are written even though _trace_display_window_s (1.0s) is
+        # smaller than the 5s gap between them.
+        self.assertEqual(len(window._measurement_writer.rows), 2)
+        self.assertEqual(window._measurement_writer.rows[0]["t_ms"], 0)
+        self.assertEqual(window._measurement_writer.rows[1]["t_ms"], 5000)
 
-    def test_trace_history_is_bounded_to_recent_points(self) -> None:
-        started_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
-        window = self._make_window(measurement_active=False, measurement_started_at=None)
-        window._trace_history_max_points = 2
+    # NOTE: point-count bounding for live display history now lives inside
+    # PlotViewCache/MetricDisplayCache (see tests/unit/test_plot_view_cache.py),
+    # not in append_processed_trace_history -- there is no longer an in-memory
+    # buffer here to bound, so the old test for that behavior was removed.
 
-        for offset_s, value in enumerate([1.0, 2.0, 3.0]):
-            processed = Spectrum(
-                wavelengths_nm=np.asarray([610.0], dtype=np.float64),
-                values=np.asarray([float(value)], dtype=np.float64),
-                y_label="sample",
-                acquired_at=started_at + timedelta(seconds=float(offset_s)),
-            )
-            append_processed_trace_history(window, processed, None)
-
-        x_values, y_values = window._peak_history_buffers["smoothed_max"].to_arrays()
-        self.assertEqual(len(x_values), 2)
-        self.assertAlmostEqual(float(x_values[0]), (started_at + timedelta(seconds=1)).timestamp(), places=6)
-        self.assertAlmostEqual(float(x_values[1]), (started_at + timedelta(seconds=2)).timestamp(), places=6)
-        self.assertListEqual([float(item) for item in y_values.tolist()], [42.0, 42.0])
-
-    def test_autoscale_trace_plot_respects_absolute_mode(self) -> None:
+    def test_autoscale_metric_plot_respects_absolute_mode(self) -> None:
         series = {
             "smoothed_max": (
                 np.asarray([0.0, 10.0, 20.0], dtype=np.float64),
@@ -339,82 +326,26 @@ class SensorgramTimeTests(unittest.TestCase):
             trace_time_axis=_FakeTraceAxis("elapsed"),
         )
 
-        autoscale_trace_plot(window)
+        autoscale_metric_plot(window)
         self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 0.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.1, places=6)
+        # x_max now trails the latest point by a "follow latest" buffer that scales
+        # with refresh rate and series span (see _metric_follow_latest_buffer_s),
+        # rather than the old fixed +0.1 padding. With defaults (4 Hz, 20s span)
+        # that buffer is 1.0s.
+        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 21.0, places=6)
 
-    def test_heatmap_renderer_populates_image_matrix(self) -> None:
-        wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)
-        history = [
-            (0.0, np.asarray([0.1, 0.2], dtype=np.float64)),
-            (5.0, np.asarray([0.3, 0.4], dtype=np.float64)),
-        ]
-        window = SimpleNamespace(
-            trace_heatmap_image=_FakeImageItem(),
-            trace_plot=_FakeTracePlot(),
-            trace_curves={"smoothed_max": _FakeCurve()},
-            trace_legend=_FakeLegend(),
-            _sensorgram_heatmap_wavelengths=wavelengths,
-            _visible_trace_x=None,
-            _visible_trace_y=None,
-            _visible_trace_mode=None,
-        )
-
-        render_sensorgram_heatmap(window, history, clock_mode=False)
-
-        self.assertTrue(window.trace_heatmap_image.visible)
-        self.assertIsNotNone(window.trace_heatmap_image.image)
-        self.assertEqual(window.trace_heatmap_image.image.shape, (2, 2))
-        self.assertFalse(window.trace_curves["smoothed_max"].visible)
-        self.assertFalse(window.trace_legend.visible)
-
-    def test_heatmap_renderer_disabled_shows_placeholder(self) -> None:
-        wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)
-        history = [
-            (0.0, np.asarray([0.1, 0.2], dtype=np.float64)),
-            (5.0, np.asarray([0.3, 0.4], dtype=np.float64)),
-        ]
-        window = SimpleNamespace(
-            trace_heatmap_image=_FakeImageItem(),
-            trace_heatmap_notice_item=_FakeTextItem(),
-            trace_plot=_FakeTracePlot(view_range=[[0.0, 10.0], [600.0, 630.0]]),
-            trace_curves={"smoothed_max": _FakeCurve()},
-            trace_legend=_FakeLegend(),
-            _sensorgram_heatmap_wavelengths=wavelengths,
-            _visible_trace_x=None,
-            _visible_trace_y=None,
-            _visible_trace_mode=None,
-            _sensorgram_view_mode="absolute",
-            _trace_view_locked=False,
-            _trace_display_window_s=5.0,
-            _sensorgram_heatmap_enabled=False,
-        )
-
-        render_sensorgram_heatmap(window, history, clock_mode=False)
-
-        self.assertFalse(window.trace_heatmap_image.visible)
-        self.assertTrue(window.trace_heatmap_notice_item.visible)
-        self.assertIn("Heatmap unavailable", window.trace_heatmap_notice_item.html or window.trace_heatmap_notice_item.text)
-        self.assertFalse(window.trace_curves["smoothed_max"].visible)
-        self.assertFalse(window.trace_legend.visible)
 
     def test_metric_renderer_disabled_shows_placeholder(self) -> None:
         window = SimpleNamespace(
-            trace_heatmap_image=_FakeImageItem(),
-            trace_heatmap_notice_item=_FakeTextItem(),
             trace_plot=_FakeTracePlot(),
             trace_curves={"smoothed_max": _FakeCurve()},
             trace_legend=_FakeLegend(),
             trace_time_axis=_FakeTraceAxis("elapsed"),
             _measurement_active=False,
-            _sensorgram_content_mode="metric",
             _metric_plot_enabled=False,
-            _sensorgram_heatmap_history=[],
-            _sensorgram_heatmap_wavelengths=None,
             _visible_trace_x=None,
             _visible_trace_y=None,
             _visible_trace_mode=None,
-            _sensorgram_view_mode="absolute",
             _trace_view_locked=False,
             _sensorgram_downsampling_enabled=True,
             _trace_display_window_s=5.0,
@@ -426,10 +357,11 @@ class SensorgramTimeTests(unittest.TestCase):
 
         refresh_metric_plot(window, "Peak position (nm)")
 
-        self.assertFalse(window.trace_heatmap_image.visible)
-        self.assertTrue(window.trace_heatmap_notice_item.visible)
-        self.assertIn("Metric plot unavailable", window.trace_heatmap_notice_item.html or window.trace_heatmap_notice_item.text)
+        # There is no separate "unavailable" notice widget anymore -- a disabled
+        # metric plot just hides the curves/legend (see _show_trace_plot_unavailable).
         self.assertFalse(window.trace_curves["smoothed_max"].visible)
+        self.assertFalse(window.trace_legend.visible)
+        self.assertEqual(window._visible_trace_mode, "elapsed")
 
     def test_metric_renderer_skips_redundant_setdata_for_unchanged_series(self) -> None:
         class _CopyingBuffer:
@@ -450,21 +382,15 @@ class SensorgramTimeTests(unittest.TestCase):
         curve = _FakeCurve()
         buffer = _CopyingBuffer()
         window = SimpleNamespace(
-            trace_heatmap_image=_FakeImageItem(),
-            trace_heatmap_notice_item=_FakeTextItem(),
             trace_plot=_FakeTracePlot(),
             trace_curves={"smoothed_max": curve},
             trace_legend=_FakeLegend(),
             trace_time_axis=_FakeTraceAxis("elapsed"),
             _measurement_active=False,
-            _sensorgram_content_mode="metric",
             _metric_plot_enabled=True,
-            _sensorgram_heatmap_history=[],
-            _sensorgram_heatmap_wavelengths=None,
             _visible_trace_x=None,
             _visible_trace_y=None,
             _visible_trace_mode=None,
-            _sensorgram_view_mode="absolute",
             _trace_view_locked=False,
             _sensorgram_downsampling_enabled=True,
             _trace_display_window_s=5.0,
@@ -472,8 +398,7 @@ class SensorgramTimeTests(unittest.TestCase):
             _selected_trace_metrics=lambda: ["smoothed_max"],
             _primary_trace_metric=lambda: "smoothed_max",
             _peak_history={"smoothed_max": buffer},
-            _peak_history_buffers={},
-            _plot_view_cache=None,
+            _plot_view_cache=_FakeAbsoluteViewCache(),
         )
 
         from lspr_app.gui.plot_controller import render_metric_series
@@ -504,7 +429,7 @@ class SensorgramTimeTests(unittest.TestCase):
             "smoothed_max": [(float(index), float(index)) for index in range(100)],
         }
 
-        render_trace_series(window, history, clock_mode=False)
+        render_metric_series(window, history, clock_mode=False)
 
         x_values, y_values = window.trace_curves["smoothed_max"].data
         self.assertEqual(len(x_values), 100)
@@ -516,7 +441,7 @@ class SensorgramTimeTests(unittest.TestCase):
         x = np.arange(0.0, 1000.0, dtype=np.float64)
         y = np.sin(x / 20.0)
 
-        sampled_x, sampled_y = downsample_trace_series_for_view(
+        sampled_x, sampled_y = downsample_metric_series_for_view(
             x,
             y,
             view_width_px=20.0,
@@ -527,49 +452,6 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertEqual(sampled_y.shape, y.shape)
         self.assertTrue(np.array_equal(sampled_x, x))
         self.assertTrue(np.array_equal(sampled_y, y))
-
-    def test_heatmap_downsampling_toggle_can_bypass_reduction(self) -> None:
-        history = [
-            (float(index), np.asarray([float(index), float(index) + 1.0], dtype=np.float64))
-            for index in range(600)
-        ]
-
-        sampled = downsample_sensorgram_history_for_view(
-            history,
-            view_height_px=50.0,
-            enabled=False,
-        )
-
-        self.assertEqual(len(sampled), len(history))
-        self.assertTrue(all(np.array_equal(sampled[index][1], history[index][1]) for index in range(len(history))))
-
-    def test_heatmap_renderer_absolute_ignores_stale_viewport(self) -> None:
-        wavelengths = np.asarray([610.0, 620.0], dtype=np.float64)
-        history = [
-            (0.0, np.asarray([0.1, 0.2], dtype=np.float64)),
-            (10.0, np.asarray([0.3, 0.4], dtype=np.float64)),
-            (20.0, np.asarray([0.5, 0.6], dtype=np.float64)),
-        ]
-        window = SimpleNamespace(
-            trace_heatmap_image=_FakeImageItem(),
-            trace_plot=_FakeTracePlot(view_range=[[40.0, 60.0], [0.0, 1.0]]),
-            trace_curves={"smoothed_max": _FakeCurve()},
-            trace_legend=_FakeLegend(),
-            _sensorgram_heatmap_wavelengths=wavelengths,
-            _visible_trace_x=None,
-            _visible_trace_y=None,
-            _visible_trace_mode=None,
-            _sensorgram_view_mode="absolute",
-            _trace_view_locked=False,
-            _trace_display_window_s=5.0,
-            _sensorgram_downsampling_enabled=True,
-        )
-
-        render_sensorgram_heatmap(window, history, clock_mode=False)
-
-        self.assertTrue(window.trace_heatmap_image.visible)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][0], 0.0, places=6)
-        self.assertAlmostEqual(window.trace_plot.ranges[-1][1], 20.1, places=6)
 
     def test_residual_renderer_reuses_segment_items(self) -> None:
         app = QApplication.instance() or QApplication([])
@@ -617,7 +499,7 @@ class SensorgramTimeTests(unittest.TestCase):
             _trace_autoscale_timer=_FakeTimer(),
         )
 
-        request_trace_autoscale(window)
+        request_metric_autoscale(window)
 
         self.assertTrue(window._trace_autoscale_timer.started)
 
@@ -625,7 +507,7 @@ class SensorgramTimeTests(unittest.TestCase):
         x = np.arange(0.0, 1000.0, dtype=np.float64)
         y = np.sin(x / 20.0)
 
-        sampled_x, sampled_y = downsample_trace_series_for_view(
+        sampled_x, sampled_y = downsample_metric_series_for_view(
             x,
             y,
             view_x_min=400.0,
@@ -678,6 +560,7 @@ class SensorgramTimeTests(unittest.TestCase):
         window = SimpleNamespace(
             spectrum_plot=SimpleNamespace(),
             _current_processing_settings=lambda: SimpleNamespace(wavelength_min_nm=501.0, wavelength_max_nm=800.0),
+            _plots_frozen=False,
         )
         calls: list[str] = []
 
@@ -708,57 +591,38 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertListEqual(clipped_x.tolist(), [600.0, 700.0])
         self.assertListEqual(clipped_y.tolist(), [3.0, 4.0])
 
-    def test_heatmap_history_downsampling_prefers_visible_window(self) -> None:
-        history = [
-            (float(index), np.asarray([float(index), float(index) + 1.0], dtype=np.float64))
-            for index in range(20)
-        ]
+    def test_clear_trace_history_clears_metric_caches(self) -> None:
+        class _FakeClearable:
+            def __init__(self) -> None:
+                self.cleared = False
 
-        sampled = downsample_sensorgram_history_for_view(
-            history,
-            view_x_min=6.0,
-            view_x_max=12.0,
-            max_rows=4,
-        )
+            def clear(self) -> None:
+                self.cleared = True
 
-        self.assertLessEqual(len(sampled), 4)
-        self.assertTrue(all(6.0 <= float(time_value) <= 12.0 for time_value, _ in sampled))
-        self.assertTrue(all(row.shape == (2,) for _, row in sampled))
-
-    def test_heatmap_history_downsampling_caps_to_view_height(self) -> None:
-        history = [
-            (float(index), np.asarray([float(index), float(index) + 1.0], dtype=np.float64))
-            for index in range(400)
-        ]
-
-        sampled = downsample_sensorgram_history_for_view(
-            history,
-            max_rows=1000,
-            view_height_px=100.0,
-        )
-
-        self.assertLessEqual(len(sampled), 256)
-        self.assertGreaterEqual(len(sampled), 1)
-        self.assertEqual(sampled[0][1].shape, (2,))
-
-    def test_clear_trace_history_clears_heatmap_state(self) -> None:
+        plot_view_cache = _FakeClearable()
+        display_cache = _FakeClearable()
+        state_cache = _FakeClearable()
+        status_messages: list[str] = []
         window = SimpleNamespace(
-            _peak_history={"smoothed_max": [(1.0, 2.0)]},
-            _sensorgram_heatmap_history=[(1.0, np.asarray([0.1, 0.2], dtype=np.float64))],
-            _sensorgram_heatmap_wavelengths=np.asarray([610.0, 620.0], dtype=np.float64),
+            _metric_render_display_cache=display_cache,
+            _metric_render_state_cache=state_cache,
+            _plot_view_cache=plot_view_cache,
+            _last_metric_autoscale_range=(0.0, 10.0),
             _session=SimpleNamespace(state=SimpleNamespace(absorbance=None, sample=None)),
             _get_analysis_processed_spectrum=lambda signal: (signal, None),
-            _peak_reference_processed=None,
-            _refresh_trace_plot=lambda trace_label: None,
-            _update_trace_stats=lambda: None,
-            status_label=SimpleNamespace(setText=lambda text: None),
+            _metric_reference_processed=object(),
+            status_label=SimpleNamespace(setText=lambda text: status_messages.append(text)),
         )
 
         clear_trace_history_for(window)
 
-        self.assertEqual(window._peak_history, {})
-        self.assertEqual(window._sensorgram_heatmap_history, [])
-        self.assertIsNone(window._sensorgram_heatmap_wavelengths)
+        self.assertTrue(plot_view_cache.cleared)
+        self.assertTrue(display_cache.cleared)
+        self.assertTrue(state_cache.cleared)
+        self.assertIsNone(window._last_metric_autoscale_range)
+        self.assertIsNone(window._metric_reference_processed)
+        self.assertTrue(status_messages)
+        self.assertIn("Metric history cleared", status_messages[-1])
 
     def test_smoothed_max_and_centroid_do_not_depend_on_fit(self) -> None:
         processed = Spectrum(
@@ -784,7 +648,7 @@ class SensorgramTimeTests(unittest.TestCase):
             fit_window_width_nm=10.0,
             analysis_resolution_nm=0.1,
             polynomial_order=2,
-            peak_tracking_mode="smoothed_max",
+            spectrum_tracking_mode="smoothed_max",
             smoothing_method="none",
             smoothing_window=1,
             baseline_method="none",
