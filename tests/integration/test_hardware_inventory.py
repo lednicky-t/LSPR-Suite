@@ -14,6 +14,7 @@ import sys
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
+import lspr_app.device.port_assignments as port_assignments
 from lspr_app.device.hardware_inventory import scan_connected_serial_devices
 from lspr_app.device.reglo_icc import PumpProbe
 from lspr_app.device.serial_controllers import ControllerPort, ControllerProbe
@@ -80,6 +81,12 @@ class _FakeUnmatchedItsyController:
 
 
 class HardwareInventoryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # port_assignments caches assignments at process scope; reset it so this
+        # test never observes real settings left behind by another test/process.
+        port_assignments._assignment_cache = None
+        self.addCleanup(setattr, port_assignments, "_assignment_cache", None)
+
     def test_scan_connected_serial_devices_classifies_probable_ports(self) -> None:
         ports = [
             ControllerPort(device="COM3", description="Reglo pump", hwid="USB VID:PID=265C:0001"),
@@ -101,6 +108,10 @@ class HardwareInventoryTests(unittest.TestCase):
                 "lspr_app.device.hardware_inventory.registered_controllers",
                 return_value=(_FakeMatchedValveController, _FakeUnmatchedItsyController),
             ),
+            # Force every port to "auto" so this test doesn't depend on the
+            # real machine's saved manual port assignments (get_port_assignment
+            # and should_probe_port_for_role both read through this cache).
+            patch("lspr_app.device.port_assignments.load_app_setting", return_value={}),
         ):
             inventory = scan_connected_serial_devices()
 
