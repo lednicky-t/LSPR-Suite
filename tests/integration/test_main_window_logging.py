@@ -228,7 +228,7 @@ class MainWindowLoggingTests(unittest.TestCase):
             _peak_history={"smoothed_max": _FakeSizedBuffer(2386)},
             _peak_history_buffers={"smoothed_max": _FakeSizedBuffer(17)},
             _plot_view_cache=SimpleNamespace(
-                metric_cache_debug_snapshot=lambda: {"smoothed_max": {"display_points": 17}}
+                metric_cache_debug_snapshot=lambda: {"smoothed_max": {"display_points": 17, "source_points": 2386}}
             ),
             _effective_raw_rate_hz=0.64,
             _live_display_dropped_frames=17,
@@ -280,10 +280,7 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("Deferred UI summary: 0.3 ms", text)
         self.assertIn("Deferred UI stats: 0.9 ms", text)
         self.assertIn("GUI housekeeping total: 22.4 ms", text)
-        # NOTE: trace_points_text ("Metric history points") is currently dead code in
-        # runtime_diagnostics.py -- it stays "-" regardless of window state. Flagged
-        # separately; not fixed here since this is a test-only pass.
-        self.assertIn("Metric history points: -", text)
+        self.assertIn("Metric history points: 2386", text)
         self.assertIn("Metric display buffer points: 17", text)
         self.assertIn("Live result queue: 1 | max: 3", text)
         self.assertIn("Live processed queue: 2 | max: 4", text)
