@@ -115,23 +115,16 @@ class LauncherRegistryTests(unittest.TestCase):
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         self.assertIsNotNone(app)
         target = next(target for target in TARGETS if target.key == "slspr_acq")
-        quiet_enabled = False
+        diagnostics_profile = "normal"
+        cycle_calls = 0
 
-        def _is_quiet_enabled() -> bool:
-            return quiet_enabled
+        def _cycle_diagnostics_profile() -> None:
+            nonlocal diagnostics_profile, cycle_calls
+            cycle_calls += 1
+            diagnostics_profile = "debug"
 
-        def _toggle_quiet_enabled() -> None:
-            nonlocal quiet_enabled
-            quiet_enabled = not quiet_enabled
-
-        info_logs_enabled = False
-
-        def _is_info_logs_enabled() -> bool:
-            return info_logs_enabled
-
-        def _toggle_info_logs_enabled() -> None:
-            nonlocal info_logs_enabled
-            info_logs_enabled = not info_logs_enabled
+        def _diagnostics_profile_text() -> str:
+            return diagnostics_profile.capitalize()
 
         card = LaunchCard(
             target,
@@ -141,32 +134,22 @@ class LauncherRegistryTests(unittest.TestCase):
             profile_cycle_callback=lambda: None,
             profile_text_callback=lambda: "Full",
             profile_tooltip_callback=lambda: "Full mode",
-            diagnostics_enabled_callback=_is_quiet_enabled,
-            diagnostics_toggle_callback=_toggle_quiet_enabled,
-            diagnostics_info_logs_enabled_callback=_is_info_logs_enabled,
-            diagnostics_info_logs_toggle_callback=_toggle_info_logs_enabled,
+            diagnostics_profile_cycle_callback=_cycle_diagnostics_profile,
+            diagnostics_profile_text_callback=_diagnostics_profile_text,
+            diagnostics_profile_tooltip_callback=lambda: "Normal diagnostics.",
         )
         self.assertTrue(hasattr(card, "mode_label"))
         self.assertIn("Mode:", card.mode_label.text())
         self.assertIn("Full", card.mode_label.text())
         self.assertTrue(hasattr(card, "diagnostics_button"))
-        self.assertTrue(hasattr(card, "diagnostics_info_logs_button"))
-        self.assertIn("Quiet logs: Off", card.diagnostics_button.text())
-        self.assertIn("File info: On", card.diagnostics_info_logs_button.text())
-        self.assertIn("Flags: quiet=off | file=on", card.launch_flags_label.text())
+        self.assertEqual(card.diagnostics_button.text(), "Diagnostics: Normal")
         self.assertEqual(card.button.text(), "Launch")
         card.set_auto_launch_pending(True, 3)
         self.assertIn("Stop launch", card.button.text())
-        card._toggle_diagnostics()
+        card.diagnostics_button.click()
+        self.assertEqual(cycle_calls, 1)
         card._update_diagnostics_button()
-        card._update_launch_flags_label()
-        self.assertIn("Quiet logs: On", card.diagnostics_button.text())
-        self.assertIn("Flags: quiet=on | file=on", card.launch_flags_label.text())
-        card._toggle_diagnostics_info_logs()
-        card._update_diagnostics_info_logs_button()
-        self.assertIn("File info: Off", card.diagnostics_info_logs_button.text())
-        card._update_launch_flags_label()
-        self.assertIn("Flags: quiet=on | file=off", card.launch_flags_label.text())
+        self.assertEqual(card.diagnostics_button.text(), "Diagnostics: Debug")
         card.set_running(True)
         self.assertEqual(card.button.text(), "Kill")
         card.set_running(False)
