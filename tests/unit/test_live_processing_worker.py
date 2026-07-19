@@ -6,7 +6,7 @@ import queue
 import sys
 import unittest
 from datetime import datetime, timezone
-from time import perf_counter, sleep
+from time import perf_counter
 
 import numpy as np
 
@@ -21,14 +21,7 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_app.domain.models import AcquisitionSettings, ProcessingSettings, Spectrum
 from lspr_app.device.simulated import SimulationParameters
-from lspr_app.gui.workers import (
-    AcquisitionRequest,
-    AcquisitionResult,
-    LiveAcquisitionEvent,
-    LiveAcquisitionWorker,
-    LiveProcessingWorker,
-    _queue_qsize_safe,
-)
+from lspr_app.gui.workers import AcquisitionRequest, AcquisitionResult, LiveAcquisitionEvent, LiveAcquisitionWorker, LiveProcessingWorker
 
 
 def _build_test_spectrum() -> Spectrum:
@@ -277,18 +270,6 @@ class LiveProcessingWorkerDrainTest(unittest.TestCase):
                 )
             )
 
-        # mp.Queue.put() hands items to an internal feeder thread that flushes
-        # them to the OS pipe asynchronously -- put() returning doesn't mean the
-        # item is visible to a reader yet. Wait for the queue to report all
-        # n_frames as enqueued before starting the worker, otherwise a slow
-        # flush can race with a fast-starting worker: it would then drain items
-        # one at a time as they trickle in, instead of catching the whole
-        # burst in a single drain pass, defeating the collapsing behavior this
-        # test is meant to prove.
-        flush_deadline = perf_counter() + 5.0
-        while _queue_qsize_safe(input_queue) < n_frames and perf_counter() < flush_deadline:
-            sleep(0.01)
-
         worker.start()
         results = []
         deadline = perf_counter() + 8.0
@@ -319,11 +300,79 @@ class LiveProcessingWorkerDrainTest(unittest.TestCase):
         self.assertIsNotNone(results[0].result.processed)
 
     def test_multiple_queued_frames_produce_fewer_results(self) -> None:
-        # With 8 frames pre-queued, drain-and-skip means the worker processes
-        # far fewer than 8 — it collapses the burst to 1 or 2 results.
-        results = self._run_worker_with_n_frames(8)
+        # A single pre-queued burst races against process-spawn timing: put()
+        # only hands items to an internal feeder thread that flushes them to
+        # the OS pipe asynchronously, so "N items queued before start()" does
+        # not guarantee the child sees them as one batch -- depending on
+        # unrelated OS scheduling it can instead see them trickle in one at a
+        # time, with nothing to collapse. (qsize() doesn't help either: it's a
+        # put()-side counter, not a "flushed and readable" signal.)
+        #
+        # Feed frames continuously once the worker is confirmed running instead,
+        # faster than it can process them, for a sustained window. This matches
+        # the real production scenario the drain-skip logic exists for (a
+        # source faster than the display/processing rate) and is not sensitive
+        # to how fast the child process happens to spawn.
+        ctx = mp.get_context("spawn")
+        stop_event = ctx.Event()
+        result_queue = ctx.Queue(maxsize=64)
+        input_queue = ctx.Queue(maxsize=64)
+        worker = LiveProcessingWorker(
+            result_queue,
+            input_queue,
+            stop_event,
+            ProcessingSettings(),
+            debug_mode_enabled=False,
+            log_queue=ctx.Queue(maxsize=8),
+        )
+        worker.start()
+
+        spectrum = _build_test_spectrum()
+        results = []
+        frames_sent = 0
+        try:
+            feed_deadline = perf_counter() + 3.0
+            while perf_counter() < feed_deadline:
+                try:
+                    input_queue.put_nowait(
+                        LiveAcquisitionEvent(
+                            result=AcquisitionResult(
+                                spectrum=spectrum,
+                                elapsed_ms=1.0,
+                                settings=AcquisitionSettings(),
+                                source_epoch=1,
+                            ),
+                            source_epoch=1,
+                            source_sample_index=frames_sent,
+                            produced_at_perf=perf_counter(),
+                        )
+                    )
+                    frames_sent += 1
+                except queue.Full:
+                    pass
+                while True:
+                    try:
+                        results.append(result_queue.get_nowait())
+                    except queue.Empty:
+                        break
+            # Let any result still in flight for the last frame(s) arrive.
+            drain_deadline = perf_counter() + 2.0
+            while perf_counter() < drain_deadline:
+                try:
+                    results.append(result_queue.get(timeout=0.2))
+                except queue.Empty:
+                    if results:
+                        break
+        finally:
+            stop_event.set()
+            worker.join(timeout=5.0)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=2.0)
+
+        self.assertGreater(frames_sent, 50, "test should have fed a large burst of frames")
         self.assertGreater(len(results), 0, "at least one result must be produced")
-        self.assertLess(len(results), 8, "burst of 8 frames should be collapsed by drain-skip")
+        self.assertLess(len(results), frames_sent, "sustained high-rate feed should be collapsed by drain-skip")
         for r in results:
             self.assertIsNotNone(r.result)
             self.assertIsNotNone(r.result.processed)
