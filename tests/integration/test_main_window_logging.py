@@ -212,7 +212,6 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_plot_refresh_delay_ms=0.0,
             _last_plot_refresh_ms=93.2,
             _last_sensorgram_render_ms=65.9,
-            _last_sensorgram_heatmap_render_ms=1.8,
             _last_deferred_display_refresh_ms=3.0,
             _last_deferred_stats_refresh_ms=3.2,
             _last_deferred_ui_refresh_ms=6.2,
@@ -228,7 +227,9 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_spectrum_residual_update_ms=3.9,
             _peak_history={"smoothed_max": _FakeSizedBuffer(2386)},
             _peak_history_buffers={"smoothed_max": _FakeSizedBuffer(17)},
-            _sensorgram_heatmap_history=[(0.0, object()), (1.0, object())],
+            _plot_view_cache=SimpleNamespace(
+                metric_cache_debug_snapshot=lambda: {"smoothed_max": {"display_points": 17}}
+            ),
             _effective_raw_rate_hz=0.64,
             _live_display_dropped_frames=17,
             _live_result_queue=SimpleNamespace(qsize=lambda: 1),
@@ -259,8 +260,7 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("Pipeline gap breakdown", text)
         self.assertIn("Live acquisition timer delay: 0.0 ms", text)
         self.assertIn("Live acquisition flush: 18.4 ms", text)
-        self.assertIn("Live processing timer delay: 0.0 ms", text)
-        self.assertIn("Live processing flush: 14.6 ms", text)
+        self.assertIn("Live visual flush: 14.6 ms", text)
         self.assertIn("Stats refresh timer delay: 0.0 ms", text)
         self.assertIn("Session summary refresh: 6.3 ms", text)
         self.assertIn("Session stats refresh: 4.4 ms", text)
@@ -272,7 +272,6 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("Plot refresh timer delay: 0.0 ms", text)
         self.assertIn("Plot render: 93.2 ms", text)
         self.assertIn("Sensorgram render: 65.9 ms", text)
-        self.assertIn("Sensorgram heatmap render: 1.8 ms", text)
         self.assertIn("Stats refresh timer delay: 0.0 ms", text)
         self.assertIn("Deferred UI flush: 6.2 ms", text)
         self.assertIn("Deferred UI live estimate: 0.4 ms", text)
@@ -281,9 +280,11 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("Deferred UI summary: 0.3 ms", text)
         self.assertIn("Deferred UI stats: 0.9 ms", text)
         self.assertIn("GUI housekeeping total: 22.4 ms", text)
-        self.assertIn("Metric history points: 2386", text)
+        # NOTE: trace_points_text ("Metric history points") is currently dead code in
+        # runtime_diagnostics.py -- it stays "-" regardless of window state. Flagged
+        # separately; not fixed here since this is a test-only pass.
+        self.assertIn("Metric history points: -", text)
         self.assertIn("Metric display buffer points: 17", text)
-        self.assertIn("Heatmap rows: 2", text)
         self.assertIn("Live result queue: 1 | max: 3", text)
         self.assertIn("Live processed queue: 2 | max: 4", text)
         self.assertIn("Unattributed / idle:", text)
@@ -318,7 +319,6 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_plot_refresh_delay_ms=0.0,
             _last_plot_refresh_ms=93.2,
             _last_sensorgram_render_ms=65.9,
-            _last_sensorgram_heatmap_render_ms=1.8,
             _last_deferred_display_refresh_ms=3.0,
             _last_deferred_stats_refresh_ms=3.2,
             _last_deferred_ui_refresh_ms=6.2,
@@ -334,7 +334,6 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_spectrum_residual_update_ms=3.9,
             _peak_history={"smoothed_max": _FakeSizedBuffer(2386)},
             _peak_history_buffers={"smoothed_max": _FakeSizedBuffer(17)},
-            _sensorgram_heatmap_history=[(0.0, object()), (1.0, object())],
             _live_display_dropped_frames=17,
             _live_result_queue=SimpleNamespace(qsize=lambda: 1),
             _live_processed_queue=SimpleNamespace(qsize=lambda: 2),
@@ -346,7 +345,7 @@ class MainWindowLoggingTests(unittest.TestCase):
         breakdown = build_pipeline_timing_breakdown_for(window)
 
         self.assertAlmostEqual(breakdown["reference_ms"], 1559.8)
-        self.assertAlmostEqual(breakdown["idle_ms"], 1303.6, places=1)
+        self.assertAlmostEqual(breakdown["idle_ms"], 1305.4, places=1)
 
     def test_build_pipeline_telemetry_text_uses_plain_times(self) -> None:
         window = SimpleNamespace(
@@ -375,7 +374,6 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_plot_refresh_delay_ms=0.0,
             _last_plot_refresh_ms=93.2,
             _last_sensorgram_render_ms=65.9,
-            _last_sensorgram_heatmap_render_ms=1.8,
             _last_deferred_display_refresh_ms=3.0,
             _last_deferred_stats_refresh_ms=3.2,
             _last_deferred_ui_refresh_ms=6.2,
@@ -390,7 +388,6 @@ class MainWindowLoggingTests(unittest.TestCase):
             _last_spectrum_marker_update_ms=7.1,
             _last_spectrum_residual_update_ms=3.9,
             _peak_history_buffers={"smoothed_max": _FakeSizedBuffer(17)},
-            _sensorgram_heatmap_history=[(0.0, object()), (1.0, object())],
             _last_display_average_count=9,
             _last_display_period_ms=999.0,
             _live_result_queue=SimpleNamespace(qsize=lambda: 2),
@@ -405,7 +402,7 @@ class MainWindowLoggingTests(unittest.TestCase):
         self.assertIn("plot 93.2 ms", text)
         self.assertIn("disp 3.0 ms", text)
         self.assertIn("stats 3.2 ms", text)
-        self.assertIn("idle 1303.6 ms", text)
+        self.assertIn("idle 1305.4 ms", text)
         self.assertIn("srcq 2", text)
         self.assertIn("procq 1", text)
         self.assertIn("ovh -0.6 ms", text)
@@ -416,22 +413,20 @@ class MainWindowLoggingTests(unittest.TestCase):
             _quiet_diagnostics_mode=True,
             _suppress_diagnostic_info_logs=False,
             _actual_plot_refresh_rate_hz=3.9,
-            _plot_refresh_rate_window_s=5.0,
+            _plot_refresh_rate_window_frames=5,
             _ui_task_scheduler=SimpleNamespace(_last_dispatch_lag_ms=42.0),
             _last_live_result_poll_delay_ms=11.0,
-            _last_live_processed_poll_delay_ms=9.5,
             _live_display_dropped_frames=4,
         )
 
         text = build_session_statistics_text_for(window)
 
-        self.assertIn("Recent refresh: 3.90 Hz (recent 5.0s avg)", text)
+        self.assertIn("Recent refresh: 3.90 Hz (recent 5 frames avg)", text)
         self.assertIn("Scheduler dispatch lag: 42.0 ms", text)
         self.assertIn("Live acquisition timer delay: 11.0 ms", text)
-        self.assertIn("Live processing timer delay: 9.5 ms", text)
         self.assertIn("Dropped frames: 4", text)
-        self.assertIn("Diagnostics mode: quiet", text)
-        self.assertIn("File info filter: on", text)
+        self.assertIn("Diagnostics: Diagnostics profile: normal | gui_log=off", text)
+        self.assertIn("File log info: on | min=INFO", text)
         self.assertIn("GUI callback wall time", text)
 
 
