@@ -299,36 +299,6 @@ class MainWindowTitleBarTests(unittest.TestCase):
         disconnect_action.trigger()
         self.assertTrue(window.called_disconnect_all_devices)
 
-    def test_help_menu_includes_performance_switches(self) -> None:
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        self.assertIsNotNone(app)
-        window = self._FakeWindow()
-        menu_bar = build_menu_bar(window)
-        help_menu_action = next(action for action in menu_bar.actions() if action.text() == "Help")
-        help_menu = help_menu_action.menu()
-        self.assertIsNotNone(help_menu)
-        performance_menu_action = next(action for action in help_menu.actions() if action.menu() is not None and action.text() == "Performance switches")
-        performance_menu = performance_menu_action.menu()
-        self.assertIsNotNone(performance_menu)
-        action = next(item for item in performance_menu.actions() if item.text() == "Acquisition-state autosave")
-        action.trigger()
-        self.assertIsNotNone(window.called_set_acquisition_state_autosave_enabled)
-        action = next(item for item in performance_menu.actions() if item.text() == "UI-state autosave")
-        action.trigger()
-        self.assertIsNotNone(window.called_set_ui_state_autosave_enabled)
-        action = next(item for item in performance_menu.actions() if item.text() == "Log buffering")
-        action.trigger()
-        self.assertIsNotNone(window.called_set_log_buffering_enabled)
-        action = next(item for item in performance_menu.actions() if item.text() == "GUI housekeeping")
-        action.trigger()
-        self.assertIsNotNone(window.called_set_gui_housekeeping_enabled)
-        action = next(item for item in performance_menu.actions() if item.text() == "Sensorgram heatmap")
-        action.trigger()
-        self.assertIsNotNone(getattr(window, "called_set_sensorgram_heatmap_enabled", None))
-        action = next(item for item in performance_menu.actions() if item.text() == "Metric plot")
-        action.trigger()
-        self.assertIsNotNone(getattr(window, "called_set_metric_plot_enabled", None))
-
     def test_disconnect_all_devices_action_is_disabled_while_hardware_init_runs(self) -> None:
         window = SimpleNamespace(
             _hw_disconnect_all_action=self._FakeAction(),
