@@ -17,7 +17,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_app.gui.main_window import MainWindow
-from lspr_app.gui.hardware_initializer import HardwareInitResult
+from lspr_app.device.device_lifecycle import DeviceLifecycleReport
 from lspr_app.device.simulated import SimulatedSpectrometer
 from lspr_app.domain.session import MeasurementSession
 from lspr_core import LAUNCH_PROFILE_CONTROL_EDITOR, launch_profile_spec
@@ -190,22 +190,13 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         def _fake_sync(win) -> None:
             calls.append(("sync", bool(win._hardware_init_ready_emitted)))
 
-        result = HardwareInitResult(
-            steps=[],
-            pump_probe=None,
-            pump_error=None,
-            selector_devices=[],
-            selector_error=None,
-            valve_probe=None,
-            valve_error=None,
-            spectrometer_name="Spectrometer backend active: USB2000PLUS.",
-        )
+        report = DeviceLifecycleReport(events=[], by_device={}, spectrometer=None)
 
         with (
             patch("lspr_app.gui.main_window_lifecycle.finish_hardware_initialization_for", _fake_finish),
             patch("lspr_app.gui.main_window_lifecycle.sync_experiment_control_startup_ports_for", _fake_sync),
         ):
-            MainWindow._handle_hardware_init_finished(window, result)
+            MainWindow._handle_hardware_init_finished(window, report)
 
         self.assertIn(("finish", False), calls)
         self.assertIn(("sync", True), calls)

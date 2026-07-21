@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
@@ -14,7 +14,6 @@ import sys
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_app.gui import experiment_control_window as experiment_control_module
 from lspr_app.gui.experiment_control_window import ExperimentControlWindow
 
 
@@ -54,19 +53,6 @@ class _FakeButton:
 
     def setChecked(self, value: bool) -> None:
         self.checked = value
-
-
-class _FakeDeviceCommService:
-    def __init__(self, connection_state: dict[str, bool]) -> None:
-        self._connection_state = connection_state
-        self._label_to_key = {"pump_1": "pump", "switch_1": "switch", "selector_1": "selector"}
-
-    def is_connected(self, label: str) -> bool:
-        key = self._label_to_key.get(label)
-        return bool(self._connection_state.get(key, False))
-
-    def connection(self, label: str) -> object | None:
-        return object() if self.is_connected(label) else None
 
 
 def _make_step(step_index: int) -> SimpleNamespace:
@@ -206,124 +192,6 @@ class ExperimentControlRuntimeTransitionTests(unittest.TestCase):
         controller._selected_experiment_control_row = lambda: 1
 
         self.assertEqual(ExperimentControlWindow._experiment_control_timeline_row(controller), 1)
-
-    def test_startup_auto_connect_waits_for_explicit_ready_flag(self) -> None:
-        controller = ExperimentControlWindow.__new__(ExperimentControlWindow)
-        calls: list[str] = []
-        controller._auto_connect_devices = True
-        controller._startup_auto_connect_enabled = False
-        controller._startup_auto_connect_scheduled = False
-        controller._startup_auto_connect_active = False
-        controller._startup_auto_connect_stage = None
-        controller._startup_auto_connect_queue = []
-        controller._port_refresh_in_progress = False
-        controller._experiment_control_bootstrap_in_progress = False
-        controller._probe = SimpleNamespace(port="COM8")
-        controller._set_connection_visual = lambda *_args, **_kwargs: None
-        controller._connect_selected_port = lambda: calls.append("connect")
-
-        ExperimentControlWindow._auto_connect_pump(controller)
-        self.assertEqual(calls, [])
-
-        controller.enable_startup_device_auto_connect = ExperimentControlWindow.enable_startup_device_auto_connect.__get__(controller, ExperimentControlWindow)
-        controller.enable_startup_device_auto_connect()
-        ExperimentControlWindow._auto_connect_pump(controller)
-        self.assertEqual(calls, ["connect"])
-
-    def test_startup_auto_connect_is_scheduled_once(self) -> None:
-        controller = ExperimentControlWindow.__new__(ExperimentControlWindow)
-        calls: list[str] = []
-        controller._auto_connect_devices = True
-        controller._startup_auto_connect_enabled = True
-        controller._startup_auto_connect_scheduled = False
-        controller._startup_auto_connect_active = False
-        controller._startup_auto_connect_stage = None
-        controller._startup_auto_connect_queue = []
-        controller._port_refresh_in_progress = False
-        controller._experiment_control_bootstrap_in_progress = False
-        connection_state = {"pump": False, "switch": False, "selector": False}
-        controller._device_comm_service = _FakeDeviceCommService(connection_state)
-        controller._connect_in_progress = False
-        controller._valve_connect_in_progress = False
-        controller._valve_connect_task = None
-        controller._mswitch_connect_in_progress = False
-        controller._mswitch_connect_task = None
-        controller.selected_port = lambda: "COM8"
-        controller.port_combo = SimpleNamespace(findData=lambda data: 0 if data == "COM8" else -1)
-        controller._selected_valve_port = lambda: "COM7"
-        controller.valve_port_combo = SimpleNamespace(findData=lambda data: 0 if data == "COM7" else -1)
-        controller._selected_mswitch_port = lambda: "COM9"
-        controller.mswitch_port_combo = SimpleNamespace(findData=lambda data: 0 if data == "COM9" else -1)
-        def connect_pump() -> bool:
-            calls.append("pump")
-            connection_state["pump"] = True
-            return True
-
-        def connect_valve() -> bool:
-            calls.append("valve")
-            connection_state["switch"] = True
-            return True
-
-        def connect_mswitch() -> bool:
-            calls.append("mswitch")
-            connection_state["selector"] = True
-            return True
-
-        controller.connect_best_pump_controller = connect_pump
-        controller.connect_best_valve_controller = connect_valve
-        controller.connect_best_mswitch_controller = connect_mswitch
-
-        original_single_shot = experiment_control_module.QTimer.singleShot
-        scheduled: list[tuple[int, object]] = []
-        try:
-            experiment_control_module.QTimer.singleShot = staticmethod(lambda interval, callback: scheduled.append((interval, callback)))
-            self.assertTrue(ExperimentControlWindow._schedule_startup_device_auto_connect(controller))
-            self.assertFalse(ExperimentControlWindow._schedule_startup_device_auto_connect(controller))
-        finally:
-            experiment_control_module.QTimer.singleShot = original_single_shot
-
-        self.assertEqual(len(scheduled), 1)
-        self.assertTrue(controller._startup_auto_connect_scheduled)
-        callback = scheduled[0][1]
-        callback()
-        self.assertEqual(calls, ["pump"])
-        self.assertEqual(controller._startup_auto_connect_stage, "pump")
-
-        scheduled.clear()
-        try:
-            experiment_control_module.QTimer.singleShot = staticmethod(lambda interval, callback: scheduled.append((interval, callback)))
-            ExperimentControlWindow._finish_startup_device_auto_connect_stage(controller, "pump")
-        finally:
-            experiment_control_module.QTimer.singleShot = original_single_shot
-
-        self.assertEqual(controller._startup_auto_connect_stage, None)
-        self.assertEqual(len(scheduled), 1)
-        scheduled[0][1]()
-        self.assertEqual(calls, ["pump", "valve"])
-        self.assertEqual(controller._startup_auto_connect_stage, "switch")
-
-        scheduled.clear()
-        try:
-            experiment_control_module.QTimer.singleShot = staticmethod(lambda interval, callback: scheduled.append((interval, callback)))
-            ExperimentControlWindow._finish_startup_device_auto_connect_stage(controller, "switch")
-        finally:
-            experiment_control_module.QTimer.singleShot = original_single_shot
-
-        self.assertEqual(len(scheduled), 1)
-        scheduled[0][1]()
-        self.assertEqual(calls, ["pump", "valve", "mswitch"])
-        self.assertEqual(controller._startup_auto_connect_stage, "selector")
-
-        scheduled.clear()
-        try:
-            experiment_control_module.QTimer.singleShot = staticmethod(lambda interval, callback: scheduled.append((interval, callback)))
-            ExperimentControlWindow._finish_startup_device_auto_connect_stage(controller, "selector")
-        finally:
-            experiment_control_module.QTimer.singleShot = original_single_shot
-
-        self.assertEqual(len(scheduled), 0)
-        self.assertFalse(controller._startup_auto_connect_active)
-        self.assertIsNone(controller._startup_auto_connect_stage)
 
 
 if __name__ == "__main__":

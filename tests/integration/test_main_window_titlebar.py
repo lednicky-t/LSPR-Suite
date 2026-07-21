@@ -319,8 +319,7 @@ class MainWindowTitleBarTests(unittest.TestCase):
             _hardware_init_ready_emitted=True,
             _launch_profile_settings=lambda: launch_profile_spec(LAUNCH_PROFILE_FULL),
             _experiment_control_window=SimpleNamespace(
-                enable_startup_device_auto_connect=lambda: calls.append("enable"),
-                refresh_device_ports=lambda: calls.append("refresh") or True,
+                sync_from_lifecycle_controller=lambda: calls.append("sync"),
             ),
             _log_info=lambda message: calls.append(f"info:{message}"),
             _log_warning=lambda message: calls.append(f"warn:{message}"),
@@ -330,9 +329,7 @@ class MainWindowTitleBarTests(unittest.TestCase):
 
         MainWindow._sync_experiment_control_startup_ports(window)
 
-        self.assertEqual(calls[0], "enable")
-        self.assertIn("refresh", calls)
-        self.assertTrue(any(str(item).startswith("info:Refreshing experiment-control ports") for item in calls))
+        self.assertEqual(calls, ["sync"])
 
 
 if __name__ == "__main__":
