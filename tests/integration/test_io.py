@@ -71,8 +71,8 @@ class IoMetadataTests(unittest.TestCase):
         )
 
         self.assertEqual(metadata["schema_name"], "lspr_measurement")
-        self.assertEqual(metadata["schema_major"], 5)
-        self.assertEqual(metadata["schema_minor"], 2)
+        self.assertEqual(metadata["schema_major"], 6)
+        self.assertEqual(metadata["schema_minor"], 0)
         self.assertEqual(metadata["app_name"], "Test App")
         self.assertEqual(metadata["app_version"], "9.8.7")
         self.assertEqual(metadata["started_at_utc"], "2026-01-02T03:04:05Z")
@@ -86,11 +86,11 @@ class IoMetadataTests(unittest.TestCase):
                 write_measurement_root_metadata(
                     handle,
                     schema_name="lspr_measurement",
-                    schema_version="5.2",
-                    schema_major=5,
-                    schema_minor=2,
+                    schema_version="6.0",
+                    schema_major=6,
+                    schema_minor=0,
                     format_name="experiment_run",
-                    format_version=5,
+                    format_version=6,
                     app_name="LSPR Suite",
                     app_version="0.1.0",
                     created_by="tester",
@@ -103,11 +103,11 @@ class IoMetadataTests(unittest.TestCase):
                 metadata = read_root_metadata(handle)
 
         self.assertEqual(metadata["schema_name"], "lspr_measurement")
-        self.assertEqual(metadata["schema_version"], "5.2")
-        self.assertEqual(metadata["schema_major"], 5)
-        self.assertEqual(metadata["schema_minor"], 2)
+        self.assertEqual(metadata["schema_version"], "6.0")
+        self.assertEqual(metadata["schema_major"], 6)
+        self.assertEqual(metadata["schema_minor"], 0)
         self.assertEqual(metadata["format_name"], "experiment_run")
-        self.assertEqual(metadata["format_version"], 5)
+        self.assertEqual(metadata["format_version"], 6)
         self.assertEqual(metadata["app_name"], "LSPR Suite")
         self.assertEqual(metadata["app_version"], "0.1.0")
         self.assertEqual(metadata["created_by"], "tester")
@@ -121,11 +121,11 @@ class IoMetadataTests(unittest.TestCase):
                 write_measurement_root_metadata(
                     handle,
                     schema_name="lspr_measurement",
-                    schema_version="5.2",
-                    schema_major=5,
-                    schema_minor=2,
+                    schema_version="6.0",
+                    schema_major=6,
+                    schema_minor=0,
                     format_name="experiment_run",
-                    format_version=5,
+                    format_version=6,
                     app_name="LSPR Suite",
                     app_version="0.1.0",
                     created_by="tester",
@@ -147,11 +147,11 @@ class IoMetadataTests(unittest.TestCase):
                 write_measurement_root_metadata(
                     handle,
                     schema_name="lspr_measurement",
-                    schema_version="5.2",
-                    schema_major=5,
-                    schema_minor=2,
+                    schema_version="6.0",
+                    schema_major=6,
+                    schema_minor=0,
                     format_name="experiment_run",
-                    format_version=5,
+                    format_version=6,
                     app_name="LSPR Suite",
                     app_version="0.1.0",
                     created_by="tester",
@@ -163,11 +163,11 @@ class IoMetadataTests(unittest.TestCase):
                 write_measurement_manifest_metadata(
                     manifest,
                     schema_name="lspr_measurement",
-                    schema_version="5.2",
-                    schema_major=5,
-                    schema_minor=2,
+                    schema_version="6.0",
+                    schema_major=6,
+                    schema_minor=0,
                     format_name="experiment_run",
-                    format_version=5,
+                    format_version=6,
                     app_name="LSPR Suite",
                     app_version="0.1.0",
                     created_by="tester",
@@ -284,15 +284,13 @@ class IoMetadataTests(unittest.TestCase):
                         f"ch{index + 1}_tube_mm" for index in range(6)
                     ]
                 )
-                # FIXME: flagged during a pyflakes/ruff sweep - empty_plan is computed with the
-                # correct column count (mirroring runtime_table above, which IS used to create
-                # "experiment_control_runtime") but never applied to "experiment_plan", which was
-                # created earlier (shape=(0, 0), maxshape=(None, 0)) with a hard-capped 0-column
-                # maxshape - not resizable to match via h5py without recreating the dataset. Net
-                # effect: this fixture's "experiment_plan" dataset shape (0, 0) is inconsistent
-                # with its own "columns" attrs (26 entries) below. Not fixed here since it touches
-                # HDF5 schema/fixture mechanics - needs a maintainer decision, not a guess.
-                empty_plan = np.empty((0, len(plan_columns)), dtype=h5py.string_dtype(encoding="utf-8"))  # noqa: F841
+                # FIXME: "experiment_plan" was created earlier (shape=(0, 0),
+                # maxshape=(None, 0)) with a hard-capped 0-column maxshape - not
+                # resizable to match plan_columns via h5py without recreating the
+                # dataset. Net effect: this fixture's "experiment_plan" dataset shape
+                # (0, 0) is inconsistent with its own "columns" attrs (26 entries)
+                # below. Not fixed here since it touches HDF5 schema/fixture
+                # mechanics - needs a maintainer decision, not a guess.
                 metadata["experiment_plan"].attrs["columns"] = np.asarray(plan_columns, dtype=h5py.string_dtype(encoding="utf-8"))
 
             with h5py.File(path, "r") as handle:
@@ -300,7 +298,7 @@ class IoMetadataTests(unittest.TestCase):
                 manifest_attrs = read_root_metadata(manifest)
                 validation = validate_measurement_file(handle)
 
-        self.assertEqual(manifest_attrs["schema_version"], "5.2")
+        self.assertEqual(manifest_attrs["schema_version"], "6.0")
         self.assertIn("export_user", manifest_attrs)
         self.assertTrue(bool(manifest_attrs["storage_compression_enabled"]))
         self.assertEqual(manifest_attrs["storage_compression_filter"], "gzip")
@@ -373,11 +371,11 @@ class IoMetadataTests(unittest.TestCase):
                 write_measurement_root_metadata(
                     handle,
                     schema_name="lspr_measurement",
-                    schema_version="5.2",
-                    schema_major=5,
-                    schema_minor=2,
+                    schema_version="6.0",
+                    schema_major=6,
+                    schema_minor=0,
                     format_name="experiment_run",
-                    format_version=5,
+                    format_version=6,
                     app_name="LSPR Suite",
                     app_version="0.1.0",
                     created_by="tester",
@@ -447,11 +445,11 @@ class IoMetadataTests(unittest.TestCase):
                 write_measurement_root_metadata(
                     handle,
                     schema_name="lspr_measurement",
-                    schema_version="5.2",
-                    schema_major=5,
-                    schema_minor=2,
+                    schema_version="6.0",
+                    schema_major=6,
+                    schema_minor=0,
                     format_name="experiment_run",
-                    format_version=5,
+                    format_version=6,
                     app_name="LSPR Suite",
                     app_version="0.1.0",
                     created_by="tester",
@@ -469,8 +467,8 @@ class IoMetadataTests(unittest.TestCase):
         validation = validate_measurement_metadata(
             {
                 "schema_name": "lspr_measurement",
-                "schema_version": "6.0",
-                "schema_major": 6,
+                "schema_version": "7.0",
+                "schema_major": 7,
                 "schema_minor": 0,
                 "format_name": "experiment_run",
                 "started_at_utc": "2026-01-02T03:04:05Z",

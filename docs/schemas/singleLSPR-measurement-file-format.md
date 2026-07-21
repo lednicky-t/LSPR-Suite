@@ -1,5 +1,10 @@
 ﻿# LSPR Measurement File Format
 
+> **Note:** this file is a duplicate of
+> [`apps/sLSPR/acq/docs/measurement_file_format.md`](../../apps/sLSPR/acq/docs/measurement_file_format.md)
+> that has drifted out of sync in the past. Treat the app-side copy as canonical when the two
+> disagree; this copy is kept updated alongside it for repo-root discoverability.
+
 This document describes the native HDF5 file layout for LSPR Acquisition measurement data.
 It is intended as the implementation contract for writers, readers, validators, and future analysis tools.
 
@@ -51,11 +56,11 @@ Recommended root attributes:
 
 ```text
 attrs["schema_name"] = "lspr_measurement"
-attrs["schema_version"] = "5.2"
-attrs["schema_major"] = 5
-attrs["schema_minor"] = 2
+attrs["schema_version"] = "6.0"
+attrs["schema_major"] = 6
+attrs["schema_minor"] = 0
 attrs["format_name"] = "experiment_run"
-attrs["format_version"] = 5
+attrs["format_version"] = 6
 attrs["app_version"] = "<application version>"
 attrs["created_by"] = "LSPR Acquisition"
 attrs["created_at_utc"] = "YYYY-MM-DDTHH:MM:SS.sssZ"
@@ -107,29 +112,34 @@ attrs["columns"] = ["column_a", "column_b", ...]
 
 ## Time Model
 
-The canonical saved time coordinate is absolute UTC milliseconds:
+**As of schema 6.0 (2026-07-21), spectra rows and processed-metric rows carry only an
+absolute timestamp on disk.** There is no relative `t_ms` column for these streams anymore;
+readers derive any relative/elapsed display value from `acquired_at_unix_ms` at read time,
+anchored to the first row of the stream being read. See the "Time Model" section of the
+canonical copy of this document for the full rationale.
+
+The canonical saved time coordinate is absolute Unix-epoch milliseconds:
 
 ```text
-timestamp_utc_ms int64
+acquired_at_unix_ms int64
 ```
 
-`timestamp_utc_ms` is the canonical event time used for file persistence and cross-stream joins.
-Display values may still be shown as relative milliseconds for usability.
+`acquired_at_unix_ms` is the canonical event time used for file persistence and cross-stream
+joins, for spectra and processed-metric rows.
 
 Rules:
 
 - Use millisecond resolution only.
 - Use `int64` for timestamps.
 - Store `started_at_utc` once at the root.
-- Keep `t_ms` as the relative display coordinate for runtime orientation.
-- Store absolute event timestamps in UTC milliseconds.
+- Store absolute event timestamps in Unix-epoch UTC milliseconds (`acquired_at_unix_ms`).
+- Readers derive relative/elapsed seconds at read time - never persisted.
 - Readers should align streams by selecting the latest state row at or before a spectrum timestamp.
 
-Recommended relative display field:
-
-```text
-t_ms int64
-```
+**This does not apply to the separate experiment-control/flow-state runtime log**
+(`/data/experiment_control_runtime`, see "Runtime Runs" below), which keeps its own `t_ms`
+column unchanged - that table represents plan/step-relative time for a live control
+sequence, not a spectrum acquisition timestamp.
 
 ## Top-Level Layout
 
@@ -188,8 +198,7 @@ Spectra are stored by role.
 Each role group should contain:
 
 ```text
-t_ms                 int64   [n]
-acquired_at_unix_ms  int64   [n] optional
+acquired_at_unix_ms  int64   [n]
 intensity            float32 [n, n_wavelength]
 integration_time_ms  float32 [n]
 averages             int32   [n]
@@ -239,7 +248,6 @@ Metrics derived from sample spectra should be stored as appendable numeric vecto
 
 ```text
 /processed/metrics
-  t_ms                int64   [n_metric]
   acquired_at_unix_ms int64   [n_metric]
   sample_index        int64   [n_metric]
   centroid_nm         float64 [n_metric]

@@ -237,7 +237,8 @@ class SensorgramTimeTests(unittest.TestCase):
             append_processed_trace_history(window, processed, None)
 
         self.assertEqual(window._plot_view_cache.calls, [("smoothed_max", 5.0, 42.0)])
-        self.assertEqual(window._measurement_writer.rows[0]["t_ms"], 5000)
+        expected_unix_ms = int(round(processed.acquired_at.timestamp() * 1000.0))
+        self.assertEqual(window._measurement_writer.rows[0]["acquired_at_unix_ms"], expected_unix_ms)
 
     def test_live_trace_uses_elapsed_time_since_live_start(self) -> None:
         live_started_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -303,8 +304,14 @@ class SensorgramTimeTests(unittest.TestCase):
         # both points are written even though _trace_display_window_s (1.0s) is
         # smaller than the 5s gap between them.
         self.assertEqual(len(window._measurement_writer.rows), 2)
-        self.assertEqual(window._measurement_writer.rows[0]["t_ms"], 0)
-        self.assertEqual(window._measurement_writer.rows[1]["t_ms"], 5000)
+        self.assertEqual(
+            window._measurement_writer.rows[0]["acquired_at_unix_ms"],
+            int(round(first.acquired_at.timestamp() * 1000.0)),
+        )
+        self.assertEqual(
+            window._measurement_writer.rows[1]["acquired_at_unix_ms"],
+            int(round(second.acquired_at.timestamp() * 1000.0)),
+        )
 
     # NOTE: point-count bounding for live display history now lives inside
     # PlotViewCache/MetricDisplayCache (see tests/unit/test_plot_view_cache.py),

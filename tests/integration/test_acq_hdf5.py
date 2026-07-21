@@ -183,7 +183,6 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
                 [
                     {
                         "acquired_at_unix_ms": 789,
-                        "t_ms": 123,
                         "sample_index": 7,
                         "centroid_nm": 1.1,
                         "smoothed_max_nm": 1.2,

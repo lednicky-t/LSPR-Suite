@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+# 6.0 (2026-07-21): breaking change - removed the relative "t_ms" column from
+# both the raw-spectra groups (data/spectra/{sample,dark,reference}) and the
+# processed/metrics group. "acquired_at_unix_ms" (absolute Unix epoch
+# milliseconds, already present alongside t_ms since 3.0) is now the sole
+# per-row timestamp; readers compute any relative/elapsed display value from
+# it at read time instead of trusting a value baked in at write time. This
+# was a real, shipped bug source (see apps/sLSPR/acq/docs/sensorgram_
+# improvements.md, "Correctness fixes" C1/C2) - a relative anchor that could
+# be silently reset mid-file made the derived elapsed time non-monotonic.
 LSPR_MEASUREMENT_SCHEMA_NAME = "lspr_measurement"
-LSPR_MEASUREMENT_SCHEMA_VERSION = "5.2"
-LSPR_MEASUREMENT_SCHEMA_MAJOR = 5
-LSPR_MEASUREMENT_SCHEMA_MINOR = 2
+LSPR_MEASUREMENT_SCHEMA_VERSION = "6.0"
+LSPR_MEASUREMENT_SCHEMA_MAJOR = 6
+LSPR_MEASUREMENT_SCHEMA_MINOR = 0
 LSPR_MEASUREMENT_FORMAT_NAME = "experiment_run"
-LSPR_MEASUREMENT_FORMAT_VERSION = 5
+LSPR_MEASUREMENT_FORMAT_VERSION = 6
 
 LSPR_SESSION_SCHEMA_NAME = "lspr_session"
 LSPR_SESSION_SCHEMA_VERSION = 1

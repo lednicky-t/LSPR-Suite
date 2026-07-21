@@ -9,11 +9,11 @@ The shared implementation lives in `packages/lspr_io`.
 Recommended root attributes:
 
 - `schema_name = lspr_measurement`
-- `schema_version = 5.2`
-- `schema_major = 5`
-- `schema_minor = 2`
+- `schema_version = 6.0`
+- `schema_major = 6`
+- `schema_minor = 0`
 - `format_name = experiment_run`
-- `format_version = 5`
+- `format_version = 6`
 - `app_name`
 - `app_version`
 - `created_by`
@@ -44,9 +44,9 @@ Recommended root attributes:
 
 Sample spectra should keep:
 
-- `t_ms`
-- `timestamp_utc_ms`
-- `acquired_at_unix_ms`
+- `acquired_at_unix_ms` (sole per-row timestamp as of schema 6.0 - the earlier relative
+  `t_ms` column was removed; see the "Time Model" section of
+  `apps/sLSPR/acq/docs/measurement_file_format.md` for why)
 - `intensity`
 - `integration_time_ms`
 - `averages`
