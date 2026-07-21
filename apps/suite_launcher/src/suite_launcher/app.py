@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import ctypes
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Callable
+
+from platformdirs import user_config_dir
 
 from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -94,6 +101,284 @@ _LOG_LEVEL_RE = re.compile(r"^(?P<level>[A-Z]+):(?P<logger>[^:]+):")
 _LOG_LEVEL_BRACKET_RE = re.compile(r"^\[(?P<level>[A-Z]+)\]")
 _DIAGNOSTICS_PROFILES = ("off", "normal", "debug", "deep")
 _WM_CLOSE = 0x0010
+
+# Shared config directory used by the JSON-backed apps (acq, sLSPR eva) -
+# see apps/sLSPR/acq/.../storage/app_config.py and apps/sLSPR/eva/.../processing.py.
+SHARED_CONFIG_DIR = Path(user_config_dir("lspr-suite", appauthor=False))
+SETTINGS_BACKUP_DIR = SHARED_CONFIG_DIR / "settings_backups"
+
+
+@dataclass(frozen=True)
+class SettingsTarget:
+    """One app's persisted settings, as known to the launcher's reset/backup panel."""
+
+    key: str
+    title: str
+    kind: str  # "file" (JSON on disk) or "qsettings" (Windows registry / QSettings store)
+    path: Path | None = None
+    org: str | None = None
+    app: str | None = None
+
+    def describe_state(self) -> str:
+        if self.kind == "file":
+            if self.path is not None and self.path.exists():
+                size_kb = self.path.stat().st_size / 1024
+                return f"{self.path.name} ({size_kb:.1f} KB)"
+            return "No settings saved yet"
+        keys = QSettings(self.org, self.app).allKeys()
+        return f"{len(keys)} saved value(s)" if keys else "No settings saved yet"
+
+
+def settings_targets() -> list[SettingsTarget]:
+    """Every persisted-settings store the launcher knows how to back up / reset."""
+    return [
+        SettingsTarget(
+            "slspr_acq", "singleLSPR Acquisition", "file",
+            path=SHARED_CONFIG_DIR / "lspr_settings.json",
+        ),
+        SettingsTarget(
+            "slspr_eva", "singleLSPR Evaluation", "file",
+            path=SHARED_CONFIG_DIR / "lspr_evaluation_settings.json",
+        ),
+        SettingsTarget(
+            "lspri_eva", "LSPRimaging Evaluation", "qsettings",
+            org="LSPR", app="LSPRImaging",
+        ),
+        SettingsTarget(
+            "suite_launcher", "Suite Launcher (this app)", "qsettings",
+            org=SETTINGS_ORGANIZATION, app=SETTINGS_APPLICATION,
+        ),
+    ]
+
+
+def backup_settings_target(target: SettingsTarget, backup_dir: Path) -> str:
+    """Copy *target*'s settings into *backup_dir*. Returns a short human-readable result."""
+    if target.kind == "file":
+        if target.path is None or not target.path.exists():
+            return "Nothing to back up (no settings file yet)."
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target.path, backup_dir / target.path.name)
+        return f"Backed up {target.path.name}."
+    values = {key: QSettings(target.org, target.app).value(key) for key in QSettings(target.org, target.app).allKeys()}
+    if not values:
+        return "Nothing to back up (no saved values)."
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    dest = backup_dir / f"{target.key}_settings.json"
+    dest.write_text(json.dumps(values, indent=2, default=str), encoding="utf-8")
+    return f"Backed up {len(values)} value(s) to {dest.name}."
+
+
+def reset_settings_target(target: SettingsTarget) -> str:
+    """Clear *target*'s settings so the owning app falls back to defaults."""
+    if target.kind == "file":
+        if target.path is None or not target.path.exists():
+            return "Already empty."
+        target.path.unlink()
+        return "Settings file removed."
+    qsettings = QSettings(target.org, target.app)
+    if not qsettings.allKeys():
+        return "Already empty."
+    qsettings.clear()
+    qsettings.sync()
+    return "Registry entries cleared."
+
+
+class SettingsResetDialog(QDialog):
+    """Lets the user back up or reset each app's saved settings.
+
+    Settings corruption (a malformed JSON file, for instance) can make an app
+    fail to start with no visible explanation. This panel gives a safe way
+    out: back up what's there, or wipe it so the app regenerates defaults on
+    next launch - with a confirmation prompt before anything destructive.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Settings — Backup & Reset")
+        self.setMinimumWidth(560)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        intro = QLabel(
+            "Each app below stores its own settings (window layout, last-used values, "
+            "processing options). If an app won't start or is behaving oddly, resetting "
+            "its settings often fixes it. A backup is always made first."
+        )
+        intro.setObjectName("SettingsDialogIntro")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self._status_label = QLabel("")
+        self._status_label.setObjectName("SettingsDialogStatus")
+        self._status_label.setWordWrap(True)
+        layout.addWidget(self._status_label)
+
+        self._rows: dict[str, QLabel] = {}
+        for target in settings_targets():
+            row = QFrame()
+            row.setObjectName("SettingsTargetRow")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(10, 8, 10, 8)
+            row_layout.setSpacing(8)
+
+            text_col = QVBoxLayout()
+            text_col.setSpacing(1)
+            title_label = QLabel(target.title)
+            title_label.setObjectName("SettingsTargetTitle")
+            state_label = QLabel(target.describe_state())
+            state_label.setObjectName("SettingsTargetState")
+            text_col.addWidget(title_label)
+            text_col.addWidget(state_label)
+            self._rows[target.key] = state_label
+            row_layout.addLayout(text_col, 1)
+
+            backup_button = QPushButton("Backup")
+            backup_button.setObjectName("SettingsRowButton")
+            backup_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            backup_button.clicked.connect(lambda _checked=False, t=target: self._backup_one(t))
+            row_layout.addWidget(backup_button)
+
+            reset_button = QPushButton("Reset...")
+            reset_button.setObjectName("SettingsRowResetButton")
+            reset_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            reset_button.clicked.connect(lambda _checked=False, t=target: self._reset_one(t))
+            row_layout.addWidget(reset_button)
+
+            layout.addWidget(row)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(8)
+        backup_all_button = QPushButton("Backup all")
+        backup_all_button.setObjectName("SettingsRowButton")
+        backup_all_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        backup_all_button.clicked.connect(self._backup_all)
+        button_row.addWidget(backup_all_button)
+
+        reset_all_button = QPushButton("Reset all...")
+        reset_all_button.setObjectName("SettingsRowResetButton")
+        reset_all_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        reset_all_button.clicked.connect(self._reset_all)
+        button_row.addWidget(reset_all_button)
+
+        button_row.addStretch(1)
+
+        open_backups_button = QPushButton("Open backups folder")
+        open_backups_button.setObjectName("SettingsRowButton")
+        open_backups_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_backups_button.clicked.connect(self._open_backup_folder)
+        button_row.addWidget(open_backups_button)
+
+        close_button = QPushButton("Close")
+        close_button.setObjectName("SettingsRowButton")
+        close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_button.clicked.connect(self.accept)
+        button_row.addWidget(close_button)
+
+        layout.addLayout(button_row)
+
+        self.setStyleSheet(
+            """
+            QDialog { background-color: #131a27; }
+            QLabel#SettingsDialogIntro { color: #c6d0df; font-size: 11px; }
+            QLabel#SettingsDialogStatus { color: #8fd6a6; font-size: 10px; font-weight: 600; min-height: 14px; }
+            QFrame#SettingsTargetRow {
+                background-color: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+            }
+            QLabel#SettingsTargetTitle { color: #f5f8ff; font-size: 12px; font-weight: 700; }
+            QLabel#SettingsTargetState { color: #92a0b3; font-size: 9px; }
+            QPushButton#SettingsRowButton {
+                background-color: transparent;
+                color: #d9e8ff;
+                border: 1px solid #5f7088;
+                border-radius: 8px;
+                padding: 4px 10px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#SettingsRowButton:hover { border-color: #8ca3bd; background-color: rgba(255, 255, 255, 0.05); }
+            QPushButton#SettingsRowResetButton {
+                background-color: transparent;
+                color: #ffb4b4;
+                border: 1px solid #8c4646;
+                border-radius: 8px;
+                padding: 4px 10px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#SettingsRowResetButton:hover { border-color: #d66d6d; background-color: rgba(255, 90, 90, 0.08); }
+            """
+        )
+
+    def _timestamped_backup_dir(self) -> Path:
+        return SETTINGS_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def _refresh_row(self, target: SettingsTarget) -> None:
+        label = self._rows.get(target.key)
+        if label is not None:
+            label.setText(target.describe_state())
+
+    def _backup_one(self, target: SettingsTarget) -> None:
+        backup_dir = self._timestamped_backup_dir()
+        result = backup_settings_target(target, backup_dir)
+        self._status_label.setText(f"{target.title}: {result}")
+
+    def _backup_all(self) -> None:
+        backup_dir = self._timestamped_backup_dir()
+        results = [backup_settings_target(target, backup_dir) for target in settings_targets()]
+        empty = sum(1 for result in results if result.startswith("Nothing to back up"))
+        if empty:
+            self._status_label.setText(f"Backed up all apps to {backup_dir} ({empty} had nothing to back up).")
+        else:
+            self._status_label.setText(f"Backed up all apps to {backup_dir}.")
+
+    def _reset_one(self, target: SettingsTarget) -> None:
+        confirmed = QMessageBox.question(
+            self,
+            "Reset settings?",
+            (
+                f"Reset settings for {target.title}?\n\n"
+                "A backup will be saved first. The app will use default settings "
+                "next time it starts. This cannot be undone from here."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        backup_settings_target(target, self._timestamped_backup_dir())
+        result = reset_settings_target(target)
+        self._refresh_row(target)
+        self._status_label.setText(f"{target.title}: {result} (backup saved).")
+
+    def _reset_all(self) -> None:
+        confirmed = QMessageBox.question(
+            self,
+            "Reset all settings?",
+            (
+                "Reset settings for every app in the suite?\n\n"
+                "A backup will be saved first for each app. All apps will use "
+                "default settings next time they start. This cannot be undone from here."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        backup_dir = self._timestamped_backup_dir()
+        for target in settings_targets():
+            backup_settings_target(target, backup_dir)
+            reset_settings_target(target)
+            self._refresh_row(target)
+        self._status_label.setText(f"All apps reset to defaults (backup saved to {backup_dir}).")
+
+    def _open_backup_folder(self) -> None:
+        SETTINGS_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            os.startfile(str(SETTINGS_BACKUP_DIR))  # noqa: S606 - opening our own backup folder in Explorer
 
 
 def _post_close_message_to_process(pid: int) -> bool:
@@ -534,9 +819,21 @@ class MainWindow(QMainWindow):
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(6, 3, 6, 3)
         header_layout.setSpacing(2)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
         title = QLabel("LSPR Suite")
         title.setObjectName("MainTitle")
-        header_layout.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("SettingsHeaderButton")
+        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_button.setToolTip("Back up or reset saved settings for the suite's apps.")
+        self.settings_button.clicked.connect(self._open_settings_dialog)
+        title_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignRight)
+        header_layout.addLayout(title_row)
 
         self.countdown_label = QLabel()
         self.countdown_label.setObjectName("CountdownText")
@@ -613,12 +910,29 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
                 padding-top: 1px;
             }
+            QPushButton#SettingsHeaderButton {
+                background-color: transparent;
+                color: #d9e8ff;
+                border: 1px solid #5f7088;
+                border-radius: 10px;
+                padding: 4px 10px;
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QPushButton#SettingsHeaderButton:hover {
+                border-color: #8ca3bd;
+                background-color: rgba(255, 255, 255, 0.05);
+            }
             """
         )
 
         self._schedule_auto_launch()
         self._refresh_running_app_statuses()
         self._process_poll_timer.start()
+
+    def _open_settings_dialog(self) -> None:
+        dialog = SettingsResetDialog(self)
+        dialog.exec()
 
     def _get_last_target(self) -> AppTarget | None:
         key = self.settings.value(SETTINGS_LAST_TARGET_KEY, "", type=str) or ""
