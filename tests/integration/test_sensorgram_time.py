@@ -356,7 +356,9 @@ class SensorgramTimeTests(unittest.TestCase):
             _trace_view_locked=False,
             _sensorgram_downsampling_enabled=True,
             _trace_display_window_s=5.0,
-            _plots_frozen=False,
+            # refresh_metric_plot gates on _sensorgram_frozen, not _plots_frozen
+            # (see the 2026-07-21 sensorgram/spectrum freeze bug fix).
+            _sensorgram_frozen=False,
             _active_trace_series=lambda: {"smoothed_max": (np.asarray([0.0, 1.0]), np.asarray([1.0, 2.0]))},
         )
 
