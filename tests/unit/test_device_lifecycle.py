@@ -62,6 +62,10 @@ class FakeDeviceCommunicationService:
         self._record("register_endpoint_assignment", label, endpoint, device_type=device_type, driver=driver, role=role, mark_manual=mark_manual)
         return _FakeProfile(label=label, endpoint=endpoint)
 
+    def update_profile_identity(self, label, *, fingerprint=None, identity=None):
+        self._record("update_profile_identity", label, fingerprint=fingerprint, identity=identity)
+        return _FakeProfile(label=label)
+
     def connect(self, label, *, cached_pump_probe=None):
         self._record("connect", label, cached_pump_probe=cached_pump_probe)
         if label in self.connect_should_fail:
@@ -259,6 +263,89 @@ class RunFullCycleTests(unittest.TestCase):
         self.assertEqual(report.by_device[PUMP].stage, dl.STAGE_MISSING)
         self.assertEqual(report.by_device[SWITCH].stage, dl.STAGE_MISSING)
         self.assertEqual(report.by_device[SELECTOR].stage, dl.STAGE_MISSING)
+
+
+# ── canonical label resolution (2026-07-22 regression) ──────────────────────────
+#
+# Bug: _discover_and_connect_* used to resolve which profile to connect via
+# find_or_create_profile(), which searches *all* profiles by fingerprint/
+# endpoint. If a stale duplicate profile elsewhere already held a matching
+# fingerprint (e.g. a leftover "selector_2" from an earlier session), the real
+# device connected under that other label instead of the fixed canonical one
+# (selector_1) - every other connectivity check in the app (device_label_for())
+# assumes the canonical label is authoritative, so the device looked connected
+# in the status strip but every experiment-plan command against it was silently
+# skipped as "controller not connected". Fixed by always resolving through
+# ensure_device_profile() (the same mechanism the manual "Connect" button
+# already used) and recording fingerprint/identity via the new, non-searching
+# update_profile_identity() instead. These tests prove discovery never calls
+# find_or_create_profile() and always targets the fixed canonical label.
+
+class CanonicalLabelResolutionTests(unittest.TestCase):
+    def test_pump_discovery_uses_canonical_label_not_find_or_create_profile(self) -> None:
+        service = FakeDeviceCommunicationService()
+        ctrl = _controller(service)
+        fake_probe = PumpProbe(port="COM3", protocol_version="1", serial_number="SN1", channel_count=4, model="Reglo ICC")
+        ports = [ControllerPort(device="COM3", description="Reglo", hwid="VID_265C&PID_0001")]
+
+        with patch.object(dl.RegloICCClient, "probe_port", return_value=fake_probe):
+            event = ctrl._discover_and_connect_pump(ports, lambda _e: None)
+
+        self.assertEqual(event.stage, dl.STAGE_READY)
+        call_names = [c[0] for c in service.calls]
+        self.assertNotIn("find_or_create_profile", call_names)
+        self.assertIn("register_endpoint_assignment", call_names)
+        self.assertIn("update_profile_identity", call_names)
+        register_call = next(c for c in service.calls if c[0] == "register_endpoint_assignment")
+        self.assertEqual(register_call[1][0], "pump_1")
+        identity_call = next(c for c in service.calls if c[0] == "update_profile_identity")
+        self.assertEqual(identity_call[1][0], "pump_1")
+        self.assertEqual(identity_call[2]["fingerprint"], "reglo-icc:SN1")
+        connect_call = next(c for c in service.calls if c[0] == "connect")
+        self.assertEqual(connect_call[1][0], "pump_1")
+
+    def test_valve_discovery_uses_canonical_label_not_find_or_create_profile(self) -> None:
+        service = FakeDeviceCommunicationService()
+        service.probe_endpoint_result = ProbeResult(
+            endpoint="COM4", detected_type="itsybitsy-32u4-valve", driver="itsybitsy-32u4-valve",
+            identity={"model": "ItsyBitsy"}, success=True, error=None, duration_ms=1.0,
+        )
+        ctrl = _controller(service)
+        ports = [ControllerPort(device="COM4", description="ItsyBitsy", hwid="VID_239A")]
+
+        with patch.object(dl, "controller_port_priority", return_value=30):
+            event = ctrl._discover_and_connect_valve(ports, lambda _e: None)
+
+        self.assertEqual(event.stage, dl.STAGE_READY)
+        call_names = [c[0] for c in service.calls]
+        self.assertNotIn("find_or_create_profile", call_names)
+        register_call = next(c for c in service.calls if c[0] == "register_endpoint_assignment")
+        self.assertEqual(register_call[1][0], "switch_1")
+        identity_call = next(c for c in service.calls if c[0] == "update_profile_identity")
+        self.assertEqual(identity_call[1][0], "switch_1")
+        connect_call = next(c for c in service.calls if c[0] == "connect")
+        self.assertEqual(connect_call[1][0], "switch_1")
+
+    def test_selector_discovery_uses_canonical_label_not_find_or_create_profile(self) -> None:
+        # This is the exact scenario reported: a stale "selector_2" profile
+        # elsewhere already holds this fingerprint. find_or_create_profile()
+        # would have returned that label; the fix must never call it at all.
+        service = FakeDeviceCommunicationService()
+        ctrl = _controller(service)
+        device = ControllerProbe(port="COM9", controller_type="amf-mswitch", model="RVMFS", serial_number="SN-EXISTS-ON-SELECTOR-2")
+
+        event = ctrl._discover_and_connect_selector([device], lambda _e: None)
+
+        self.assertEqual(event.stage, dl.STAGE_READY)
+        call_names = [c[0] for c in service.calls]
+        self.assertNotIn("find_or_create_profile", call_names)
+        register_call = next(c for c in service.calls if c[0] == "register_endpoint_assignment")
+        self.assertEqual(register_call[1][0], "selector_1")
+        identity_call = next(c for c in service.calls if c[0] == "update_profile_identity")
+        self.assertEqual(identity_call[1][0], "selector_1")
+        self.assertEqual(identity_call[2]["fingerprint"], "amf-selector:SN-EXISTS-ON-SELECTOR-2")
+        connect_call = next(c for c in service.calls if c[0] == "connect")
+        self.assertEqual(connect_call[1][0], "selector_1")
 
 
 # ── single-flight ─────────────────────────────────────────────────────────────
