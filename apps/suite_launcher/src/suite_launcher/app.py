@@ -59,6 +59,11 @@ class ClickableLabel(QLabel):
     def __init__(self, text: str = "", clicked_callback: Callable[[], None] | None = None, parent=None) -> None:
         super().__init__(text, parent)
         self._clicked_callback = clicked_callback
+        # Set here (not just at the one current call site) so any future
+        # instance with a real callback shows a pointing hand by default
+        # instead of silently needing the caller to remember it.
+        if clicked_callback is not None:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def mouseReleaseEvent(self, event) -> None:  # pragma: no cover - GUI runtime path
         if event.button() == Qt.MouseButton.LeftButton and self._clicked_callback is not None:
