@@ -192,7 +192,7 @@ class MainWindowTitleBarTests(unittest.TestCase):
             device_status_tooltip("Valve", "discovered", port_name="COM9", detail="manual assignment"),
             "Valve: discovered on COM9. (manual assignment)",
         )
-        self.assertEqual(device_status_tooltip("M-Switch", "disconnected"), "M-Switch: disconnected.")
+        self.assertEqual(device_status_tooltip("Switch Rotary Valve", "disconnected"), "Switch Rotary Valve: disconnected.")
 
     def test_experiment_runtime_state_prefers_experiment_control_states(self) -> None:
         window = SimpleNamespace(

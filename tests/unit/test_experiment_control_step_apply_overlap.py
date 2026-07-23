@@ -4,7 +4,7 @@ Before this fix, step-apply dispatch tracked "is anything in flight" with a
 single shared bool and (implicitly) a single pending on_success callback
 slot. Once every GUI trigger dispatches async instead of just auto-advance,
 two dispatches can legitimately be in flight at once (e.g. a manual step
-jump fired while an earlier dispatch's M-switch move is still in flight on
+jump fired while an earlier dispatch's switch rotary valve move is still in flight on
 device_io_pool()). This test proves the fix: each dispatch's on_success is
 carried on its own _StepApplyResult, so two overlapping completions -
 arriving in either order, one of them failed - never cross-fire the wrong
