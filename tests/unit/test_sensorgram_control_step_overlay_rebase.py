@@ -30,9 +30,13 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_app.gui.main_window_sensorgram_overlay import (
     _rebase_sensorgram_control_step_events,
+    _refresh_sensorgram_control_step_event_labels,
+    _visible_sensorgram_control_step_events,
+    close_sensorgram_control_step_overlay_segment,
     record_sensorgram_control_step_event,
     sensorgram_control_step_overlay_current_elapsed_s,
 )
+from lspr_app.gui.sensorgram_control_step_overlay import build_sensorgram_control_step_overlay_segments
 
 
 def _make_window(**overrides) -> SimpleNamespace:
@@ -182,6 +186,199 @@ class CurrentElapsedSTests(unittest.TestCase):
         elapsed = sensorgram_control_step_overlay_current_elapsed_s(window)
 
         self.assertEqual(elapsed, 130.0)
+
+
+class VisibleEventsFilterTests(unittest.TestCase):
+    """Session view shows step markers from every past measurement in the
+    session; "measurement" view, while one is actively recording, must
+    keep showing only the current recording's own steps."""
+
+    def test_not_measuring_returns_every_event_unfiltered(self) -> None:
+        window = _make_window(_measurement_active=False)
+        events = [{"timestamp_utc_ms": 1.0}, {"timestamp_utc_ms": 2.0}]
+
+        self.assertIs(_visible_sensorgram_control_step_events(window, events), events)
+
+    def test_measuring_filters_out_events_from_earlier_measurements(self) -> None:
+        measurement_started_at = datetime(2026, 1, 1, 12, 2, 0, tzinfo=timezone.utc)
+        window = _make_window(_measurement_active=True, _measurement_started_at=measurement_started_at)
+        earlier = {"timestamp_utc_ms": (measurement_started_at - timedelta(seconds=60.0)).timestamp() * 1000.0}
+        current = {"timestamp_utc_ms": (measurement_started_at + timedelta(seconds=5.0)).timestamp() * 1000.0}
+
+        visible = _visible_sensorgram_control_step_events(window, [earlier, current])
+
+        self.assertEqual(visible, [current])
+
+    def test_measuring_without_a_started_at_returns_everything(self) -> None:
+        window = _make_window(_measurement_active=True, _measurement_started_at=None)
+        events = [{"timestamp_utc_ms": 1.0}]
+
+        self.assertIs(_visible_sensorgram_control_step_events(window, events), events)
+
+    def test_events_without_a_timestamp_are_kept_while_measuring(self) -> None:
+        measurement_started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        window = _make_window(_measurement_active=True, _measurement_started_at=measurement_started_at)
+        legacy_event = {"elapsed_s": 1.0}
+
+        visible = _visible_sensorgram_control_step_events(window, [legacy_event])
+
+        self.assertEqual(visible, [legacy_event])
+
+
+class CloseSensorgramControlStepOverlaySegmentTests(unittest.TestCase):
+    def test_appends_a_stop_boundary_when_last_event_is_still_running(self) -> None:
+        window = _make_window(
+            _sensorgram_control_step_events=[
+                {"state": "RUN", "step_index": 2, "color": "#1F77B4", "label": "Step 2", "timestamp_utc_ms": 1_000.0}
+            ]
+        )
+
+        close_sensorgram_control_step_overlay_segment(window)
+
+        events = window._sensorgram_control_step_events
+        self.assertEqual(len(events), 2)
+        boundary = events[-1]
+        self.assertEqual(boundary["state"], "STOP")
+        self.assertEqual(boundary["event"], "measurement_stopped")
+        # Boundary keeps the same step context, just marks it closed.
+        self.assertEqual(boundary["step_index"], 2)
+        self.assertEqual(boundary["color"], "#1F77B4")
+        self.assertGreater(boundary["timestamp_utc_ms"], 1_000.0)
+
+    def test_no_op_when_last_event_is_already_stop(self) -> None:
+        window = _make_window(_sensorgram_control_step_events=[{"state": "STOP", "timestamp_utc_ms": 1_000.0}])
+
+        close_sensorgram_control_step_overlay_segment(window)
+
+        self.assertEqual(len(window._sensorgram_control_step_events), 1)
+
+    def test_no_op_when_events_list_is_empty_or_missing(self) -> None:
+        window = _make_window(_sensorgram_control_step_events=[])
+        close_sensorgram_control_step_overlay_segment(window)  # must not raise
+        self.assertEqual(window._sensorgram_control_step_events, [])
+
+        close_sensorgram_control_step_overlay_segment(SimpleNamespace())  # no such attribute at all - must not raise
+
+
+class MultiMeasurementSessionOverlayTests(unittest.TestCase):
+    """End-to-end: two separate measurements' events, accumulated together
+    (the actual session-view scenario), must not have their idle gap drawn
+    as a single continuous running segment."""
+
+    def test_stop_boundary_prevents_bridging_the_gap_between_measurements(self) -> None:
+        # Events already carry the STOP boundary close_sensorgram_control_step_
+        # overlay_segment would have appended when measurement 1 stopped
+        # (covered separately, with a controlled timestamp here, since that
+        # function stamps the boundary with the real datetime.now() - mixing
+        # that with these fixed 2026 dates would throw off elapsed_s sort
+        # order for reasons that have nothing to do with what this test is
+        # actually checking).
+        session_started_at = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        window = _make_window(_metric_archive_started_at=session_started_at)
+        window._sensorgram_control_step_events = [
+            {
+                "state": "RUN",
+                "step_index": 1,
+                "color": "#1F77B4",
+                "label": "Step 1",
+                "timestamp_utc_ms": (session_started_at + timedelta(seconds=10.0)).timestamp() * 1000.0,
+            },
+            {
+                # Measurement 1 stopped while its plan step was still "RUN" -
+                # the scenario that would bridge the gap without this
+                # boundary event.
+                "state": "STOP",
+                "step_index": 1,
+                "color": "#1F77B4",
+                "label": "Step 1",
+                "event": "measurement_stopped",
+                "timestamp_utc_ms": (session_started_at + timedelta(seconds=15.0)).timestamp() * 1000.0,
+            },
+            {
+                # Measurement 2 starts much later and records its own step.
+                "state": "RUN",
+                "step_index": 1,
+                "color": "#ff7f0e",
+                "label": "Step 1",
+                "timestamp_utc_ms": (session_started_at + timedelta(seconds=500.0)).timestamp() * 1000.0,
+            },
+        ]
+
+        rebased = _rebase_sensorgram_control_step_events(window, window._sensorgram_control_step_events)
+        segments = build_sensorgram_control_step_overlay_segments(rebased, current_elapsed_s=520.0)
+
+        # Exactly two segments: measurement 1's step (10s-15s, closed by the
+        # boundary) and measurement 2's still-open step (500s onward) -
+        # nothing spanning the idle gap between them.
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0]["label"], "Step 1")
+        self.assertEqual(segments[0]["start_s"], 10.0)
+        self.assertEqual(segments[0]["end_s"], 15.0)
+        self.assertFalse(segments[0]["active"])
+        self.assertEqual(segments[1]["start_s"], 500.0)
+        self.assertTrue(segments[1]["active"])
+
+
+class RefreshEventLabelsTests(unittest.TestCase):
+    """Labels must be re-resolved against the experiment-control timeline's
+    *current* label mode on every sync - not trusted from whatever was
+    baked in when the event was recorded - or toggling the mode
+    mid-measurement has no visible effect until the next step transition."""
+
+    def _make_experiment_control_window(self, *, label_for_step) -> SimpleNamespace:
+        return SimpleNamespace(
+            _read_experiment_control_steps=lambda: [SimpleNamespace(step=1), SimpleNamespace(step=2)],
+            _experiment_control_step_label_for_overlay=label_for_step,
+        )
+
+    def test_relabels_using_the_current_mode(self) -> None:
+        ecw = self._make_experiment_control_window(label_for_step=lambda step: f"fresh-label-{step.step}")
+        window = _make_window(_experiment_control_window=ecw)
+        events = [{"step_index": 1, "label": "stale-comment-label"}]
+
+        refreshed = _refresh_sensorgram_control_step_event_labels(window, events)
+
+        self.assertEqual(refreshed[0]["label"], "fresh-label-1")
+        # Original event dict must be untouched (a new dict is returned).
+        self.assertEqual(events[0]["label"], "stale-comment-label")
+
+    def test_no_experiment_control_window_leaves_events_unchanged(self) -> None:
+        window = _make_window(_experiment_control_window=None)
+        events = [{"step_index": 1, "label": "stale-comment-label"}]
+
+        refreshed = _refresh_sensorgram_control_step_event_labels(window, events)
+
+        self.assertIs(refreshed, events)
+
+    def test_event_with_no_step_index_is_left_unchanged(self) -> None:
+        ecw = self._make_experiment_control_window(label_for_step=lambda step: "should-not-be-used")
+        window = _make_window(_experiment_control_window=ecw)
+        events = [{"label": "boundary-or-pause-event"}]  # no step_index at all
+
+        refreshed = _refresh_sensorgram_control_step_event_labels(window, events)
+
+        self.assertEqual(refreshed[0]["label"], "boundary-or-pause-event")
+
+    def test_out_of_range_step_index_is_left_unchanged(self) -> None:
+        ecw = self._make_experiment_control_window(label_for_step=lambda step: "should-not-be-used")
+        window = _make_window(_experiment_control_window=ecw)
+        events = [{"step_index": 99, "label": "original"}]
+
+        refreshed = _refresh_sensorgram_control_step_event_labels(window, events)
+
+        self.assertEqual(refreshed[0]["label"], "original")
+
+    def test_resolution_error_leaves_the_event_unchanged(self) -> None:
+        def _raise(_step):
+            raise RuntimeError("boom")
+
+        ecw = self._make_experiment_control_window(label_for_step=_raise)
+        window = _make_window(_experiment_control_window=ecw)
+        events = [{"step_index": 1, "label": "original"}]
+
+        refreshed = _refresh_sensorgram_control_step_event_labels(window, events)
+
+        self.assertEqual(refreshed[0]["label"], "original")
 
 
 if __name__ == "__main__":

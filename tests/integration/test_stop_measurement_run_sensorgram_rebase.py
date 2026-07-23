@@ -48,6 +48,7 @@ class _FakeStatusLabel:
 
 
 def _make_window(**overrides) -> SimpleNamespace:
+    close_segment_calls: list[int] = []
     window = SimpleNamespace(
         _measurement_active=True,
         _measurement_path=None,
@@ -61,6 +62,9 @@ def _make_window(**overrides) -> SimpleNamespace:
         _metric_reference_processed=object(),
         _sensorgram_display=_FakeSensorgramDisplay(),
         _last_metric_autoscale_range=None,
+        _sensorgram_control_step_events=[{"state": "RUN"}],
+        _close_sensorgram_control_step_overlay_segment=lambda: close_segment_calls.append(1),
+        _close_segment_calls=close_segment_calls,
         _refresh_session_statistics=lambda force=False: None,
         _refresh_trace_plot=lambda _label: None,
         _request_trace_autoscale=lambda: None,
@@ -164,6 +168,31 @@ class StopMeasurementRunSensorgramRebaseTests(unittest.TestCase):
 
         self.assertIsNone(window._measurement_started_at)
         self.assertFalse(window._measurement_active)
+
+    def test_sensorgram_control_step_events_are_not_cleared(self) -> None:
+        # Session view must be able to show step markers from every past
+        # measurement in the session, not just the most recent one - so
+        # stopping a measurement must not wipe the accumulated events list.
+        window = _make_window()
+        events_before = window._sensorgram_control_step_events
+
+        stop_measurement_run(window)
+
+        self.assertIs(window._sensorgram_control_step_events, events_before)
+        self.assertEqual(window._sensorgram_control_step_events, [{"state": "RUN"}])
+
+    def test_closes_the_overlay_segment_before_clearing_measurement_started_at(self) -> None:
+        window = _make_window()
+
+        stop_measurement_run(window)
+
+        self.assertEqual(window._close_segment_calls, [1])
+
+    def test_missing_close_segment_method_does_not_raise(self) -> None:
+        window = _make_window()
+        del window._close_sensorgram_control_step_overlay_segment
+
+        stop_measurement_run(window)  # must not raise
 
 
 if __name__ == "__main__":
