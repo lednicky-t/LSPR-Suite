@@ -73,6 +73,7 @@ class _FakeExperimentControlWindow:
         self.mswitch_availability_changed = _DummySignal()
         self.recording_control_requested = _DummySignal()
         self.experimental_control_state_recorded = _DummySignal()
+        self.hw_status_refresh_requested = _DummySignal()
         self.theme_changed = _DummySignal()
         self._ui_startup_ready = False
 

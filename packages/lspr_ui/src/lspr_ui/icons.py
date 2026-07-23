@@ -169,7 +169,12 @@ def _device_status_svg(color: str) -> str:
 
 def device_status_icon(status: bool | str) -> QIcon:
     normalized = str(status).strip().lower() if isinstance(status, str) else ("connected" if status else "disconnected")
-    if normalized in {"connected", "online", "true", "1", "yes"}:
+    if normalized in {"busy", "moving"}:
+        # Still connected, just executing a command (e.g. an M-switch move
+        # in flight) - reuses the connected bolt shape, not the plug icon,
+        # in a distinct color so it doesn't read as either "ok" or "broken".
+        color = "#4da3ff"
+    elif normalized in {"connected", "online", "true", "1", "yes"}:
         color = "#47a861"
     elif normalized in {"discovered", "present", "available", "yellow"}:
         color = "#f2c94c"

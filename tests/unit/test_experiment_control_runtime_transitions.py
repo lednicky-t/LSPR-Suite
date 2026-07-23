@@ -95,9 +95,10 @@ class ExperimentControlRuntimeTransitionTests(unittest.TestCase):
         controller._select_experiment_control_plan_row = lambda row: selected_rows.append(row)
         recording_actions: list[str] = []
         controller._request_recording_control = lambda action: recording_actions.append(action) or True
-        def _apply_pause_state() -> bool:
+        def _apply_pause_state() -> None:
+            # _apply_pause_state is now fire-and-forget (dispatches async,
+            # never returns success/failure) - see _apply_step_to_pump_async.
             controller._applied_plan_step = _make_step(0)
-            return True
 
         controller._apply_pause_state = _apply_pause_state
         controller._update_experiment_control_toggle_button = lambda: None
