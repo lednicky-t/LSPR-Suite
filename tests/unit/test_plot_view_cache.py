@@ -68,6 +68,99 @@ class PlotViewCacheTests(unittest.TestCase):
         self.assertTrue(np.all(first_x == second_x[: len(first_x)]))
         self.assertTrue(np.all(first_y == second_y[: len(first_y)]))
 
+
+class RebaseLiveAbsoluteMetricRecentTailTests(unittest.TestCase):
+    """Regression coverage for the measurement-stop time-anchor mismatch:
+    the live cache's recent-tail x-values are relative to measurement start
+    while recording, but the session reload triggered on stop reads
+    everything as relative to session start. Without rebasing the tail
+    first, merging the two produced a short line segment spliced into
+    already-drawn session history (see docs/sensorgram_improvements.md).
+    """
+
+    def test_rebase_shifts_tail_x_and_leaves_y_untouched(self) -> None:
+        cache = PlotViewCache()
+        cache.seed_live_absolute_metric_cache(
+            "smoothed_max",
+            np.asarray([1.0, 2.0, 3.0]),
+            np.asarray([500.1, 500.2, 500.3]),
+            target_points=64,
+            recent_tail_points=10,
+        )
+
+        cache.rebase_live_absolute_metric_recent_tail(100.0)
+
+        live_cache = cache._live_absolute_metric_cache["smoothed_max"]
+        self.assertEqual(list(live_cache.recent_tail_x), [101.0, 102.0, 103.0])
+        self.assertEqual(list(live_cache.recent_tail_y), [500.1, 500.2, 500.3])
+
+    def test_rebase_applies_to_every_cached_metric(self) -> None:
+        cache = PlotViewCache()
+        cache.seed_live_absolute_metric_cache(
+            "smoothed_max", np.asarray([1.0]), np.asarray([500.0]), target_points=64, recent_tail_points=10
+        )
+        cache.seed_live_absolute_metric_cache(
+            "centroid", np.asarray([2.0]), np.asarray([501.0]), target_points=64, recent_tail_points=10
+        )
+
+        cache.rebase_live_absolute_metric_recent_tail(50.0)
+
+        self.assertEqual(list(cache._live_absolute_metric_cache["smoothed_max"].recent_tail_x), [51.0])
+        self.assertEqual(list(cache._live_absolute_metric_cache["centroid"].recent_tail_x), [52.0])
+
+    def test_zero_offset_is_a_no_op(self) -> None:
+        cache = PlotViewCache()
+        cache.seed_live_absolute_metric_cache(
+            "smoothed_max", np.asarray([1.0, 2.0]), np.asarray([500.0, 500.1]), target_points=64, recent_tail_points=10
+        )
+
+        cache.rebase_live_absolute_metric_recent_tail(0.0)
+
+        self.assertEqual(list(cache._live_absolute_metric_cache["smoothed_max"].recent_tail_x), [1.0, 2.0])
+
+    def test_empty_cache_does_not_raise(self) -> None:
+        cache = PlotViewCache()
+        cache.rebase_live_absolute_metric_recent_tail(25.0)  # must not raise
+
+    def test_rebase_prevents_the_stop_transition_splicing_bug(self) -> None:
+        """End-to-end reproduction of the actual reported bug: without the
+        fix, concatenating a measurement-relative tail onto a
+        session-relative file array (mirroring
+        main_window_sensorgram_archive.handle_absolute_sensorgram_metric_archive_reload_result)
+        produces small x-values that fall inside already-drawn history.
+        With the fix, the merged array is properly ordered by real time.
+        """
+        cache = PlotViewCache()
+        # Live tail written while recording: 10s/20s/30s into the measurement.
+        cache.seed_live_absolute_metric_cache(
+            "smoothed_max",
+            np.asarray([10.0, 20.0, 30.0]),
+            np.asarray([501.0, 502.0, 503.0]),
+            target_points=64,
+            recent_tail_points=10,
+        )
+        # The measurement started 100s into the session.
+        measurement_offset_s = 100.0
+
+        cache.rebase_live_absolute_metric_recent_tail(measurement_offset_s)
+
+        # Freshly-reloaded session file, session-relative, ending just before
+        # the rebased tail begins (95s, 105s into the session).
+        file_x = np.asarray([95.0, 105.0])
+        file_y = np.asarray([490.0, 495.0])
+        tail_x = np.asarray(list(cache._live_absolute_metric_cache["smoothed_max"].recent_tail_x))
+        tail_y = np.asarray(list(cache._live_absolute_metric_cache["smoothed_max"].recent_tail_y))
+
+        merged_x = np.concatenate([file_x, tail_x])
+        merged_y = np.concatenate([file_y, tail_y])
+        sort_order = np.argsort(merged_x, kind="stable")
+        merged_x = merged_x[sort_order]
+        merged_y = merged_y[sort_order]
+
+        self.assertTrue(np.all(np.diff(merged_x) >= 0), "merged timeline must be monotonic")
+        self.assertEqual(list(merged_x), [95.0, 105.0, 110.0, 120.0, 130.0])
+        self.assertEqual(list(merged_y), [490.0, 495.0, 501.0, 502.0, 503.0])
+
     def test_absolute_metric_sampling_preserves_extrema(self) -> None:
         x = np.arange(0.0, 120.0, dtype=np.float64)
         y = np.zeros_like(x)

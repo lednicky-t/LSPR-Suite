@@ -257,6 +257,77 @@ class SensorgramTimeTests(unittest.TestCase):
 
         self.assertEqual(window._plot_view_cache.calls, [("smoothed_max", 3.0, 42.0)])
 
+    def test_live_trace_prefers_the_stable_session_anchor_over_live_trace_started_at(self) -> None:
+        # _metric_archive_started_at (set once when the session writer is
+        # created, never reset by Record/Stop) must win over
+        # _live_trace_started_at whenever both are available - this is what
+        # keeps post-Stop live points landing at the correct session-relative
+        # x position instead of drifting onto whatever _live_trace_started_at
+        # happens to be at that moment.
+        session_started_at = datetime(2026, 1, 2, 3, 0, 0, tzinfo=timezone.utc)
+        acquired_at = session_started_at + timedelta(seconds=42.0)
+        processed = Spectrum(
+            wavelengths_nm=np.asarray([610.0, 620.0], dtype=np.float64),
+            values=np.asarray([1.0, 2.0], dtype=np.float64),
+            y_label="sample",
+            acquired_at=acquired_at,
+        )
+        window = self._make_window(measurement_active=False, measurement_started_at=None)
+        window._metric_archive_started_at = session_started_at
+        # A stale/irrelevant value - must be ignored now that the stable
+        # anchor is available.
+        window._live_trace_started_at = session_started_at + timedelta(seconds=1000.0)
+
+        with patch("lspr_app.storage.measurement_archive.ensure_session_writer", return_value=None):
+            append_processed_trace_history(window, processed, None)
+
+        self.assertEqual(window._plot_view_cache.calls, [("smoothed_max", 42.0, 42.0)])
+
+    def test_live_trace_stays_session_relative_after_live_trace_started_at_is_cleared(self) -> None:
+        # Reproduces the post-Stop scenario: stop_measurement_run() sets
+        # _live_trace_started_at to None and nothing restores it while live
+        # acquisition keeps running. Without the fix this fell through to
+        # the unrelated display-cursor fallback, landing new points at the
+        # wrong x position (the reported "data appears at the start of the
+        # x-axis" / "two places data are added" bug).
+        session_started_at = datetime(2026, 1, 2, 3, 0, 0, tzinfo=timezone.utc)
+        acquired_at = session_started_at + timedelta(seconds=150.0)
+        processed = Spectrum(
+            wavelengths_nm=np.asarray([610.0, 620.0], dtype=np.float64),
+            values=np.asarray([1.0, 2.0], dtype=np.float64),
+            y_label="sample",
+            acquired_at=acquired_at,
+        )
+        window = self._make_window(measurement_active=False, measurement_started_at=None)
+        window._metric_archive_started_at = session_started_at
+        window._live_trace_started_at = None
+        window._trace_display_cursor_s = 12.0  # stale cursor from the just-finished measurement
+
+        with patch("lspr_app.storage.measurement_archive.ensure_session_writer", return_value=None):
+            append_processed_trace_history(window, processed, None)
+
+        self.assertEqual(window._plot_view_cache.calls, [("smoothed_max", 150.0, 42.0)])
+
+    def test_live_trace_falls_back_to_cursor_when_no_anchor_is_available(self) -> None:
+        # Edge case: nothing has ever been anchored yet (e.g. right at
+        # startup, before the session writer exists and before live
+        # acquisition's own start time was recorded).
+        processed = Spectrum(
+            wavelengths_nm=np.asarray([610.0, 620.0], dtype=np.float64),
+            values=np.asarray([1.0, 2.0], dtype=np.float64),
+            y_label="sample",
+            acquired_at=datetime(2026, 1, 2, 3, 0, 0, tzinfo=timezone.utc),
+        )
+        window = self._make_window(measurement_active=False, measurement_started_at=None)
+        window._metric_archive_started_at = None
+        window._live_trace_started_at = None
+        window._trace_display_cursor_s = 7.5
+
+        with patch("lspr_app.storage.measurement_archive.ensure_session_writer", return_value=None):
+            append_processed_trace_history(window, processed, None)
+
+        self.assertEqual(window._plot_view_cache.calls, [("smoothed_max", 7.5, 42.0)])
+
     def test_trace_renderer_accepts_float_timestamps(self) -> None:
         window = SimpleNamespace(
             trace_curves={"smoothed_max": _FakeCurve()},

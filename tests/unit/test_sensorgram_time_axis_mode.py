@@ -54,7 +54,6 @@ def _make_window(**overrides) -> SimpleNamespace:
         _sensorgram_time_axis_mode="elapsed",
         trace_time_axis=_FakeAxis(),
         trace_plot=_FakePlot(),
-        _sensorgram_axis_started_at=None,
         _request_plot_refresh=lambda: None,
         _schedule_ui_state_persist=lambda: None,
     )
@@ -156,7 +155,7 @@ class FormatTimeValueTests(unittest.TestCase):
         self.assertEqual(_sensorgram_format_time_value(window, "seconds", 3725.4), "3725 s")
 
     def test_clock_without_start_datetime_falls_back_to_elapsed(self) -> None:
-        window = _make_window(_sensorgram_axis_started_at=None)
+        window = _make_window()
         self.assertEqual(_sensorgram_format_time_value(window, "clock", 65.0), "00:01:05")
 
 
