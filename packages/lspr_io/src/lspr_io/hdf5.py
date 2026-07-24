@@ -587,8 +587,6 @@ def build_legacy_experiment_plan_row_table(
         "valve",
         "switch_position",
         "description",
-        "show_on_pump_display",
-        "highlight_pump_display_limit",
     ]
     for index in range(hdf5_channel_count):
         columns.extend(
@@ -612,8 +610,6 @@ def build_legacy_experiment_plan_row_table(
             str(devices.get("valve", "")),
             str(int(devices.get("switch_position", 1) or 1)),
             str(step.comment or ""),
-            "1" if devices.get("show_on_pump_display") else "0",
-            "1" if devices.get("highlight_pump_display_limit") else "0",
         ]
         for index in range(hdf5_channel_count):
             if index < active_channel_count:

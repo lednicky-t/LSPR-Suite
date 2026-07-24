@@ -3,11 +3,15 @@
 - ``sanitize_pump_display_text`` filters to printable ASCII and truncates to
   the pump's 16-character display width (Reglo ICC manual, section 14.6.13
   "String": printable ASCII only, no embedded request-delimiter/CR).
-- ``PumpPlanStep.show_on_pump_display`` round-trips through the
-  ``to_core_experiment_step``/``from_core_experiment_step`` conversion used
-  for HDF5 export/import and plan retiming.
 - ``RegloICCClient.set_display_text`` sends the sanitized text via the
   documented ``DA`` (write letters) command, addressed to pump 0.
+
+Whether the pump display is shown at all, and whether the plan table
+highlights the 16-character limit, are global ExperimentControlWindow
+settings (``_pump_display_enabled``/``_pump_display_highlight_enabled``),
+not per-step ``PumpPlanStep`` fields - see "Pump Display" in
+docs/experiment-control/pump_control_guide.md. That GUI-level behavior isn't
+covered here since it needs a live QApplication/window.
 """
 
 from __future__ import annotations
@@ -26,7 +30,6 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_app.device.reglo_icc import PUMP_DISPLAY_MAX_LENGTH, RegloICCClient, sanitize_pump_display_text
 from lspr_app.device.communication_models import DeviceCommand
-from lspr_app.domain.pump_plan import PumpPlanStep, from_core_experiment_step, to_core_experiment_step
 
 
 class SanitizePumpDisplayTextTests(unittest.TestCase):
@@ -55,75 +58,6 @@ class SanitizePumpDisplayTextTests(unittest.TestCase):
 
     def test_custom_max_length(self) -> None:
         self.assertEqual(sanitize_pump_display_text("abcdefgh", max_length=4), "abcd")
-
-
-class PumpPlanStepShowOnPumpDisplayRoundTripTests(unittest.TestCase):
-    def test_round_trips_through_core_step(self) -> None:
-        step = PumpPlanStep(step=1, description="Load sample", show_on_pump_display=True)
-        core_step = to_core_experiment_step(step)
-        self.assertTrue(core_step.devices["show_on_pump_display"])
-
-        restored = from_core_experiment_step(core_step)
-        self.assertTrue(restored.show_on_pump_display)
-
-    def test_defaults_to_false(self) -> None:
-        step = PumpPlanStep(step=1, description="Load sample")
-        core_step = to_core_experiment_step(step)
-        self.assertFalse(core_step.devices["show_on_pump_display"])
-
-        restored = from_core_experiment_step(core_step)
-        self.assertFalse(restored.show_on_pump_display)
-
-    def test_missing_devices_key_defaults_to_template_value(self) -> None:
-        # Older plans (or a template step from before this field existed) won't have
-        # the key at all - from_core_experiment_step must not crash, and should keep
-        # whatever the template (destination step) already had.
-        step = PumpPlanStep(step=1)
-        core_step = to_core_experiment_step(step)
-        del core_step.devices["show_on_pump_display"]
-        template = PumpPlanStep(step=1, show_on_pump_display=True)
-        restored = from_core_experiment_step(core_step, template=template)
-        self.assertTrue(restored.show_on_pump_display)
-
-
-class PumpPlanStepHighlightPumpDisplayLimitRoundTripTests(unittest.TestCase):
-    def test_round_trips_through_core_step(self) -> None:
-        step = PumpPlanStep(
-            step=1, description="Load sample", show_on_pump_display=True, highlight_pump_display_limit=True
-        )
-        core_step = to_core_experiment_step(step)
-        self.assertTrue(core_step.devices["highlight_pump_display_limit"])
-
-        restored = from_core_experiment_step(core_step)
-        self.assertTrue(restored.highlight_pump_display_limit)
-
-    def test_defaults_to_false(self) -> None:
-        step = PumpPlanStep(step=1, description="Load sample", show_on_pump_display=True)
-        core_step = to_core_experiment_step(step)
-        self.assertFalse(core_step.devices["highlight_pump_display_limit"])
-
-        restored = from_core_experiment_step(core_step)
-        self.assertFalse(restored.highlight_pump_display_limit)
-
-    def test_auto_deactivates_when_show_on_pump_display_is_false(self) -> None:
-        # The highlight can't outlive the main toggle - a step with the display send
-        # off must never persist with the highlight still on, at either conversion step.
-        step = PumpPlanStep(
-            step=1, description="Load sample", show_on_pump_display=False, highlight_pump_display_limit=True
-        )
-        core_step = to_core_experiment_step(step)
-        self.assertFalse(core_step.devices["highlight_pump_display_limit"])
-
-        restored = from_core_experiment_step(core_step)
-        self.assertFalse(restored.highlight_pump_display_limit)
-
-    def test_missing_devices_key_defaults_to_template_value_when_show_on_pump_display_true(self) -> None:
-        step = PumpPlanStep(step=1, show_on_pump_display=True)
-        core_step = to_core_experiment_step(step)
-        del core_step.devices["highlight_pump_display_limit"]
-        template = PumpPlanStep(step=1, show_on_pump_display=True, highlight_pump_display_limit=True)
-        restored = from_core_experiment_step(core_step, template=template)
-        self.assertTrue(restored.highlight_pump_display_limit)
 
 
 class _FakeSerial:
