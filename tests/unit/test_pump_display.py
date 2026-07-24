@@ -86,6 +86,46 @@ class PumpPlanStepShowOnPumpDisplayRoundTripTests(unittest.TestCase):
         self.assertTrue(restored.show_on_pump_display)
 
 
+class PumpPlanStepHighlightPumpDisplayLimitRoundTripTests(unittest.TestCase):
+    def test_round_trips_through_core_step(self) -> None:
+        step = PumpPlanStep(
+            step=1, description="Load sample", show_on_pump_display=True, highlight_pump_display_limit=True
+        )
+        core_step = to_core_experiment_step(step)
+        self.assertTrue(core_step.devices["highlight_pump_display_limit"])
+
+        restored = from_core_experiment_step(core_step)
+        self.assertTrue(restored.highlight_pump_display_limit)
+
+    def test_defaults_to_false(self) -> None:
+        step = PumpPlanStep(step=1, description="Load sample", show_on_pump_display=True)
+        core_step = to_core_experiment_step(step)
+        self.assertFalse(core_step.devices["highlight_pump_display_limit"])
+
+        restored = from_core_experiment_step(core_step)
+        self.assertFalse(restored.highlight_pump_display_limit)
+
+    def test_auto_deactivates_when_show_on_pump_display_is_false(self) -> None:
+        # The highlight can't outlive the main toggle - a step with the display send
+        # off must never persist with the highlight still on, at either conversion step.
+        step = PumpPlanStep(
+            step=1, description="Load sample", show_on_pump_display=False, highlight_pump_display_limit=True
+        )
+        core_step = to_core_experiment_step(step)
+        self.assertFalse(core_step.devices["highlight_pump_display_limit"])
+
+        restored = from_core_experiment_step(core_step)
+        self.assertFalse(restored.highlight_pump_display_limit)
+
+    def test_missing_devices_key_defaults_to_template_value_when_show_on_pump_display_true(self) -> None:
+        step = PumpPlanStep(step=1, show_on_pump_display=True)
+        core_step = to_core_experiment_step(step)
+        del core_step.devices["highlight_pump_display_limit"]
+        template = PumpPlanStep(step=1, show_on_pump_display=True, highlight_pump_display_limit=True)
+        restored = from_core_experiment_step(core_step, template=template)
+        self.assertTrue(restored.highlight_pump_display_limit)
+
+
 class _FakeSerial:
     """Minimal stand-in for ``serial.Serial`` that answers every write with '*'."""
 
