@@ -19,6 +19,8 @@ The canonical serialization helpers live in `packages/lspr_io`.
 - duration
 - color
 - description/comment
+- show comment on pump display (`show_on_pump_display`, legacy table only - additive field, defaults to
+  `False`/`"0"` when absent so older plan tables still load)
 - valve state
 - switch position
 - per-channel flow
