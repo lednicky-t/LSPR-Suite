@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from PyQt6 import QtWidgets
+from PyQt6.QtGui import QUndoStack
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
 
@@ -72,6 +73,7 @@ class MainWindowTitleBarTests(unittest.TestCase):
 
     class _FakeWindow:
         def __init__(self) -> None:
+            self.undo_stack = QUndoStack()
             self.called_disconnect_all_devices = False
             self.called_show_connected_devices = False
             self.called_set_acquisition_state_autosave_enabled = None

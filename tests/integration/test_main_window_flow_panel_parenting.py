@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from PyQt6 import QtWidgets
+from PyQt6.QtGui import QUndoStack
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
 
@@ -62,6 +63,7 @@ class _FakeExperimentControlWindow:
         auto_connect_devices: bool = False,
         show_runtime_controls: bool = True,
         parent=None,
+        undo_stack=None,
     ) -> None:
         self.__class__.created_parent = parent
         self.__class__.created_kwargs = {
@@ -111,6 +113,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
 
     def test_experiment_control_window_is_parented_when_created(self) -> None:
         window = MainWindow.__new__(MainWindow)
+        window.undo_stack = QUndoStack()
         window._experiment_control_window = None
         window._experiment_control_window_ui_state = {}
         window._discovered_pump_probe = None
@@ -139,6 +142,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
 
     def test_experiment_control_window_uses_editor_profile_flags(self) -> None:
         window = MainWindow.__new__(MainWindow)
+        window.undo_stack = QUndoStack()
         window._experiment_control_window = None
         window._experiment_control_window_ui_state = {}
         window._discovered_pump_probe = None
