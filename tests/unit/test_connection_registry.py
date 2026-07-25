@@ -15,7 +15,7 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_app.device.connection_registry import (
     claim_port,
-    port_owner_label,
+    port_owners,
     release_port,
     snapshot_port_ownership,
 )
@@ -25,15 +25,15 @@ class ConnectionRegistryTests(unittest.TestCase):
     def test_claim_and_release_port_ownership(self) -> None:
         claim_port("COM9", "Experiment Control / Pump")
         claim_port("COM9", "Manual diagnostics")
-        self.assertEqual(port_owner_label("COM9"), "Experiment Control / Pump, Manual diagnostics")
+        self.assertEqual(port_owners("COM9"), ("Experiment Control / Pump", "Manual diagnostics"))
         snapshot = snapshot_port_ownership()
         self.assertEqual(snapshot["COM9"], "Experiment Control / Pump, Manual diagnostics")
 
         release_port("COM9", "Experiment Control / Pump")
-        self.assertEqual(port_owner_label("COM9"), "Manual diagnostics")
+        self.assertEqual(port_owners("COM9"), ("Manual diagnostics",))
 
         release_port("COM9")
-        self.assertEqual(port_owner_label("COM9"), "")
+        self.assertEqual(port_owners("COM9"), ())
         self.assertNotIn("COM9", snapshot_port_ownership())
 
 
