@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 import h5py
 import numpy as np
@@ -18,10 +20,15 @@ APP_SRC = REPO_ROOT / "apps" / "sLSPR" / "acq" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_app.domain.models import ProcessingSettings
+from lspr_app.domain.models import ProcessingSettings, Spectrum
 from lspr_app.gui.experiment_control_import import build_experiment_plan_steps_from_hdf5_rows
+from lspr_app.gui.main_window_import_dialog import probe_measurement_hdf5
 from lspr_app.storage.app_config import load_processing_settings_from_hdf5
-from lspr_app.storage.hdf5_export import HDF5MeasurementWriter, repack_measurement_hdf5_file
+from lspr_app.storage.hdf5_export import (
+    AsyncHDF5MeasurementWriter,
+    HDF5MeasurementWriter,
+    repack_measurement_hdf5_file,
+)
 from lspr_io import read_processing_settings_metadata
 
 
@@ -321,6 +328,90 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
             self.assertTrue(sample_shuffle)
             self.assertEqual(int(sample_compression_opts), 4)
             self.assertEqual(wavelengths_compression, "gzip")
+
+    def test_async_writer_reports_failure_via_on_error_callback(self) -> None:
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        errors: list[str] = []
+        error_event = threading.Event()
+
+        def on_error(message: str) -> None:
+            errors.append(message)
+            error_event.set()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            writer = AsyncHDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                flush_interval_s=0.25,
+                on_error=on_error,
+            )
+            try:
+                spectrum = Spectrum(
+                    wavelengths_nm=wavelengths,
+                    values=np.zeros(3, dtype=np.float64),
+                    y_label="Intensity",
+                    acquired_at=datetime.now(timezone.utc),
+                )
+                with mock.patch.object(
+                    HDF5MeasurementWriter,
+                    "append_batch",
+                    side_effect=RuntimeError("disk full"),
+                ):
+                    writer.append_batch([spectrum], [0.0], [615.0])
+                    writer.flush()
+                    triggered = error_event.wait(timeout=5.0)
+
+                self.assertTrue(triggered, "on_error callback was not called within timeout")
+                self.assertEqual(len(errors), 1)
+                self.assertIn("disk full", errors[0])
+                # The writer marks itself closed on failure so callers stop
+                # queueing into a thread that has already exited.
+                self.assertTrue(writer._closed)
+            finally:
+                # Should be a safe no-op: the writer thread already exited on
+                # its own after the simulated failure.
+                writer.close()
+
+    def test_probe_rejects_incompatible_measurement_schema_major_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "future_format.h5"
+            with h5py.File(path, "w") as handle:
+                handle.attrs["schema_name"] = "lspr_measurement"
+                handle.attrs["schema_version"] = "99.0"
+                handle.attrs["started_at_utc"] = "2026-01-02T03:04:05+00:00"
+                handle.attrs["created_at_utc"] = "2026-01-02T03:04:05+00:00"
+
+            probe = probe_measurement_hdf5(path)
+
+        self.assertTrue(probe.error)
+        self.assertIn("99", probe.error)
+        self.assertFalse(probe.processing.available)
+        self.assertFalse(probe.plan.available)
+
+    def test_probe_accepts_current_measurement_schema_version(self) -> None:
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            writer = HDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            )
+            writer.close()
+
+            probe = probe_measurement_hdf5(path)
+
+        self.assertEqual(probe.error, "")
 
 
 if __name__ == "__main__":
