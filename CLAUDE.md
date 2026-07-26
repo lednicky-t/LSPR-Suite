@@ -73,6 +73,10 @@ Four apps, three as git submodules, one (suite launcher) living directly in this
 
 Add cross-app logic here, not inside individual app packages.
 
+**Icons**: all icons come from `packages/lspr_ui/src/lspr_ui/icon_assets/`, individually vendored
+SVG files loaded via `lspr_ui.load_tabler_icon()` - not from an icon-library package dependency.
+See `packages/lspr_ui/ICONS.md` before adding a new icon or a new icon dependency.
+
 ---
 
 ## Setup
