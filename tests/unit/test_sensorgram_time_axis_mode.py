@@ -54,7 +54,6 @@ def _make_window(**overrides) -> SimpleNamespace:
         _sensorgram_time_axis_mode="elapsed",
         trace_time_axis=_FakeAxis(),
         trace_plot=_FakePlot(),
-        _request_plot_refresh=lambda: None,
         _schedule_ui_state_persist=lambda: None,
     )
     for key, value in overrides.items():
@@ -104,19 +103,10 @@ class ApplyModeTests(unittest.TestCase):
 
         self.assertEqual(window._sensorgram_time_axis_mode, "elapsed")
 
-    def test_redraw_false_skips_refresh(self) -> None:
-        refresh_calls: list[int] = []
-        window = _make_window(_request_plot_refresh=lambda: refresh_calls.append(1))
-        apply_sensorgram_time_axis_mode(window, redraw=False)
-        self.assertEqual(refresh_calls, [])
-
-        apply_sensorgram_time_axis_mode(window, redraw=True)
-        self.assertEqual(refresh_calls, [1])
-
     def test_apply_works_without_axis_or_plot_widgets(self) -> None:
         # Guards against a widget not having been constructed yet - matches
         # how MainWindow.__init__ calls this before trace_plot exists.
-        window = SimpleNamespace(_sensorgram_time_axis_mode="clock", _request_plot_refresh=lambda: None)
+        window = SimpleNamespace(_sensorgram_time_axis_mode="clock")
         apply_sensorgram_time_axis_mode(window)  # must not raise
 
 
