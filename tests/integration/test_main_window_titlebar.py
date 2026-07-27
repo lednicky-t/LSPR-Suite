@@ -177,9 +177,6 @@ class MainWindowTitleBarTests(unittest.TestCase):
         def _show_device_manager_dialog(self) -> None:
             pass
 
-        def _show_hardware_devices_dialog(self) -> None:
-            pass
-
         def _save_session_copy_as(self) -> None:
             pass
 

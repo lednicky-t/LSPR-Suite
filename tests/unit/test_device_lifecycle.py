@@ -234,7 +234,8 @@ class RunFullCycleTests(unittest.TestCase):
             amf_tools_available=True,
         )
         service.probe_endpoint_result = ProbeResult(endpoint="COM4", detected_type="itsybitsy-32u4-valve", driver="itsybitsy-32u4-valve", identity={"model": "ItsyBitsy"}, success=True, error=None, duration_ms=1.0)
-        ctrl = _controller(service)
+        with patch.object(dl, "load_enabled_devices", return_value={PUMP: True, SWITCH: True, SELECTOR: True}):
+            ctrl = _controller(service)
         events: list[dl.DeviceLifecycleEvent] = []
 
         fake_pump_probe = PumpProbe(port="COM3", protocol_version="1", serial_number="SN1", channel_count=4, model="Reglo ICC")
@@ -256,7 +257,8 @@ class RunFullCycleTests(unittest.TestCase):
 
     def test_missing_device_reports_missing_stage(self) -> None:
         service = FakeDeviceCommunicationService()
-        ctrl = _controller(service)
+        with patch.object(dl, "load_enabled_devices", return_value={PUMP: True, SWITCH: True, SELECTOR: True}):
+            ctrl = _controller(service)
         events: list[dl.DeviceLifecycleEvent] = []
         with patch("lspr_app.device.ocean.OceanSpectrometer", side_effect=RuntimeError("no hardware")):
             report = ctrl.run_full_cycle(events.append)
