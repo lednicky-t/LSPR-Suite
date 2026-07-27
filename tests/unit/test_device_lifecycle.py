@@ -409,5 +409,93 @@ class ShutdownAllTests(unittest.TestCase):
         self.assertEqual(service.calls, [])
 
 
+# ── per-device-type enable/disable ───────────────────────────────────────────
+
+class EnabledDevicesPersistenceTests(unittest.TestCase):
+    def test_load_defaults_missing_key_to_all_enabled(self) -> None:
+        with patch("lspr_app.storage.app_config.load_app_setting", return_value={}):
+            enabled = dl.load_enabled_devices()
+        self.assertEqual(enabled, {PUMP: True, SWITCH: True, SELECTOR: True})
+
+    def test_load_defaults_missing_subkey_to_enabled_but_keeps_explicit_false(self) -> None:
+        with patch("lspr_app.storage.app_config.load_app_setting", return_value={SELECTOR: False}):
+            enabled = dl.load_enabled_devices()
+        self.assertEqual(enabled, {PUMP: True, SWITCH: True, SELECTOR: False})
+
+    def test_load_ignores_non_dict_payload(self) -> None:
+        with patch("lspr_app.storage.app_config.load_app_setting", return_value="garbage"):
+            enabled = dl.load_enabled_devices()
+        self.assertEqual(enabled, {PUMP: True, SWITCH: True, SELECTOR: True})
+
+    def test_save_writes_all_three_keys_coerced_to_bool(self) -> None:
+        with patch("lspr_app.storage.app_config.save_app_setting") as mock_save:
+            dl.save_enabled_devices({PUMP: False, SWITCH: 1, SELECTOR: 0})
+        mock_save.assert_called_once_with(
+            "enabled_devices", {PUMP: False, SWITCH: True, SELECTOR: False}
+        )
+
+    def test_save_defaults_missing_device_key_to_enabled(self) -> None:
+        with patch("lspr_app.storage.app_config.save_app_setting") as mock_save:
+            dl.save_enabled_devices({SELECTOR: False})
+        mock_save.assert_called_once_with(
+            "enabled_devices", {PUMP: True, SWITCH: True, SELECTOR: False}
+        )
+
+
+class ControllerEnabledDevicesTests(unittest.TestCase):
+    def test_defaults_to_all_enabled(self) -> None:
+        service = FakeDeviceCommunicationService()
+        with patch.object(dl, "load_enabled_devices", return_value={PUMP: True, SWITCH: True, SELECTOR: True}):
+            ctrl = _controller(service)
+        self.assertTrue(ctrl.is_device_type_enabled(PUMP))
+        self.assertTrue(ctrl.is_device_type_enabled(SWITCH))
+        self.assertTrue(ctrl.is_device_type_enabled(SELECTOR))
+        self.assertEqual(ctrl.enabled_devices(), {PUMP: True, SWITCH: True, SELECTOR: True})
+
+    def test_set_enabled_devices_updates_state_and_persists(self) -> None:
+        service = FakeDeviceCommunicationService()
+        with patch.object(dl, "load_enabled_devices", return_value={PUMP: True, SWITCH: True, SELECTOR: True}):
+            ctrl = _controller(service)
+        with patch.object(dl, "save_enabled_devices") as mock_save:
+            ctrl.set_enabled_devices({PUMP: True, SWITCH: True, SELECTOR: False})
+        self.assertFalse(ctrl.is_device_type_enabled(SELECTOR))
+        mock_save.assert_called_once_with({PUMP: True, SWITCH: True, SELECTOR: False})
+
+    def test_enabled_devices_returns_a_copy(self) -> None:
+        service = FakeDeviceCommunicationService()
+        with patch.object(dl, "load_enabled_devices", return_value={PUMP: True, SWITCH: True, SELECTOR: True}):
+            ctrl = _controller(service)
+        snapshot = ctrl.enabled_devices()
+        snapshot[SELECTOR] = False
+        self.assertTrue(ctrl.is_device_type_enabled(SELECTOR))
+
+
+class RunFullCycleSkipsDisabledDeviceTests(unittest.TestCase):
+    def test_disabled_selector_is_skipped_without_any_discovery_call(self) -> None:
+        service = FakeDeviceCommunicationService()
+        service.port_refresh_data = PortRefreshData(
+            generation=0,
+            pump_ports=[],
+            valve_ports=[],
+            selector_devices=[ControllerProbe(port="COM9", controller_type="amf-mswitch", model="RVMFS")],
+            amf_tools_available=True,
+        )
+        with patch.object(dl, "load_enabled_devices", return_value={PUMP: True, SWITCH: True, SELECTOR: False}):
+            ctrl = _controller(service)
+        events: list[dl.DeviceLifecycleEvent] = []
+        with patch("lspr_app.device.ocean.OceanSpectrometer", side_effect=RuntimeError("no hardware")):
+            report = ctrl.run_full_cycle(events.append)
+
+        self.assertEqual(report.by_device[SELECTOR].stage, dl.STAGE_DISABLED)
+        self.assertEqual(report.by_device[PUMP].stage, dl.STAGE_MISSING)
+        self.assertEqual(report.by_device[SWITCH].stage, dl.STAGE_MISSING)
+        call_names = [c[0] for c in service.calls]
+        self.assertNotIn("connect", call_names)
+        self.assertNotIn("register_endpoint_assignment", call_names)
+
+    def test_disabled_device_is_a_terminal_stage(self) -> None:
+        self.assertIn(dl.STAGE_DISABLED, dl.TERMINAL_STAGES)
+
+
 if __name__ == "__main__":
     unittest.main()

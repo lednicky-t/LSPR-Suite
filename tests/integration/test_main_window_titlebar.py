@@ -177,6 +177,9 @@ class MainWindowTitleBarTests(unittest.TestCase):
         def _show_device_manager_dialog(self) -> None:
             pass
 
+        def _show_hardware_devices_dialog(self) -> None:
+            pass
+
         def _open_app_config_folder(self) -> None:
             pass
 
@@ -266,7 +269,7 @@ class MainWindowTitleBarTests(unittest.TestCase):
     def test_device_status_strip_can_be_hidden_for_non_full_profiles(self) -> None:
         window = SimpleNamespace(
             _launch_profile_spec=launch_profile_spec(LAUNCH_PROFILE_CONTROL_EDITOR),
-            _hw_status_items=[("spectrometer", self._FakeLabel(), self._FakeLabel())],
+            _hw_status_items=[("spectrometer", self._FakeLabel(), self._FakeLabel(), self._FakeLabel())],
             _titlebar_status_cluster=self._FakeCluster(),
             _experiment_control_window=None,
             _hardware_init_task=None,
@@ -278,7 +281,7 @@ class MainWindowTitleBarTests(unittest.TestCase):
     def test_full_profile_keeps_status_strip_visible(self) -> None:
         window = SimpleNamespace(
             _launch_profile_spec=launch_profile_spec(LAUNCH_PROFILE_FULL),
-            _hw_status_items=[("spectrometer", self._FakeLabel(), self._FakeLabel())],
+            _hw_status_items=[("spectrometer", self._FakeLabel(), self._FakeLabel(), self._FakeLabel())],
             _titlebar_status_cluster=self._FakeCluster(),
             _experiment_control_window=None,
             _hardware_init_task=None,
