@@ -180,6 +180,9 @@ class MainWindowTitleBarTests(unittest.TestCase):
         def _show_hardware_devices_dialog(self) -> None:
             pass
 
+        def _save_session_copy_as(self) -> None:
+            pass
+
         def _open_app_config_folder(self) -> None:
             pass
 

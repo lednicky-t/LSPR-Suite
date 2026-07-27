@@ -378,6 +378,93 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
                 # its own after the simulated failure.
                 writer.close()
 
+    def test_save_copy_flushes_then_produces_a_valid_readable_copy(self) -> None:
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "session.h5"
+            writer = AsyncHDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                # Long interval so it's save_copy's own flush that matters here,
+                # not the periodic timeout flush racing it.
+                flush_interval_s=5.0,
+            )
+            try:
+                spectrum = Spectrum(
+                    wavelengths_nm=wavelengths,
+                    values=np.asarray([1.0, 2.0, 3.0], dtype=np.float64),
+                    y_label="Intensity",
+                    acquired_at=datetime.now(timezone.utc),
+                )
+                writer.append_batch([spectrum], [0.0], [615.0])
+
+                dest_path = Path(temp_dir) / "copy" / "session_copy.h5"
+                results: list[tuple[bool, str]] = []
+                done = threading.Event()
+
+                def on_done(success: bool, message: str) -> None:
+                    results.append((success, message))
+                    done.set()
+
+                writer.save_copy(dest_path, on_done=on_done)
+                triggered = done.wait(timeout=5.0)
+
+                self.assertTrue(triggered, "save_copy's on_done callback was not called within timeout")
+                self.assertEqual(results, [(True, "")])
+                self.assertTrue(dest_path.exists())
+
+                with h5py.File(dest_path, "r") as handle:
+                    sample_intensity = handle["data"]["spectra"]["sample"]["intensity"]
+                    shape = sample_intensity.shape
+                    values = sample_intensity[0, :]
+
+                self.assertEqual(shape, (1, 3))
+                np.testing.assert_allclose(values, [1.0, 2.0, 3.0])
+
+                # save_copy must not have closed or otherwise disturbed the live
+                # writer - it should still accept and persist further data.
+                spectrum2 = Spectrum(
+                    wavelengths_nm=wavelengths,
+                    values=np.asarray([4.0, 5.0, 6.0], dtype=np.float64),
+                    y_label="Intensity",
+                    acquired_at=datetime.now(timezone.utc),
+                )
+                writer.append_batch([spectrum2], [1.0], [616.0])
+                writer.flush()
+            finally:
+                writer.close()
+
+            with h5py.File(path, "r") as handle:
+                shape = handle["data"]["spectra"]["sample"]["intensity"].shape
+            self.assertEqual(shape, (2, 3))
+
+    def test_save_copy_on_already_closed_writer_reports_failure(self) -> None:
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "session.h5"
+            writer = AsyncHDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            )
+            writer.close()
+
+            results: list[tuple[bool, str]] = []
+            writer.save_copy(Path(temp_dir) / "copy.h5", on_done=lambda ok, msg: results.append((ok, msg)))
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0][0])
+        self.assertIn("closed", results[0][1].lower())
+
     def test_probe_rejects_incompatible_measurement_schema_major_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "future_format.h5"
