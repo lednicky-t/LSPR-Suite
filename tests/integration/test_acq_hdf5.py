@@ -29,7 +29,8 @@ from lspr_app.storage.hdf5_export import (
     HDF5MeasurementWriter,
     repack_measurement_hdf5_file,
 )
-from lspr_io import read_processing_settings_metadata
+from lspr_core import ExperimentPlan, ExperimentPlanStep
+from lspr_io import build_legacy_experiment_plan_row_table, read_processing_settings_metadata
 
 
 class Hdf5AcquisitionWriterTests(unittest.TestCase):
@@ -78,6 +79,40 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
         self.assertEqual(steps[0].description, "First step")
         self.assertEqual(steps[0].channels[0].flow_ul_min, 50)
         self.assertEqual(steps[0].channels[1].direction, "CCW")
+
+    def test_switch_position_written_as_empty_when_disabled(self) -> None:
+        plan = ExperimentPlan(
+            steps=[
+                ExperimentPlanStep(
+                    id=1,
+                    start_s=0.0,
+                    end_s=12.5,
+                    color="#4E79A7",
+                    comment="First step",
+                    devices={"valve": "Open", "switch_position": 3, "channels": []},
+                ),
+            ],
+        )
+
+        enabled_table = build_legacy_experiment_plan_row_table(plan, switch_position_enabled=True)
+        disabled_table = build_legacy_experiment_plan_row_table(plan, switch_position_enabled=False)
+
+        switch_index = enabled_table.columns.index("switch_position")
+        valve_index = enabled_table.columns.index("valve")
+        self.assertEqual(enabled_table.rows[0][switch_index], "3")
+        self.assertEqual(disabled_table.rows[0][switch_index], "")
+        # Only the switch_position column is affected - everything else
+        # (including the other device column, valve) stays the same.
+        self.assertEqual(enabled_table.rows[0][valve_index], disabled_table.rows[0][valve_index])
+        row_without_switch = list(enabled_table.rows[0])
+        row_without_switch[switch_index] = ""
+        self.assertEqual(disabled_table.rows[0], row_without_switch)
+
+        # The reader's existing fallback (used for any unparseable/blank
+        # switch_position text) must still safely round-trip the disabled
+        # row back to the default position, with no reader change needed.
+        steps = build_experiment_plan_steps_from_hdf5_rows(disabled_table.columns, disabled_table.rows)
+        self.assertEqual(steps[0].switch_position, 1)
 
     def test_processing_settings_can_be_loaded_from_hdf5(self) -> None:
         processing = ProcessingSettings(
@@ -464,6 +499,66 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0][0])
         self.assertIn("closed", results[0][1].lower())
+
+    def test_environment_reading_written_and_readable(self) -> None:
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            writer = HDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            )
+            writer.append_environment_reading(1700000000000, 23.4, 41.2)
+            # A partial reading (only one sensor responded) must still record
+            # a row - the other value becomes NaN, the row isn't dropped.
+            writer.append_environment_reading(1700000060000, None, 40.5)
+            writer.close()
+
+            with h5py.File(path, "r") as handle:
+                group = handle["devices"]["environment"]
+                timestamps = group["timestamp_utc_ms"][...]
+                temperatures = group["temperature_c"][...]
+                humidities = group["humidity_percent"][...]
+
+        np.testing.assert_array_equal(timestamps, [1700000000000, 1700000060000])
+        np.testing.assert_allclose(temperatures[0], 23.4)
+        self.assertTrue(np.isnan(temperatures[1]))
+        np.testing.assert_allclose(humidities, [41.2, 40.5])
+
+    def test_async_writer_environment_reading_reaches_disk(self) -> None:
+        # Does not peek at the file with a second h5py.File handle while the
+        # writer's own handle is still open - see save_copy's docstring in
+        # hdf5_export.py: a second concurrent open collides with the
+        # writer's file lock on Windows. close() drains the queue (the
+        # "environment" message is processed before the "close" message
+        # behind it, since the queue is FIFO) and blocks until the
+        # background thread has fully exited, so it's safe to read after.
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            writer = AsyncHDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                flush_interval_s=0.1,
+            )
+            writer.append_environment_reading(1700000000000, 22.1, 55.0)
+            writer.close()
+
+            with h5py.File(path, "r") as handle:
+                group = handle["devices"]["environment"]
+                self.assertEqual(group["timestamp_utc_ms"][0], 1700000000000)
+                self.assertAlmostEqual(float(group["temperature_c"][0]), 22.1)
+                self.assertAlmostEqual(float(group["humidity_percent"][0]), 55.0)
 
     def test_probe_rejects_incompatible_measurement_schema_major_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

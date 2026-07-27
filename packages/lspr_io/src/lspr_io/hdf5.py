@@ -573,6 +573,7 @@ def build_legacy_experiment_plan_row_table(
     tube_mm_by_channel: list[float] | None = None,
     active_channel_count: int = 4,
     hdf5_channel_count: int = 6,
+    switch_position_enabled: bool = True,
 ) -> ExperimentPlanRowTable:
     tube_mm_by_channel = (tube_mm_by_channel or [])[:active_channel_count]
     if len(tube_mm_by_channel) < active_channel_count:
@@ -608,7 +609,7 @@ def build_legacy_experiment_plan_row_table(
             f"{float(step.end_s):g}",
             str(step.color or ""),
             str(devices.get("valve", "")),
-            str(int(devices.get("switch_position", 1) or 1)),
+            str(int(devices.get("switch_position", 1) or 1)) if switch_position_enabled else "",
             str(step.comment or ""),
         ]
         for index in range(hdf5_channel_count):
