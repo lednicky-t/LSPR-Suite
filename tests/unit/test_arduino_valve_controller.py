@@ -20,8 +20,8 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_app.device.communication_models import DeviceCommand
-from lspr_app.device.serial_controllers import ControllerError
-from lspr_app.device.valve_controllers import ArduinoValveController, ItsyBitsy32U4ValveController
+from lspr_app.device.serial_controllers import ControllerError, ControllerPort, controller_port_priority
+from lspr_app.device.valve_controllers import ArduinoValveController, ItsyBitsy32U4ValveController, LegacyValveController
 
 
 def _connected(controller):
@@ -74,6 +74,46 @@ class ArduinoValveControllerEnvironmentReadTests(unittest.TestCase):
         with self.assertRaises(ControllerError):
             controller.read_humidity()
         controller._serial.write.assert_not_called()
+
+
+class IsProbablePortTests(unittest.TestCase):
+    """Regression coverage for a real board seen in the field: an
+    Arduino-family valve controller (firmware answers asn/mod/at/ah
+    correctly) wired through an FTDI FT232R USB-serial adapter instead of
+    CH340 or native USB, so it doesn't say "Arduino" anywhere and its VID
+    is FTDI's (0403), not Arduino LLC's (2341) or QinHeng's (1A86). Before
+    this was recognized, only LegacyValveController matched the port, was
+    tried alone, and failed (it doesn't speak the "vi" legacy protocol) -
+    detection failed outright even though ArduinoValveController would
+    have worked immediately.
+    """
+
+    def _ftdi_port(self) -> ControllerPort:
+        return ControllerPort(
+            device="COM14",
+            description="USB Serial Port (COM14)",
+            hwid="USB VID:PID=0403:6001 SER=AM00PFW2A",
+        )
+
+    def test_arduino_valve_controller_recognizes_ftdi_vid(self) -> None:
+        self.assertTrue(ArduinoValveController.is_probable_port(self._ftdi_port()))
+
+    def test_itsybitsy_does_not_claim_a_plain_ftdi_port(self) -> None:
+        self.assertFalse(ItsyBitsy32U4ValveController.is_probable_port(self._ftdi_port()))
+
+    def test_ftdi_vid_still_excluded_when_itsybitsy_vid_also_present(self) -> None:
+        # 239A (Adafruit/ItsyBitsy) must still win the exclusion even if a
+        # hwid string somehow also mentions FTDI-like text.
+        port = ControllerPort(device="COM5", description="USB Serial Device", hwid="USB VID:PID=239A:8071")
+        self.assertFalse(ArduinoValveController.is_probable_port(port))
+
+    def test_arduino_outranks_legacy_for_an_ftdi_port(self) -> None:
+        # Both classes now match an FTDI-VID port - Arduino's higher
+        # priority (20 vs 10) must make it the one actually tried first.
+        port = self._ftdi_port()
+        self.assertTrue(ArduinoValveController.is_probable_port(port))
+        self.assertTrue(LegacyValveController.is_probable_port(port))
+        self.assertEqual(controller_port_priority(port), ArduinoValveController.priority)
 
 
 class ExecuteCommandDispatchTests(unittest.TestCase):
