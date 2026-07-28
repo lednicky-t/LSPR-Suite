@@ -4,7 +4,10 @@
   the pump's 16-character display width (Reglo ICC manual, section 14.6.13
   "String": printable ASCII only, no embedded request-delimiter/CR).
 - ``RegloICCClient.set_display_text`` sends the sanitized text via the
-  documented ``DA`` (write letters) command, addressed to pump 0.
+  documented ``xN`` ("Set pump's temporary display name") command,
+  addressed to pump 0 - the only command of the two plausible candidates
+  (``xN`` vs the originally-tried ``DA``) with an actual worked example in
+  the manual for this exact use case (section 18.6.2).
 
 Whether the pump display is shown at all, and whether the plan table
 highlights the 16-character limit, are global ExperimentControlWindow
@@ -92,20 +95,20 @@ class RegloICCSetDisplayTextTests(unittest.TestCase):
         client.port = "FAKE"
         return client, fake_serial
 
-    def test_sends_da_command_addressed_to_pump_zero(self) -> None:
+    def test_sends_xn_command_addressed_to_pump_zero(self) -> None:
         client, fake_serial = self._client_with_fake_serial()
         client.set_display_text("Rinse buffer")
-        self.assertEqual(fake_serial.written, [b"0DARinse buffer\r"])
+        self.assertEqual(fake_serial.written, [b"0xNRinse buffer\r"])
 
     def test_truncates_and_sanitizes_before_sending(self) -> None:
         client, fake_serial = self._client_with_fake_serial()
         client.set_display_text("This comment is much longer than sixteen characters")
-        self.assertEqual(fake_serial.written, [b"0DAThis comment is \r"])
+        self.assertEqual(fake_serial.written, [b"0xNThis comment is \r"])
 
     def test_execute_command_dispatches_pump_set_display(self) -> None:
         client, fake_serial = self._client_with_fake_serial()
         client.execute_command(DeviceCommand("pump.set_display", {"text": "Wash"}))
-        self.assertEqual(fake_serial.written, [b"0DAWash\r"])
+        self.assertEqual(fake_serial.written, [b"0xNWash\r"])
 
 
 if __name__ == "__main__":
