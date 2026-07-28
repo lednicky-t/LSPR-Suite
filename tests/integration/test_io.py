@@ -72,11 +72,62 @@ class IoMetadataTests(unittest.TestCase):
 
         self.assertEqual(metadata["schema_name"], "lspr_measurement")
         self.assertEqual(metadata["schema_major"], 6)
-        self.assertEqual(metadata["schema_minor"], 0)
+        self.assertEqual(metadata["schema_minor"], 1)
         self.assertEqual(metadata["app_name"], "Test App")
         self.assertEqual(metadata["app_version"], "9.8.7")
         self.assertEqual(metadata["started_at_utc"], "2026-01-02T03:04:05Z")
         self.assertEqual(metadata["experiment_name"], "demo")
+        self.assertEqual(metadata["user"], "")
+
+    def test_standard_measurement_metadata_carries_the_user_field(self) -> None:
+        metadata = standard_measurement_metadata(
+            created_by="tester",
+            started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            app_name="Test App",
+            app_version="9.8.7",
+            user="Alex Chen",
+        )
+        self.assertEqual(metadata["user"], "Alex Chen")
+
+    def test_root_metadata_user_field_round_trips_and_defaults_to_empty(self) -> None:
+        started_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            with h5py.File(path, "w") as handle:
+                write_measurement_root_metadata(
+                    handle,
+                    schema_name="lspr_measurement",
+                    schema_version="6.1",
+                    schema_major=6,
+                    schema_minor=1,
+                    format_name="experiment_run",
+                    format_version=6,
+                    app_name="LSPR Suite",
+                    app_version="0.1.0",
+                    created_by="tester",
+                    started_at_utc=started_at,
+                    user="Jamie Lee",
+                )
+            with h5py.File(path, "r") as handle:
+                self.assertEqual(handle.attrs["user"], "Jamie Lee")
+
+            path_no_user = Path(temp_dir) / "measurement_no_user.h5"
+            with h5py.File(path_no_user, "w") as handle:
+                write_measurement_root_metadata(
+                    handle,
+                    schema_name="lspr_measurement",
+                    schema_version="6.1",
+                    schema_major=6,
+                    schema_minor=1,
+                    format_name="experiment_run",
+                    format_version=6,
+                    app_name="LSPR Suite",
+                    app_version="0.1.0",
+                    created_by="tester",
+                    started_at_utc=started_at,
+                )
+            with h5py.File(path_no_user, "r") as handle:
+                self.assertEqual(handle.attrs["user"], "")
 
     def test_root_metadata_round_trip(self) -> None:
         started_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)

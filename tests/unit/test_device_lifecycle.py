@@ -26,6 +26,7 @@ from lspr_app.device.device_types import PUMP, SELECTOR, SWITCH
 from lspr_app.device.reglo_icc import PumpProbe
 from lspr_app.device.serial_controllers import ControllerPort, ControllerProbe
 from lspr_app.device import device_lifecycle as dl
+from lspr_app.storage.user_profile import GLOBAL_CONFIG_PATH
 
 
 # ── fakes ─────────────────────────────────────────────────────────────────────
@@ -433,15 +434,26 @@ class EnabledDevicesPersistenceTests(unittest.TestCase):
         with patch("lspr_app.storage.app_config.save_app_setting") as mock_save:
             dl.save_enabled_devices({PUMP: False, SWITCH: 1, SELECTOR: 0})
         mock_save.assert_called_once_with(
-            "enabled_devices", {PUMP: False, SWITCH: True, SELECTOR: False}
+            "enabled_devices", {PUMP: False, SWITCH: True, SELECTOR: False}, path=GLOBAL_CONFIG_PATH
         )
 
     def test_save_defaults_missing_device_key_to_enabled(self) -> None:
         with patch("lspr_app.storage.app_config.save_app_setting") as mock_save:
             dl.save_enabled_devices({SELECTOR: False})
         mock_save.assert_called_once_with(
-            "enabled_devices", {PUMP: True, SWITCH: True, SELECTOR: False}
+            "enabled_devices", {PUMP: True, SWITCH: True, SELECTOR: False}, path=GLOBAL_CONFIG_PATH
         )
+
+    def test_save_and_load_always_use_the_global_path_not_the_active_user(self) -> None:
+        # enabled_devices describes the physical rig, not a person's
+        # preference - it must never move when the active user changes.
+        with patch("lspr_app.storage.app_config.save_app_setting") as mock_save:
+            dl.save_enabled_devices({PUMP: True, SWITCH: True, SELECTOR: True})
+        self.assertEqual(mock_save.call_args.kwargs.get("path"), GLOBAL_CONFIG_PATH)
+
+        with patch("lspr_app.storage.app_config.load_app_setting", return_value={}) as mock_load:
+            dl.load_enabled_devices()
+        self.assertEqual(mock_load.call_args.kwargs.get("path"), GLOBAL_CONFIG_PATH)
 
 
 class ControllerEnabledDevicesTests(unittest.TestCase):

@@ -9,10 +9,16 @@ from __future__ import annotations
 # was a real, shipped bug source (see apps/sLSPR/acq/docs/sensorgram_
 # improvements.md, "Correctness fixes" C1/C2) - a relative anchor that could
 # be silently reset mid-file made the derived elapsed time non-monotonic.
+#
+# 6.1 (2026-07-28): additive, compatible change - added an optional "user"
+# attr to root/manifest measurement metadata: who was using the instrument
+# (picked from the app's own User field), not to be confused with the
+# pre-existing "export_user" (OS login name, captured automatically).
+# Readers must tolerate its absence in older files.
 LSPR_MEASUREMENT_SCHEMA_NAME = "lspr_measurement"
-LSPR_MEASUREMENT_SCHEMA_VERSION = "6.0"
+LSPR_MEASUREMENT_SCHEMA_VERSION = "6.1"
 LSPR_MEASUREMENT_SCHEMA_MAJOR = 6
-LSPR_MEASUREMENT_SCHEMA_MINOR = 0
+LSPR_MEASUREMENT_SCHEMA_MINOR = 1
 LSPR_MEASUREMENT_FORMAT_NAME = "experiment_run"
 LSPR_MEASUREMENT_FORMAT_VERSION = 6
 

@@ -33,6 +33,20 @@ Each persisted file should carry at least these identity fields:
 - `created_at_utc`
 - `started_at_utc`
 
+Optional identity fields, present where relevant:
+
+- `user` - who was using the instrument, picked from the app's own User
+  field (no password - see `apps/sLSPR/acq/src/lspr_app/storage/user_profile.py`).
+  Not to be confused with `export_user` (below), which is the OS login
+  name captured automatically - on a shared Windows login that's the same
+  for everyone and says nothing about which person was actually running
+  the measurement. Added in measurement schema 6.1; absent or empty on
+  older files and on quick tests where no user was chosen. `created_by`
+  is a different thing again - it's always an app/tool identity string
+  (e.g. `"LSPR Acquisition"`), never a person.
+- `export_user` - OS login name (`getpass.getuser()`), written only into
+  `/manifest`.
+
 ## Compatibility Policy
 
 - readers must reject unknown schema names

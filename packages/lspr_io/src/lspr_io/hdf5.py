@@ -84,6 +84,7 @@ def write_measurement_root_metadata(
     created_at_utc: str | None = None,
     started_at_utc: datetime | str,
     experiment_name: str = "",
+    user: str = "",
 ) -> None:
     handle.attrs["schema_name"] = schema_name
     handle.attrs["schema_version"] = schema_version
@@ -97,6 +98,13 @@ def write_measurement_root_metadata(
     handle.attrs["app_name"] = app_name
     handle.attrs["app_version"] = app_version
     handle.attrs["experiment_name"] = str(experiment_name or "")
+    # Who ran this measurement, picked from the app's own User field - not
+    # to be confused with export_user below (the OS login name, captured
+    # automatically; on a shared Windows login that's the same for
+    # everyone and says nothing about which person was actually at the
+    # instrument). Optional: "" on older files and on quick tests where no
+    # user was chosen.
+    handle.attrs["user"] = str(user or "")
 
 
 def write_measurement_manifest_metadata(
@@ -114,6 +122,7 @@ def write_measurement_manifest_metadata(
     created_at_utc: str | None = None,
     started_at_utc: datetime | str,
     experiment_name: str = "",
+    user: str = "",
     storage_compression_enabled: bool = False,
     storage_compression_filter: str = "none",
     storage_compression_level: int = 0,
@@ -133,6 +142,7 @@ def write_measurement_manifest_metadata(
         created_at_utc=created_at_utc,
         started_at_utc=started_at_utc,
         experiment_name=experiment_name,
+        user=user,
     )
     group.attrs["export_host"] = socket.gethostname()
     try:
@@ -633,6 +643,7 @@ def standard_measurement_metadata(
     app_name: str,
     app_version: str,
     experiment_name: str = "",
+    user: str = "",
 ) -> dict[str, Any]:
     return {
         "schema_name": LSPR_MEASUREMENT_SCHEMA_NAME,
@@ -647,6 +658,7 @@ def standard_measurement_metadata(
         "app_name": app_name,
         "app_version": app_version,
         "experiment_name": str(experiment_name or ""),
+        "user": str(user or ""),
     }
 
 
