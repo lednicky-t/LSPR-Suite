@@ -32,7 +32,13 @@ if str(APP_SRC) not in sys.path:
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtWidgets import QApplication
 
-from lspr_app.domain.pump_plan import ACTIVE_PUMP_CHANNELS, PumpChannelStep, PumpPlanStep
+from lspr_app.domain.pump_plan import (
+    ACTIVE_PUMP_CHANNELS,
+    TUBE_DIAMETER_OPTIONS,
+    PumpChannelStep,
+    PumpPlanStep,
+    nearest_tube_diameter_option,
+)
 from lspr_app.gui.experiment_control_builders import direction_glyph
 from lspr_app.gui.experiment_control_window import ExperimentControlWindow
 from lspr_app.gui.flow_plan_model import ExperimentPlanDirectionDelegate, ExperimentPlanTableModel
@@ -51,29 +57,32 @@ def _make_model_with_one_step(*, flow_ul_min: float = 10.0, direction: str = "CW
 
 
 class _FakeTubeSpin:
-    """Stand-in for the real manual_tube_spins QDoubleSpinBox entries.
+    """Stand-in for the real manual_tube_spins TubeDiameterComboBox entries.
 
-    _cycle_plan_table_cell_by_wheel only calls .value()/.setValue()/
-    .singleStep() on these, so a plain fake covers the logic under test
-    without constructing real QDoubleSpinBox widgets alongside a bare
-    ExperimentControlWindow.__new__() controller - that combination reliably
-    segfaults under pytest (confirmed via isolated repro), likely because
-    __new__ leaves the controller's C++/sip side improperly constructed and
-    something in real QWidget construction touches it during teardown/GC.
+    _cycle_plan_table_cell_by_wheel only calls .value()/.step() on these, so
+    a plain fake covers the logic under test without constructing real
+    QComboBox widgets alongside a bare ExperimentControlWindow.__new__()
+    controller - that combination reliably segfaults under pytest (confirmed
+    via isolated repro), likely because __new__ leaves the controller's
+    C++/sip side improperly constructed and something in real QWidget
+    construction touches it during teardown/GC.
+
+    Mirrors TubeDiameterComboBox's index-into-TUBE_DIAMETER_OPTIONS model
+    (not a free 0.01 mm step) - the pump only accepts these 26 diameters,
+    see pump_plan.TUBE_DIAMETER_OPTIONS.
     """
 
-    def __init__(self, value: float = 0.25, step: float = 0.01) -> None:
-        self._value = value
-        self._step = step
+    def __init__(self, mm: float = 0.25) -> None:
+        self._index = TUBE_DIAMETER_OPTIONS.index(nearest_tube_diameter_option(mm))
 
     def value(self) -> float:
-        return self._value
+        return TUBE_DIAMETER_OPTIONS[self._index].mm
 
-    def setValue(self, value: float) -> None:
-        self._value = value
+    def setValue(self, mm: float) -> None:
+        self._index = TUBE_DIAMETER_OPTIONS.index(nearest_tube_diameter_option(mm))
 
-    def singleStep(self) -> float:
-        return self._step
+    def step(self, delta: int) -> None:
+        self._index = max(0, min(self._index + int(delta), len(TUBE_DIAMETER_OPTIONS) - 1))
 
 
 def _make_controller(model: ExperimentPlanTableModel, *, current_row: int = 0) -> ExperimentControlWindow:
@@ -193,11 +202,13 @@ class CyclePlanTableCellByWheelTubeTests(unittest.TestCase):
     def test_scroll_up_increases_that_channels_tube_spinbox(self) -> None:
         result = ExperimentControlWindow._cycle_plan_table_cell_by_wheel(self.controller, self.index, 120)
         self.assertTrue(result)
-        self.assertAlmostEqual(self.controller.manual_tube_spins[0].value(), 0.26, places=2)
+        # Steps to the *next* supported diameter (0.38 mm), not +0.01 mm - the
+        # pump only accepts the 26 catalog sizes in TUBE_DIAMETER_OPTIONS.
+        self.assertAlmostEqual(self.controller.manual_tube_spins[0].value(), 0.38, places=2)
 
     def test_scroll_down_decreases_that_channels_tube_spinbox(self) -> None:
         ExperimentControlWindow._cycle_plan_table_cell_by_wheel(self.controller, self.index, -120)
-        self.assertAlmostEqual(self.controller.manual_tube_spins[0].value(), 0.24, places=2)
+        self.assertAlmostEqual(self.controller.manual_tube_spins[0].value(), 0.19, places=2)
 
     def test_other_channels_tube_spinboxes_are_unaffected(self) -> None:
         ExperimentControlWindow._cycle_plan_table_cell_by_wheel(self.controller, self.index, 120)
@@ -207,7 +218,7 @@ class CyclePlanTableCellByWheelTubeTests(unittest.TestCase):
     def test_scrolling_channel_ones_tube_column_moves_channel_ones_spinbox(self) -> None:
         index = self.model.index(0, 9)  # channel 1's tube column
         ExperimentControlWindow._cycle_plan_table_cell_by_wheel(self.controller, index, 120)
-        self.assertAlmostEqual(self.controller.manual_tube_spins[1].value(), 0.26, places=2)
+        self.assertAlmostEqual(self.controller.manual_tube_spins[1].value(), 0.38, places=2)
         self.assertAlmostEqual(self.controller.manual_tube_spins[0].value(), 0.25, places=2)
 
 
