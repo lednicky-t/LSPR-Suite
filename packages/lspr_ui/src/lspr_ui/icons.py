@@ -301,7 +301,7 @@ def transport_icon(theme_mode: str, kind: str) -> QIcon:
     icon_map = {
         "play": "player-play",
         "hold": "clock-stop",
-        "record": "player-record",
+        "record": "player-record-filled",
         "pause": "player-pause",
         "stop": "player-stop",
         "previous": "player-skip-back",
