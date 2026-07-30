@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QSize, QTimer
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap, QPen
-from PyQt6.QtWidgets import QAbstractSpinBox, QSlider, QToolButton
+import numpy as np
+from PyQt6.QtCore import QPointF, QRectF, Qt, QSize, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap, QPen
+from PyQt6.QtWidgets import QAbstractSpinBox, QSlider, QToolButton, QWidget
 
 
 def make_sim_slider(minimum: int, maximum: int, value: int) -> QSlider:
@@ -10,6 +11,107 @@ def make_sim_slider(minimum: int, maximum: int, value: int) -> QSlider:
     slider.setRange(minimum, maximum)
     slider.setValue(value)
     return slider
+
+
+class CompactWedgeSlider(QWidget):
+    """A compact opacity/transparency slider drawn as a filling wedge
+    (triangle) instead of a standard QSlider track+handle - originally
+    built for apps/LSPRi/eva's overlay-opacity controls
+    (gui/widgets.py's own CompactWedgeSlider); shared here so other apps
+    can reuse the same look instead of re-implementing it. LSPRi/eva's
+    existing local copy is untouched - only new call sites should import
+    this one.
+    """
+
+    valueChanged = pyqtSignal(int)
+
+    def __init__(self, orientation: Qt.Orientation = Qt.Orientation.Horizontal, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._orientation = orientation
+        self._minimum = 0
+        self._maximum = 100
+        self._value = 0
+        self.setMinimumSize(24, 12)
+        self.setMaximumHeight(12)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Opacity")
+
+    def setRange(self, minimum: int, maximum: int) -> None:
+        self._minimum = int(minimum)
+        self._maximum = max(int(maximum), self._minimum + 1)
+        self.setValue(self._value)
+
+    def setValue(self, value: int) -> None:
+        clamped = int(np.clip(int(value), self._minimum, self._maximum))
+        if clamped == self._value:
+            self.update()
+            return
+        self._value = clamped
+        self.valueChanged.emit(self._value)
+        self.update()
+
+    def value(self) -> int:
+        return int(self._value)
+
+    def sizeHint(self) -> QSize:
+        return QSize(24, 12)
+
+    def paintEvent(self, _event) -> None:  # pragma: no cover - GUI runtime path
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(1.0, 1.0, -1.0, -1.0)
+
+        base_path = QPainterPath()
+        base_path.moveTo(rect.left(), rect.bottom())
+        base_path.lineTo(rect.right(), rect.top())
+        base_path.lineTo(rect.right(), rect.bottom())
+        base_path.closeSubpath()
+        painter.setPen(QPen(QColor("#475569"), 1.0))
+        painter.setBrush(QColor("#0f172a"))
+        painter.drawPath(base_path)
+
+        fraction = 0.0 if self._maximum <= self._minimum else (self._value - self._minimum) / float(self._maximum - self._minimum)
+        fraction = float(np.clip(fraction, 0.0, 1.0))
+        fill_right = rect.left() + rect.width() * fraction
+        if fill_right > rect.left() + 0.5:
+            fill_path = QPainterPath()
+            fill_path.moveTo(rect.left(), rect.bottom())
+            fill_path.lineTo(fill_right, rect.bottom())
+            fill_path.lineTo(fill_right, rect.bottom() - rect.height() * fraction)
+            fill_path.closeSubpath()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#38bdf8"))
+            painter.drawPath(fill_path)
+
+        handle_x = rect.left() + rect.width() * fraction
+        painter.setPen(QPen(QColor("#f8fafc"), 1.4))
+        painter.drawLine(
+            QPointF(handle_x, rect.bottom()),
+            QPointF(handle_x, rect.bottom() - rect.height() * max(fraction, 0.18)),
+        )
+        painter.end()
+
+    def _set_value_from_pos(self, position: QPointF) -> None:
+        rect = QRectF(self.rect()).adjusted(1.0, 1.0, -1.0, -1.0)
+        if rect.width() <= 1.0:
+            return
+        fraction = (float(position.x()) - rect.left()) / rect.width()
+        fraction = float(np.clip(fraction, 0.0, 1.0))
+        self.setValue(int(round(self._minimum + fraction * (self._maximum - self._minimum))))
+
+    def mousePressEvent(self, event) -> None:  # pragma: no cover - GUI runtime path
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._set_value_from_pos(event.position())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # pragma: no cover - GUI runtime path
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._set_value_from_pos(event.position())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
 
 
 def _content_based_minimum_width(spinbox: QAbstractSpinBox) -> int:

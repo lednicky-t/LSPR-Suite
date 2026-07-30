@@ -15,10 +15,16 @@ from __future__ import annotations
 # (picked from the app's own User field), not to be confused with the
 # pre-existing "export_user" (OS login name, captured automatically).
 # Readers must tolerate its absence in older files.
+#
+# 6.2 (2026-07-29): additive, compatible change - added "extinction_value" to
+# processed/metrics, the Y-value of whichever fit metric is the primary
+# tracked one (smoothed_max/poly_max/gaussian_center/centroid) at the moment
+# it was recorded - see get_analysis_metrics in apps/sLSPR/acq's
+# gui/processing_helpers.py. Readers must tolerate its absence in older files.
 LSPR_MEASUREMENT_SCHEMA_NAME = "lspr_measurement"
-LSPR_MEASUREMENT_SCHEMA_VERSION = "6.1"
+LSPR_MEASUREMENT_SCHEMA_VERSION = "6.2"
 LSPR_MEASUREMENT_SCHEMA_MAJOR = 6
-LSPR_MEASUREMENT_SCHEMA_MINOR = 1
+LSPR_MEASUREMENT_SCHEMA_MINOR = 2
 LSPR_MEASUREMENT_FORMAT_NAME = "experiment_run"
 LSPR_MEASUREMENT_FORMAT_VERSION = 6
 
