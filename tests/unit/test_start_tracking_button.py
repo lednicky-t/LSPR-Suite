@@ -120,6 +120,13 @@ class MeasurementLockDisablesTrackingButtonTests(unittest.TestCase):
         window._source_mode = source_mode
         window.source_tabs = type("_T", (), {"setToolTip": lambda self, text: None})()
         window.start_tracking_button = _FakeButton()
+        # Real MainWindow._refresh_start_tracking_button_enabled also checks
+        # plot mode/absorbance availability (see
+        # test_start_tracking_ready_indicator.py) - this fake only exercises
+        # the "locked" dimension set_measurement_ui_locked is responsible for.
+        window._refresh_start_tracking_button_enabled = lambda: window.start_tracking_button.setEnabled(
+            not getattr(window, "_measurement_ui_locked", False)
+        )
         return window
 
     @patch("lspr_app.gui.acquisition_controller.update_source_link_buttons", lambda window: None)

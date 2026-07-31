@@ -26,10 +26,14 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_app.gui.main_window_plotting import (
+    _CURSOR_OFF_TEXT,
+    _STATS_OFF_TEXT,
     _sensorgram_overlay_top_margin_px,
-    _show_cursor_off_state,
+    _show_off_state,
     toggle_spectrum_cursor_enabled_for,
+    toggle_spectrum_stats_enabled_for,
     toggle_trace_cursor_enabled_for,
+    toggle_trace_stats_enabled_for,
 )
 from lspr_app.gui.plot_controller import (
     _spectrum_cursor_display_text,
@@ -49,7 +53,7 @@ class _FakeLabel:
 
 class _FakePixmapLabel:
     """Like _FakeLabel, but also records setPixmap calls so tests can verify
-    the crosshair-icon-while-disabled path (see _show_cursor_off_state in
+    the icon-while-disabled path (see _show_off_state in
     main_window_plotting.py) without needing a real QApplication/QIcon.
     """
 
@@ -323,24 +327,24 @@ class CursorOffIconTests(unittest.TestCase):
     """The cursor-readout label collapses to a small crosshair icon while
     disabled (instead of a "click to enable" sentence), and returns to plain
     "X, Y" text (no "cursor:" prefix) when re-enabled - see
-    _show_cursor_off_state and toggle_*_cursor_enabled_for in
+    _show_off_state and toggle_*_cursor_enabled_for in
     main_window_plotting.py.
     """
 
-    def test_show_cursor_off_state_sets_pixmap_when_icon_and_label_support_it(self) -> None:
+    def test_show_off_state_sets_pixmap_when_icon_and_label_support_it(self) -> None:
         label = _FakePixmapLabel()
-        _show_cursor_off_state(label, _FakeIcon())
+        _show_off_state(label, _FakeIcon(), _CURSOR_OFF_TEXT)
         self.assertEqual(label.pixmap, ("pixmap", 14, 14))
         self.assertEqual(label.text, "")
 
-    def test_show_cursor_off_state_falls_back_to_text_without_an_icon(self) -> None:
+    def test_show_off_state_falls_back_to_text_without_an_icon(self) -> None:
         label = _FakePixmapLabel()
-        _show_cursor_off_state(label, None)
+        _show_off_state(label, None, _CURSOR_OFF_TEXT)
         self.assertEqual(label.text, "cursor: off (click to enable)")
 
-    def test_show_cursor_off_state_falls_back_to_text_when_label_cant_take_a_pixmap(self) -> None:
+    def test_show_off_state_falls_back_to_text_when_label_cant_take_a_pixmap(self) -> None:
         label = _FakeLabel()
-        _show_cursor_off_state(label, _FakeIcon())
+        _show_off_state(label, _FakeIcon(), _CURSOR_OFF_TEXT)
         self.assertEqual(label.text, "cursor: off (click to enable)")
 
     def test_toggle_spectrum_off_shows_icon_when_precomputed(self) -> None:
@@ -378,6 +382,106 @@ class CursorOffIconTests(unittest.TestCase):
         toggle_trace_cursor_enabled_for(window)
         self.assertEqual(window.trace_cursor_label.text, "12.3 s, 603.210 nm")
         self.assertIsNone(window.trace_cursor_label.pixmap)
+
+
+class StatsOffIconTests(unittest.TestCase):
+    """Double-clicking a plot's stats box hides it behind a small list icon
+    (instead of leaving the panel up), and restores its last-known content
+    when double-clicked again - see toggle_spectrum_stats_enabled_for /
+    toggle_trace_stats_enabled_for (main_window_plotting.py) and
+    _sync_spectrum_stats_label / _sync_trace_stats_label (plot_controller.py),
+    which remember the latest computed HTML so it doesn't need to wait for
+    another frame to reappear.
+    """
+
+    def _make_stats_toggle_window(self, **extra):
+        window = type("_FakeWindow", (), {})()
+        window.spectrum_stats_label = _FakePixmapLabel()
+        window.trace_stats_label = _FakePixmapLabel()
+        window.spectrum_cursor_label = _FakeLabel()
+        window.trace_cursor_label = _FakeLabel()
+        window._spectrum_cursor_text = "500.000 nm, 1.0"
+        window._trace_cursor_text = "12.3 s, 603.210 nm"
+        for key, value in extra.items():
+            setattr(window, key, value)
+        return window
+
+    def test_toggle_spectrum_stats_off_shows_icon_when_precomputed(self) -> None:
+        window = self._make_stats_toggle_window(_spectrum_stats_off_icon=_FakeIcon())
+
+        toggle_spectrum_stats_enabled_for(window)
+
+        self.assertFalse(window._spectrum_stats_enabled)
+        self.assertEqual(window.spectrum_stats_label.pixmap, ("pixmap", 14, 14))
+
+    def test_toggle_spectrum_stats_back_on_restores_last_html(self) -> None:
+        window = self._make_stats_toggle_window(
+            _spectrum_stats_off_icon=_FakeIcon(),
+            _spectrum_stats_html="<b>S_Max</b>: 605.123 nm",
+        )
+        toggle_spectrum_stats_enabled_for(window)
+
+        toggle_spectrum_stats_enabled_for(window)
+
+        self.assertTrue(window._spectrum_stats_enabled)
+        self.assertEqual(window.spectrum_stats_label.text, "<b>S_Max</b>: 605.123 nm")
+        self.assertIsNone(window.spectrum_stats_label.pixmap)
+
+    def test_toggle_trace_stats_off_shows_icon_when_precomputed(self) -> None:
+        window = self._make_stats_toggle_window(_trace_stats_off_icon=_FakeIcon())
+
+        toggle_trace_stats_enabled_for(window)
+
+        self.assertFalse(window._trace_stats_enabled)
+        self.assertEqual(window.trace_stats_label.pixmap, ("pixmap", 14, 14))
+
+    def test_toggle_trace_stats_back_on_restores_last_html(self) -> None:
+        window = self._make_stats_toggle_window(
+            _trace_stats_off_icon=_FakeIcon(),
+            _trace_stats_html="S_Max: 12.3 s, 605.123 nm",
+        )
+        toggle_trace_stats_enabled_for(window)
+
+        toggle_trace_stats_enabled_for(window)
+
+        self.assertTrue(window._trace_stats_enabled)
+        self.assertEqual(window.trace_stats_label.text, "S_Max: 12.3 s, 605.123 nm")
+        self.assertIsNone(window.trace_stats_label.pixmap)
+
+    def test_falls_back_to_text_placeholder_without_a_precomputed_icon(self) -> None:
+        window = self._make_stats_toggle_window()
+
+        toggle_spectrum_stats_enabled_for(window)
+
+        self.assertEqual(window.spectrum_stats_label.text, _STATS_OFF_TEXT)
+
+    def test_disabled_spectrum_stats_icon_is_not_overwritten_by_refresh(self) -> None:
+        window = self._make_stats_toggle_window(
+            _spectrum_stats_off_icon=_FakeIcon(),
+            _get_analysis_metrics=lambda *_a, **_k: {},
+            _current_processing_settings=lambda: type("S", (), {"spectrum_tracking_mode": "smoothed_max"})(),
+        )
+        toggle_spectrum_stats_enabled_for(window)
+
+        update_spectrum_stats(window, processed=None, fit=None)
+
+        self.assertEqual(window.spectrum_stats_label.pixmap, ("pixmap", 14, 14))
+
+    def test_disabled_trace_stats_icon_is_not_overwritten_by_refresh(self) -> None:
+        window = self._make_stats_toggle_window(
+            _trace_stats_off_icon=_FakeIcon(),
+            _active_trace_series=lambda: {},
+            _trace_stats_metric=lambda: "smoothed_max",
+            TRACE_METRIC_SHORT_LABELS={"smoothed_max": "S_Max"},
+            TRACE_METRIC_COLORS={"smoothed_max": "#444444"},
+            trace_curves={},
+        )
+        window.trace_noise_summary_label = _FakeLabel()
+        toggle_trace_stats_enabled_for(window)
+
+        update_metric_stats(window)
+
+        self.assertEqual(window.trace_stats_label.pixmap, ("pixmap", 14, 14))
 
 
 class CrosshairVisibilityTests(unittest.TestCase):

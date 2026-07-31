@@ -235,11 +235,12 @@ Shared rules for measurement files are in `docs/schemas/hdf_standard.md`. Short 
 These are in `apps/sLSPR/acq/docs/` and are referenced as authoritative in `AGENTS.md`:
 
 - `runtime_pipeline_architecture.md` — lossless raw acquisition vs lossy UI rules (read first)
+- `spectral_processing_pipeline_architecture.md` — raw/dark/reference/absorbance data flow and the crop/baseline/smoothing/fit overlay contract
 - `CODEX_ARCHITECTURE_RAILS_V7.md` — architecture split design
 - `CODEX_IMPLEMENTATION_GUIDE_V8_LOSSLESS_ACQ_AND_LOSSY_UI.md` — step-by-step implementation
 - `CODEX_RUNTIME_SIMPLICITY_GUIDE_V12.md` — anti-orchestration guidance
 
-Core rule: **acquisition and file writing must be lossless; processing and GUI display may skip stale frames.**
+Core rule: **acquisition and file writing must be lossless; processing and GUI display may skip stale frames.** Separately: **processing (crop/baseline/smoothing) must never change a value at a wavelength still in view, and baseline/smoothing must only ever apply to the Absorbance spectrum** — see `spectral_processing_pipeline_architecture.md`.
 
 ---
 

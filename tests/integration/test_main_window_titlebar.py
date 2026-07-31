@@ -165,6 +165,12 @@ class MainWindowTitleBarTests(unittest.TestCase):
         def _show_import_from_measurement_dialog(self) -> None:
             pass
 
+        def _show_import_latest_session_dialog(self) -> None:
+            pass
+
+        def _show_new_session_dialog(self) -> None:
+            pass
+
         def _open_recording_project_destination_in_explorer(self) -> None:
             pass
 

@@ -180,6 +180,9 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         window._hw_status_items = {}
         window._initial_mswitch_devices = []
         window._mswitch_probe = None
+        window._initial_hardware_scan_pending = False
+        window._hardware_available = False
+        window._device_discovery_complete = False
         calls: list[object] = []
 
         window._update_pump_status = lambda *_args, **_kwargs: calls.append("pump_status")  # type: ignore[method-assign]
@@ -187,6 +190,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         window._log_warning = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
         window._log_success = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
         window._emit_hardware_init_progress = lambda *_args, **_kwargs: calls.append("progress")  # type: ignore[method-assign]
+        window._refresh_plot = lambda: calls.append("refresh_plot")  # type: ignore[method-assign]
 
         def _fake_finish(win, _text: str = "") -> None:
             calls.append(("finish", bool(win._hardware_init_ready_emitted)))

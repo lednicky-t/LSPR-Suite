@@ -14,11 +14,14 @@ Two related bugs, reported together by the maintainer:
 2. Nothing ever automatically switched the active source back to "spectrometer"
    when one was found during startup - the app always starts on the simulated
    placeholder (see main_window.py's construction-time fallback) and stayed
-   there even once a real device was detected. The maintainer's explicit
-   policy: no spectrometer at launch -> stay on simulation; spectrometer found
-   during that *same* initial scan -> auto-connect it; spectrometer connected
-   *later* (e.g. via "Reinitialize hardware" after already running a while) ->
-   do not auto-switch, since simulation may be in use deliberately by then.
+   there even once a real device was detected. The maintainer's policy: no
+   spectrometer at launch -> stay on simulation; spectrometer found during
+   that *same* initial scan -> auto-connect it; spectrometer connected
+   *later* (e.g. via "Reinitialize hardware" after already running a while)
+   -> only auto-switch if the tool panel (source tabs) is currently visible,
+   since that's a reasonable signal the user is actively looking at source
+   selection rather than deliberately running simulation with the panel
+   tucked away.
 """
 from __future__ import annotations
 
@@ -50,7 +53,15 @@ class _FakeRealSpectrometer:
         return "FakeOcean"
 
 
-def _make_window(*, source_mode: str, initial_scan_pending: bool, hardware_available: bool = False):
+class _FakeScrollArea:
+    def __init__(self, visible: bool) -> None:
+        self._visible = visible
+
+    def isVisible(self) -> bool:
+        return self._visible
+
+
+def _make_window(*, source_mode: str, initial_scan_pending: bool, hardware_available: bool = False, tool_panel_visible: bool = False):
     window = type("_FakeWindow", (), {})()
     window.status_label = type("_L", (), {"setText": lambda self, text: None})()
     window._device_activity_text = {}
@@ -58,6 +69,7 @@ def _make_window(*, source_mode: str, initial_scan_pending: bool, hardware_avail
     window._hardware_available = hardware_available
     window._source_mode = source_mode
     window._initial_hardware_scan_pending = initial_scan_pending
+    window._left_controls_scroll = _FakeScrollArea(tool_panel_visible)
     window._measurement_active = False
     window.calls: list[str] = []
     return window
@@ -94,11 +106,11 @@ class SpectrometerAutoConnectTests(unittest.TestCase):
     @patch("lspr_app.gui.main_window_lifecycle.refresh_hw_device_status_strip", lambda window: None)
     @patch("lspr_app.gui.main_window_lifecycle.apply_source_mode_for")
     @patch("lspr_app.gui.main_window_lifecycle.update_source_link_buttons")
-    def test_spectrometer_found_after_initial_scan_does_not_auto_connect(self, mock_update_icons, mock_apply_mode) -> None:
+    def test_spectrometer_found_after_initial_scan_does_not_auto_connect_with_panel_hidden(self, mock_update_icons, mock_apply_mode) -> None:
         # e.g. "Reinitialize hardware" run later, after the app has already
-        # been running on simulation for a while - must not yank the user
-        # off simulation without being asked.
-        window = _make_window(source_mode="simulation", initial_scan_pending=False)
+        # been running on simulation for a while, tool panel tucked away -
+        # must not yank the user off simulation without being asked.
+        window = _make_window(source_mode="simulation", initial_scan_pending=False, tool_panel_visible=False)
         real_spectrometer = _FakeRealSpectrometer()
         event = DeviceLifecycleEvent(device_key="spectrometer", stage=STAGE_READY, message="ready", probe=real_spectrometer)
 
@@ -108,6 +120,23 @@ class SpectrometerAutoConnectTests(unittest.TestCase):
         self.assertIs(window._spectrometer, real_spectrometer)
         mock_apply_mode.assert_not_called()
         mock_update_icons.assert_called_once_with(window)
+
+    @patch("lspr_app.gui.main_window_lifecycle.refresh_hw_device_status_strip", lambda window: None)
+    @patch("lspr_app.gui.main_window_lifecycle.apply_source_mode_for")
+    @patch("lspr_app.gui.main_window_lifecycle.update_source_link_buttons")
+    def test_spectrometer_found_after_initial_scan_does_auto_connect_with_panel_visible(self, mock_update_icons, mock_apply_mode) -> None:
+        # Same later-scan scenario, but the tool panel (source tabs) is
+        # currently visible - the maintainer's requested signal that the
+        # user is actively looking at source selection right now, so this
+        # case should auto-switch same as the initial-scan case.
+        window = _make_window(source_mode="simulation", initial_scan_pending=False, tool_panel_visible=True)
+        real_spectrometer = _FakeRealSpectrometer()
+        event = DeviceLifecycleEvent(device_key="spectrometer", stage=STAGE_READY, message="ready", probe=real_spectrometer)
+
+        handle_hardware_init_step_for(window, event)
+
+        self.assertTrue(window._hardware_available)
+        mock_apply_mode.assert_called_once_with(window, "spectrometer", restart_live=True)
 
     @patch("lspr_app.gui.main_window_lifecycle.refresh_hw_device_status_strip", lambda window: None)
     @patch("lspr_app.gui.main_window_lifecycle.apply_source_mode_for")

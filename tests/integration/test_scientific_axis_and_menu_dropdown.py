@@ -25,6 +25,35 @@ if str(APP_SRC) not in sys.path:
 from lspr_app.gui.widgets import MenuDropdownButton, ScientificAxis
 
 
+class _FakeAngleDelta:
+    def __init__(self, y: int) -> None:
+        self._y = y
+
+    def y(self) -> int:
+        return self._y
+
+
+class _FakeWheelEvent:
+    """Minimal stand-in for QWheelEvent - MenuDropdownButton.wheelEvent only
+    ever calls angleDelta().y()/ignore()/accept(), so a real QWheelEvent
+    (position, buttons, modifiers, phase...) would be unnecessary ceremony.
+    """
+
+    def __init__(self, delta_y: int) -> None:
+        self._delta = _FakeAngleDelta(delta_y)
+        self.ignored = False
+        self.accepted = False
+
+    def angleDelta(self) -> _FakeAngleDelta:
+        return self._delta
+
+    def ignore(self) -> None:
+        self.ignored = True
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
 class ScientificAxisFormatModeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.app = QApplication.instance() or QApplication([])
@@ -67,6 +96,32 @@ class ScientificAxisFormatModeTests(unittest.TestCase):
         self.axis.picture = "sentinel"
         self.axis.set_format_mode("scientific")
         self.assertEqual(self.axis.picture, "sentinel")
+
+    def test_wide_tick_spacing_drops_unnecessary_decimals(self) -> None:
+        # Sensorgram wavelength values (e.g. peak_nm around 500-600) used to
+        # always show exactly 1 decimal (magnitude-bucketed formatting),
+        # even when zoomed out enough that whole-nm ticks are plenty.
+        self.assertEqual(
+            self.axis.tickStrings([500.0, 550.0, 600.0], 1.0, 50.0),
+            ["500", "550", "600"],
+        )
+
+    def test_tight_tick_spacing_adds_decimals_so_adjacent_ticks_differ(self) -> None:
+        # Zoomed in enough that ticks are 0.02 nm apart - 1 decimal would
+        # have rounded 525.30/525.32/525.34 down to identical "525.3" labels.
+        self.assertEqual(
+            self.axis.tickStrings([525.30, 525.32, 525.34], 1.0, 0.02),
+            ["525.30", "525.32", "525.34"],
+        )
+        self.assertEqual(len(set(self.axis.tickStrings([525.30, 525.32, 525.34], 1.0, 0.02))), 3)
+
+    def test_decimal_places_are_capped_for_pathologically_tiny_spacing(self) -> None:
+        self.assertEqual(self.axis._decimal_places_for_spacing(1e-12), 6)
+
+    def test_zero_or_invalid_spacing_falls_back_to_one_decimal(self) -> None:
+        self.assertEqual(self.axis._decimal_places_for_spacing(0.0), 1)
+        self.assertEqual(self.axis._decimal_places_for_spacing(-5.0), 1)
+        self.assertEqual(self.axis._decimal_places_for_spacing(float("nan")), 1)
 
 
 class MenuDropdownButtonTests(unittest.TestCase):
@@ -116,6 +171,37 @@ class MenuDropdownButtonTests(unittest.TestCase):
         button.currentTextChanged.connect(seen.append)
         button.setCurrentText("Raw")
         self.assertEqual(seen, [])
+
+    def test_set_option_enabled_hides_and_disables_the_action(self) -> None:
+        button = MenuDropdownButton(self.sections)
+        button.set_option_enabled("Raw", False)
+        self.assertFalse(button._actions["Raw"].isVisible())
+        self.assertFalse(button._actions["Raw"].isEnabled())
+
+        button.set_option_enabled("Raw", True)
+        self.assertTrue(button._actions["Raw"].isVisible())
+        self.assertTrue(button._actions["Raw"].isEnabled())
+
+    def test_set_option_enabled_ignores_an_unknown_name(self) -> None:
+        button = MenuDropdownButton(self.sections)
+        button.set_option_enabled("Not a real option", False)  # must not raise
+
+    def test_wheel_event_skips_hidden_options(self) -> None:
+        # Order matches sections: Raw, Absorbance, Reference, Dark.
+        button = MenuDropdownButton(self.sections)
+        button.set_option_enabled("Absorbance", False)
+        self.assertEqual(button.currentText(), "Raw")
+
+        button.wheelEvent(_FakeWheelEvent(delta_y=120))
+
+        self.assertEqual(button.currentText(), "Reference")
+
+    def test_wheel_event_still_cycles_normally_when_nothing_is_hidden(self) -> None:
+        button = MenuDropdownButton(self.sections)
+
+        button.wheelEvent(_FakeWheelEvent(delta_y=120))
+
+        self.assertEqual(button.currentText(), "Absorbance")
 
     def test_unknown_text_is_ignored(self) -> None:
         button = MenuDropdownButton(self.sections)

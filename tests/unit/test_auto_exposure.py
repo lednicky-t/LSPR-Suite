@@ -144,8 +144,8 @@ class AutoExposureFrameTests(unittest.TestCase):
     def test_converges_within_target_band_reports_done(self) -> None:
         window = _make_window(max_intensity=65535.0)
         window._auto_exposure_state = _AutoExposureState(requested_time_us=50_000)
-        # 92% of full scale - inside the [90%, 95%) target band.
-        peak = 65535.0 * 0.92
+        # 87% of full scale - inside the [85.5%, 88.5%) target band.
+        peak = 65535.0 * 0.87
         spectrum = _make_spectrum([peak], integration_time_ms=50.0)
 
         auto_exposure_handle_live_frame_for(window, spectrum)
@@ -158,7 +158,7 @@ class AutoExposureFrameTests(unittest.TestCase):
     def test_underexposed_scales_up_proportionally(self) -> None:
         window = _make_window(max_intensity=65535.0)
         window._auto_exposure_state = _AutoExposureState(requested_time_us=50_000)
-        # 10% of full scale - well under the 90% band floor.
+        # 10% of full scale - well under the 85.5% band floor.
         peak = 65535.0 * 0.10
         spectrum = _make_spectrum([peak], integration_time_ms=50.0)
 
@@ -168,8 +168,8 @@ class AutoExposureFrameTests(unittest.TestCase):
         self.assertTrue(state.active)
         self.assertEqual(state.iteration, 1)
         self.assertGreater(state.requested_time_us, 50_000)
-        # Roughly a ~9.25x step (target 92.5% / measured 10%), proportional scaling.
-        self.assertAlmostEqual(state.requested_time_us / 50_000, 9.25, delta=0.2)
+        # Roughly a ~8.7x step (target 87% / measured 10%), proportional scaling.
+        self.assertAlmostEqual(state.requested_time_us / 50_000, 8.7, delta=0.2)
         self.assertEqual(window.integration_spin.value(), state.requested_time_us / 1000.0)
 
     def test_overexposed_scales_down_proportionally(self) -> None:

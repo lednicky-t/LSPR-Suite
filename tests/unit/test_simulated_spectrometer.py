@@ -168,6 +168,16 @@ class SimulatedSpectrometerTests(unittest.TestCase):
         )
 
     def test_linear_baseline_processing_removes_endpoint_trend(self) -> None:
+        """_linear_baseline anchors each end on the *mean of a window* of
+        points (2% of the spectrum, clamped to 5-50 - see its docstring in
+        domain/processing.py), not a single raw sample, to avoid baking one
+        noisy sample's value into the slope/intercept subtracted from the
+        whole spectrum. For this noise-free linear-slope signal, that means
+        the corrected endpoints land close to zero but not exactly zero -
+        averaging a window on a sloped line gives the line's value at the
+        window's midpoint, not its true edge. Compute that expected offset
+        analytically from the same slope, rather than assuming zero.
+        """
         spectrometer = SimulatedSpectrometer(
             SimulationParameters(
                 peak_height=0.0,
@@ -186,8 +196,12 @@ class SimulatedSpectrometerTests(unittest.TestCase):
                 trigger_mode=0,
             ),
         )
+        # Baseline removal only ever applies to the Absorbance spectrum (see
+        # spectral_processing_pipeline_architecture.md) - tag this synthetic
+        # "reference"-shaped curve as absorbance so this test can isolate
+        # _linear_baseline's math from that kind gate.
         processed, _ = process_spectrum(
-            spectrum,
+            spectrum.with_metadata(kind="absorbance"),
             ProcessingSettings(
                 baseline_method="linear",
                 smoothing_method="none",
@@ -198,8 +212,17 @@ class SimulatedSpectrometerTests(unittest.TestCase):
         )
         self.assertIsNotNone(processed)
         assert processed is not None
-        self.assertAlmostEqual(float(processed.values[0]), 0.0, places=6)
-        self.assertAlmostEqual(float(processed.values[-1]), 0.0, places=6)
+
+        n = len(spectrum.values)
+        window = min(max(round(n * 0.02), 5), 50)
+        window = min(window, max(n // 2, 1))
+        slope_per_index = (float(spectrum.values[-1]) - float(spectrum.values[0])) / (n - 1)
+        # Mean of indices [0, window-1] sits at the line's value at the
+        # window's midpoint index (window-1)/2, vs. the true edge at index 0.
+        expected_left_offset = -slope_per_index * (window - 1) / 2.0
+        expected_right_offset = slope_per_index * (window - 1) / 2.0
+        self.assertAlmostEqual(float(processed.values[0]), expected_left_offset, places=6)
+        self.assertAlmostEqual(float(processed.values[-1]), expected_right_offset, places=6)
 
 
 if __name__ == "__main__":
