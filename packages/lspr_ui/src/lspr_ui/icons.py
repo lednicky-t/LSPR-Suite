@@ -341,7 +341,7 @@ def bulb_icon(bulb_color: QColor) -> QIcon:
 
 def dark_icon(active: bool) -> QIcon:
     return tint_tabler_icon(
-        load_tabler_icon("moon"),
+        load_tabler_icon("moon-filled" if active else "moon"),
         QColor("#ffffff" if active else "#8a93a0"),
     )
 
