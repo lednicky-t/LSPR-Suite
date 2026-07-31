@@ -30,9 +30,19 @@ class _FakeTerminal:
 class _FakeTimer:
     def __init__(self) -> None:
         self.stopped = 0
+        self.started = 0
+        self._active = False
 
     def stop(self) -> None:
         self.stopped += 1
+        self._active = False
+
+    def start(self) -> None:
+        self.started += 1
+        self._active = True
+
+    def isActive(self) -> bool:
+        return self._active
 
 
 class _FakeSpin:
@@ -72,7 +82,7 @@ class MainWindowLoggingTests(unittest.TestCase):
                 },
                 _log_buffering_enabled=True,
                 _log_buffer=[],
-                _log_buffer_timer=object(),
+                _log_buffer_timer=_FakeTimer(),
                 _log_buffer_requested_at=None,
             )
 

@@ -7,6 +7,15 @@ from unittest.mock import patch
 from PyQt6 import QtWidgets
 from PyQt6.QtGui import QUndoStack
 
+# Must exist before any lspr_app.gui module is imported below - some of that
+# import chain appears to construct Qt objects (icons/pixmaps) at import
+# time, and doing that with no QApplication instance in the process yet
+# left things in a state where later, real icon creation inside a test
+# (update_window_mode_label's non-editor-profile branch, which builds a
+# QIcon/QPixmap for the source/record indicator) hung indefinitely instead
+# of erroring - reproduced by isolating this exact import order.
+_APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
 from tests._paths import REPO_ROOT, ensure_repo_paths
 
 
@@ -265,6 +274,61 @@ class MainWindowTitleBarTests(unittest.TestCase):
         self.assertIn("Control Plan Editor mode", window._window_mode_label.tooltip)
         self.assertFalse(window._window_mode_icon_label.visible)
         self.assertEqual(window._window_mode_label.stylesheet, "color: #9FD7A6; font-weight: 700;")
+
+    def _make_mode_label_window(self, **overrides) -> SimpleNamespace:
+        # update_window_mode_label's non-editor branch builds real QIcon/
+        # QPixmap objects (prism_tab_icon/math_function_tab_icon/
+        # transport_icon) for the source/record icon, unlike the
+        # editor-profile branch (returns before touching icons) the other
+        # tests here cover - see the module-level _APP comment above for why
+        # a QApplication must already exist before this module's own imports
+        # ran, not just before this call.
+        defaults = dict(
+            _launch_profile_spec=launch_profile_spec(LAUNCH_PROFILE_FULL),
+            _source_mode="simulation",
+            _measurement_active=False,
+            _live_active=False,
+            _theme_mode="dark",
+            _experiment_control_window=SimpleNamespace(_plan_running=False, _plan_holding=False, _plan_paused=False),
+            _window_mode_label=self._FakeLabel(),
+            _window_mode_icon_label=self._FakeLabel(),
+        )
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_free_mode_label_shows_state_and_source_as_the_main_state(self) -> None:
+        # The maintainer's explicit ask: the label's main state is whether
+        # the app is measuring or not, and which source is linked - not the
+        # experiment-control plan's own run/hold/pause state (that used to be
+        # the *only* thing shown, e.g. always "Experiment: stopped", which
+        # never even mentioned the source in the visible text).
+        window = self._make_mode_label_window(_source_mode="simulation")
+        update_window_mode_label(window)
+        self.assertEqual(window._window_mode_label.text(), "Free mode | Simulation")
+        self.assertEqual(window._window_mode_label.stylesheet, "")
+
+    def test_live_mode_label(self) -> None:
+        window = self._make_mode_label_window(_source_mode="spectrometer", _live_active=True)
+        update_window_mode_label(window)
+        self.assertEqual(window._window_mode_label.text(), "Live mode | Spectrometer")
+
+    def test_recording_label_is_styled_and_blinks_the_icon(self) -> None:
+        window = self._make_mode_label_window(
+            _source_mode="spectrometer", _live_active=True, _measurement_active=True, _recording_blink_visible=True,
+        )
+        update_window_mode_label(window)
+        self.assertEqual(window._window_mode_label.text(), "Recording | Spectrometer")
+        self.assertEqual(window._window_mode_label.stylesheet, "color: #ff5b5b; font-weight: 700;")
+        self.assertTrue(window._window_mode_icon_label.visible)
+
+    def test_active_experiment_plan_is_appended_but_stopped_plan_is_not(self) -> None:
+        window = self._make_mode_label_window(_source_mode="simulation")
+        update_window_mode_label(window)
+        self.assertNotIn("Plan", window._window_mode_label.text())
+
+        window._experiment_control_window._plan_running = True
+        update_window_mode_label(window)
+        self.assertEqual(window._window_mode_label.text(), "Free mode | Simulation | Plan: running")
 
     def test_device_status_strip_can_be_hidden_for_non_full_profiles(self) -> None:
         window = SimpleNamespace(

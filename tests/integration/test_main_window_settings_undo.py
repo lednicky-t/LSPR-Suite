@@ -15,7 +15,9 @@ except for one test that verifies the real timer actually debounces.
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
@@ -33,6 +35,7 @@ from PyQt6.QtWidgets import QApplication
 from lspr_app.device.simulated import SimulatedSpectrometer
 from lspr_app.domain.session import MeasurementSession
 from lspr_app.gui.main_window import MainWindow
+from lspr_app.storage import user_profile as up
 
 
 _APP = QApplication.instance() or QApplication([])
@@ -49,7 +52,34 @@ def _spin_event_loop(ms: int) -> None:
     loop.exec()
 
 
-class AcquisitionSettingsUndoTests(unittest.TestCase):
+class _IsolatedSettingsTestCase(unittest.TestCase):
+    """Base class for any test that constructs a real MainWindow.
+
+    MainWindow loads its processing/acquisition/UI-state settings from the
+    machine-wide lspr_settings.json (see storage/user_profile.py -
+    GLOBAL_CONFIG_PATH lives under platformdirs.user_config_dir, not the
+    repo), so without this isolation these tests silently pick up whatever
+    was last saved by an actual manual run of the app on this machine - e.g.
+    a smoothing_window value already clamped at its spin box's range max,
+    which makes a "+3" test edit a no-op instead of a real change. Same
+    pattern as test_user_profile.py's _TempConfigDirTestCase.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        patches = [
+            patch.object(up, "_SHARED_CONFIG_DIR", base),
+            patch.object(up, "_REGISTRY_PATH", base / "lspr_users.json"),
+            patch.object(up, "GLOBAL_CONFIG_PATH", base / "lspr_settings.json"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+
+class AcquisitionSettingsUndoTests(_IsolatedSettingsTestCase):
     def test_integration_time_change_undoes_and_redoes(self) -> None:
         window = _make_main_window()
         before = window.integration_spin.value()
@@ -96,7 +126,7 @@ class AcquisitionSettingsUndoTests(unittest.TestCase):
         self.assertEqual(window.averages_spin.value(), before)
 
 
-class ProcessingSettingsUndoTests(unittest.TestCase):
+class ProcessingSettingsUndoTests(_IsolatedSettingsTestCase):
     def test_smoothing_window_change_undoes_and_redoes(self) -> None:
         window = _make_main_window()
         before = window.smoothing_window_spin.value()
@@ -124,7 +154,7 @@ class ProcessingSettingsUndoTests(unittest.TestCase):
         self.assertEqual(window.undo_stack.count(), 0)
 
 
-class SharedUndoStackTests(unittest.TestCase):
+class SharedUndoStackTests(_IsolatedSettingsTestCase):
     def test_experiment_control_window_shares_the_same_stack(self) -> None:
         window = _make_main_window()
         self.assertIs(window._experiment_control_window.undo_stack, window.undo_stack)

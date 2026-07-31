@@ -206,6 +206,7 @@ class SensorgramTimeTests(unittest.TestCase):
     def _make_window(self, *, measurement_active: bool, measurement_started_at: datetime | None) -> SimpleNamespace:
         return SimpleNamespace(
             _live_active=True,
+            _sensorgram_tracking_active=True,
             _measurement_active=measurement_active,
             _measurement_started_at=measurement_started_at,
             _measurement_writer=_FakeWriter() if measurement_active else None,
@@ -741,8 +742,14 @@ class SensorgramTimeTests(unittest.TestCase):
         self.assertAlmostEqual(float(with_fit["smoothed_max"]), float(without_fit["smoothed_max"]), places=6)
         self.assertAlmostEqual(float(with_fit["centroid"]), float(without_fit["centroid"]), places=6)
         self.assertNotEqual(float(with_fit["poly_max"]), float(without_fit["poly_max"]))
-        self.assertAlmostEqual(float(without_fit["smoothed_max"]), 2.01, places=6)
-        self.assertAlmostEqual(float(without_fit["poly_max"]), 2.01, places=6)
+        # 2.1 is the 3-point parabola vertex through the raw samples around the
+        # peak - (1, 0), (2, 3), (3, 1) - i.e. x=2 + 0.5*(0-1)/(0-2*3+1) = 2.1.
+        # get_analysis_metrics refines smoothed_max/poly_max from these real
+        # samples directly (see processing_helpers.py), not from the
+        # densely-interpolated display curve, so this is sub-sample precision
+        # from the actual data, not a grid-resolution artifact.
+        self.assertAlmostEqual(float(without_fit["smoothed_max"]), 2.1, places=6)
+        self.assertAlmostEqual(float(without_fit["poly_max"]), 2.1, places=6)
         self.assertAlmostEqual(float(with_fit["poly_max"]), 3.0, places=6)
 
 
