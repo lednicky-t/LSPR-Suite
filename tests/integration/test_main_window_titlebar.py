@@ -105,7 +105,7 @@ class MainWindowTitleBarTests(unittest.TestCase):
         def _activate_spectra_view(self) -> None:
             pass
 
-        def _activate_experimental_control_view(self) -> None:
+        def _activate_experiment_control_view(self) -> None:
             pass
 
         def _toggle_left_controls(self, *_args) -> None:
