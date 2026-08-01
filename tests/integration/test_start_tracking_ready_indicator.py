@@ -203,20 +203,25 @@ class SpectrometerModeTrackingReadyTests(_IsolatedSettingsTestCase):
 
 
 class SimulationModeTrackingReadyTests(_IsolatedSettingsTestCase):
-    def test_simulation_mode_is_ready_immediately_with_no_capture_needed(self) -> None:
+    def test_simulation_mode_starts_tracking_automatically(self) -> None:
         # Construction already switches to Simulation mode (SimulatedSpectrometer
         # arg) and wires the seeded output directly to Absorbance - no
-        # set_dark/set_reference/set_sample involved at all.
+        # set_dark/set_reference/set_sample involved at all. Simulation has no
+        # dark/reference ceremony and no real prep-procedure "trash" to gate
+        # out, so apply_source_mode_for starts tracking immediately instead
+        # of waiting for a manual click (see main_window_state.py).
         window = _make_main_window()
 
         self.assertEqual(window._source_mode, "simulation")
         self.assertIsNotNone(window._session.state.absorbance)
         self.assertEqual(window.PLOT_MODES.get(window.plot_selector.currentText()), "absorbance")
-        self.assertTrue(window._tracking_ready_blink_timer.isActive())
-        self.assertTrue(window.start_tracking_button.isEnabled())
-        self.assertNotEqual(
+        self.assertTrue(window._sensorgram_tracking_active)
+        # Nothing left to prompt the user about - tracking already started,
+        # so the ready-to-track blink has nothing to indicate.
+        self.assertFalse(window._tracking_ready_blink_timer.isActive())
+        self.assertEqual(
             _icon_image(window.start_tracking_button.icon()),
-            _icon_image(transport_icon(window._theme_mode, "play")),
+            _icon_image(transport_icon(window._theme_mode, "pause")),
         )
 
     def test_dark_reference_raw_hidden_in_simulation_mode(self) -> None:
@@ -227,6 +232,9 @@ class SimulationModeTrackingReadyTests(_IsolatedSettingsTestCase):
         window = _make_main_window()
         self.assertTrue(window.acquire_dark_button.isHidden())
         self.assertTrue(window.acquire_reference_button.isHidden())
+        # start_tracking_button has nothing to do in simulation either -
+        # tracking is already running automatically (see the test above).
+        self.assertTrue(window.start_tracking_button.isHidden())
         for name in ("Raw", "Reference", "Dark"):
             self.assertFalse(window.plot_selector._actions[name].isVisible())
 
@@ -235,8 +243,13 @@ class SimulationModeTrackingReadyTests(_IsolatedSettingsTestCase):
         window._apply_source_mode("spectrometer", False)
         self.assertFalse(window.acquire_dark_button.isHidden())
         self.assertFalse(window.acquire_reference_button.isHidden())
+        self.assertFalse(window.start_tracking_button.isHidden())
         for name in ("Raw", "Reference", "Dark"):
             self.assertTrue(window.plot_selector._actions[name].isVisible())
+        # Leaving simulation restores the manual-gated off-by-default
+        # behaviour, so real acquisition still keeps prep-time data out of
+        # the sensorgram by default.
+        self.assertFalse(window._sensorgram_tracking_active)
 
 
 if __name__ == "__main__":
