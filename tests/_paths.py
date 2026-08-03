@@ -10,6 +10,7 @@ PATHS = (
     REPO_ROOT / "packages" / "lspr_core" / "src",
     REPO_ROOT / "packages" / "lspr_io" / "src",
     REPO_ROOT / "apps" / "suite_launcher" / "src",
+    REPO_ROOT / "apps" / "suite_launcher" / "updater",
 )
 
 

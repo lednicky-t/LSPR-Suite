@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import QSettings
+from PyQt6.QtWidgets import QMessageBox
 
 from tests._paths import ensure_repo_paths
 
@@ -19,10 +21,12 @@ from lspr_core import (
     launch_profile_spec,
     normalize_launch_profile,
 )
-from suite_launcher.app import LaunchCard
+from suite_launcher import updater
+from suite_launcher.app import LaunchCard, MainWindow
 from suite_launcher.app import _settings_bool
 from suite_launcher.targets import TARGETS, _candidate_paths
 from suite_launcher.targets import AppTarget
+from suite_launcher.version import APP_VERSION
 
 
 class LauncherRegistryTests(unittest.TestCase):
@@ -154,3 +158,57 @@ class LauncherRegistryTests(unittest.TestCase):
         self.assertEqual(card.button.text(), "Kill")
         card.set_running(False)
         self.assertEqual(card.button.text(), "Launch")
+
+
+class MainWindowUpdateCheckTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Keep a strong reference - an unassigned QApplication() gets garbage
+        # collected immediately, which then crashes on the next widget access.
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.window = MainWindow()
+
+    def tearDown(self) -> None:
+        self.window.close()
+        self.window.deleteLater()
+
+    def test_update_button_exists_with_default_text(self) -> None:
+        self.assertTrue(hasattr(self.window, "update_button"))
+        self.assertEqual(self.window.update_button.text(), "Check for Updates")
+
+    def test_check_for_updates_error_shows_warning_and_resets_button(self) -> None:
+        with mock.patch.object(QMessageBox, "warning") as warning_mock:
+            self.window._handle_update_check_finished(None, "no internet")
+        warning_mock.assert_called_once()
+        self.assertIn("no internet", warning_mock.call_args.args[2])
+        self.assertTrue(self.window.update_button.isEnabled())
+        self.assertEqual(self.window.update_button.text(), "Check for Updates")
+
+    def test_check_for_updates_up_to_date_shows_information(self) -> None:
+        release = updater.ReleaseInfo(
+            tag=f"v{APP_VERSION}",
+            version=updater.parse_version(APP_VERSION),
+            notes="",
+            download_url="https://example.invalid/bundle.zip",
+            asset_name="bundle.zip",
+        )
+        with mock.patch.object(QMessageBox, "information") as info_mock:
+            self.window._handle_update_check_finished(release, None)
+        info_mock.assert_called_once()
+        self.assertIn("Up to date", info_mock.call_args.args[1])
+
+    def test_check_for_updates_newer_version_in_dev_checkout_informs_only(self) -> None:
+        release = updater.ReleaseInfo(
+            tag="v999.0.0",
+            version=(999, 0, 0),
+            notes="Adds auto-update.",
+            download_url="https://example.invalid/bundle.zip",
+            asset_name="bundle.zip",
+        )
+        with mock.patch.object(QMessageBox, "information") as info_mock, mock.patch.object(
+            QMessageBox, "question"
+        ) as question_mock:
+            self.window._handle_update_check_finished(release, None)
+        info_mock.assert_called_once()
+        question_mock.assert_not_called()
+        self.assertIn("v999.0.0", info_mock.call_args.args[2])
+        self.assertIn("git pull", info_mock.call_args.args[2])

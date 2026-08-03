@@ -19,12 +19,16 @@ if ($LASTEXITCODE -ne 0) {
 $portableRoot = Join-Path $suiteRoot "dist\LSPR-Suite-Portable"
 $bundleRoot = Join-Path $portableRoot "LSPR Suite Launcher"
 $launcherBuild = Join-Path $suiteRoot "build\suite_launcher"
+$updaterBuild = Join-Path $suiteRoot "build\updater"
 
 if (Test-Path $portableRoot) {
     Remove-Item -Recurse -Force $portableRoot
 }
 if (Test-Path $launcherBuild) {
     Remove-Item -Recurse -Force $launcherBuild
+}
+if (Test-Path $updaterBuild) {
+    Remove-Item -Recurse -Force $updaterBuild
 }
 
 & $venvPython -m PyInstaller `
@@ -44,6 +48,25 @@ if (Test-Path $launcherBuild) {
 
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed."
+}
+
+# Small standalone helper that applies future in-place updates. Built as its
+# own onefile exe (no Qt/venv dependency) and placed *next to* (not inside)
+# the "LSPR Suite Launcher" folder, so it is never one of the files an update
+# replaces. See apps/suite_launcher/updater/updater_main.py.
+& $venvPython -m PyInstaller `
+    --noconfirm `
+    --clean `
+    --onefile `
+    --windowed `
+    --name "Updater" `
+    --distpath $portableRoot `
+    --workpath $updaterBuild `
+    --specpath $updaterBuild `
+    (Join-Path $suiteRoot "apps\suite_launcher\updater\updater_main.py")
+
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller build failed for Updater.exe."
 }
 
 $copyTargets = @(

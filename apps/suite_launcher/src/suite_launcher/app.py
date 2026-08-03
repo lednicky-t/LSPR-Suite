@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import ctypes
 from dataclasses import dataclass
@@ -45,7 +46,8 @@ from lspr_core import (
     normalize_launch_profile,
 )
 
-from .targets import TARGETS, AppTarget
+from . import updater
+from .targets import SUITE_ROOT, TARGETS, AppTarget
 from .version import APP_NAME, APP_VERSION
 
 
@@ -786,6 +788,9 @@ class LaunchCard(QFrame):
 
 class MainWindow(QMainWindow):
     launch_progress_changed = pyqtSignal(str, int, str)
+    update_check_finished = pyqtSignal(object, object)
+    update_download_progress = pyqtSignal(int)
+    update_download_finished = pyqtSignal(object, object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -801,6 +806,9 @@ class MainWindow(QMainWindow):
         self.settings.setValue(SETTINGS_DIAGNOSTICS_PROFILE_KEY, self._diagnostics_profile)
         self.settings.sync()
         self.launch_progress_changed.connect(self._handle_launch_progress_changed)
+        self.update_check_finished.connect(self._handle_update_check_finished)
+        self.update_download_progress.connect(self._handle_update_download_progress)
+        self.update_download_finished.connect(self._handle_update_download_finished)
         self._countdown_timer = QTimer(self)
         self._countdown_timer.setInterval(250)
         self._countdown_timer.timeout.connect(self._tick_auto_launch_countdown)
@@ -832,6 +840,12 @@ class MainWindow(QMainWindow):
         title.setObjectName("MainTitle")
         title_row.addWidget(title)
         title_row.addStretch(1)
+        self.update_button = QPushButton("Check for Updates")
+        self.update_button.setObjectName("SettingsHeaderButton")
+        self.update_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_button.setToolTip("Check GitHub for a newer LSPR Suite release.")
+        self.update_button.clicked.connect(self._check_for_updates)
+        title_row.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignRight)
         self.settings_button = QPushButton("Settings")
         self.settings_button.setObjectName("SettingsHeaderButton")
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -938,6 +952,125 @@ class MainWindow(QMainWindow):
     def _open_settings_dialog(self) -> None:
         dialog = SettingsResetDialog(self)
         dialog.exec()
+
+    def _check_for_updates(self) -> None:
+        self.update_button.setEnabled(False)
+        self.update_button.setText("Checking...")
+
+        def _worker() -> None:
+            try:
+                info = updater.fetch_latest_release()
+            except Exception as exc:
+                self.update_check_finished.emit(None, str(exc))
+                return
+            self.update_check_finished.emit(info, None)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _handle_update_check_finished(self, info: object, error: object) -> None:
+        self.update_button.setEnabled(True)
+        self.update_button.setText("Check for Updates")
+        if error is not None:
+            QMessageBox.warning(
+                self,
+                "Couldn't check for updates",
+                f"Could not reach GitHub to check for updates:\n{error}",
+            )
+            return
+
+        release: updater.ReleaseInfo = info  # type: ignore[assignment]
+        if not updater.is_newer(APP_VERSION, release.tag):
+            QMessageBox.information(
+                self,
+                "Up to date",
+                f"You're running the latest version ({APP_VERSION}).",
+            )
+            return
+
+        if not getattr(sys, "frozen", False):
+            QMessageBox.information(
+                self,
+                "Update available",
+                (
+                    f"Version {release.tag} is available (you have {APP_VERSION}).\n\n"
+                    "This is a development checkout running from source, so automatic "
+                    "update doesn't apply here - use 'git pull' to get the new code.\n\n"
+                    f"Release notes:\n{release.notes or '(none provided)'}"
+                ),
+            )
+            return
+
+        confirmed = QMessageBox.question(
+            self,
+            "Update available",
+            (
+                f"Version {release.tag} is available (you have {APP_VERSION}).\n\n"
+                f"Release notes:\n{release.notes or '(none provided)'}\n\n"
+                "Download and install it now? LSPR Suite Launcher will close and "
+                "reopen automatically once the update is applied."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        self._start_update_download(release)
+
+    def _start_update_download(self, release: "updater.ReleaseInfo") -> None:
+        self.update_button.setEnabled(False)
+        self._set_launch_progress(None, 0, "Downloading update", f"Downloading {release.tag}...")
+        dest_path = Path(tempfile.gettempdir()) / "lspr_suite_updates" / release.asset_name
+
+        def _worker() -> None:
+            try:
+                updater.download_release(
+                    release,
+                    dest_path,
+                    on_progress=lambda percent: self.update_download_progress.emit(percent),
+                )
+            except Exception as exc:
+                self.update_download_finished.emit(None, str(exc))
+                return
+            self.update_download_finished.emit(dest_path, None)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _handle_update_download_progress(self, percent: int) -> None:
+        self._set_launch_progress(None, percent, "Downloading update", f"Downloading update... {percent}%")
+
+    def _handle_update_download_finished(self, zip_path: object, error: object) -> None:
+        self.update_button.setEnabled(True)
+        if error is not None:
+            self._set_launch_progress(None, 0, "Idle", "Ready.")
+            QMessageBox.warning(self, "Update download failed", f"Could not download the update:\n{error}")
+            return
+        self._set_launch_progress(None, 100, "Update ready", "Applying update...")
+        self._launch_updater_and_quit(Path(str(zip_path)))
+
+    def _launch_updater_and_quit(self, zip_path: Path) -> None:
+        updater_exe = SUITE_ROOT.parent / "Updater.exe"
+        if not updater_exe.exists():
+            QMessageBox.critical(
+                self,
+                "Updater missing",
+                f"Could not find Updater.exe at {updater_exe}. The update was downloaded "
+                "but cannot be applied automatically.",
+            )
+            return
+        try:
+            subprocess.Popen(
+                [
+                    str(updater_exe),
+                    "--wait-pid", str(os.getpid()),
+                    "--zip", str(zip_path),
+                    "--target", str(SUITE_ROOT),
+                    "--relaunch", str(Path(sys.executable)),
+                ]
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Update failed", f"Could not start the updater:\n{exc}")
+            return
+        QApplication.quit()
 
     def _get_last_target(self) -> AppTarget | None:
         key = self.settings.value(SETTINGS_LAST_TARGET_KEY, "", type=str) or ""
