@@ -75,6 +75,24 @@ class ClickableLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
+def _console_write(text: str) -> None:
+    """Write to stdout if one exists.
+
+    The portable build is packaged with PyInstaller's --windowed flag, which
+    means there is no console attached and sys.stdout/sys.stderr are None
+    (not just discarded) - a bare sys.stdout.write() would raise
+    AttributeError there.
+    """
+    stream = sys.stdout
+    if stream is None:
+        return
+    try:
+        stream.write(text)
+        stream.flush()
+    except Exception:
+        pass
+
+
 def _settings_bool(settings: QSettings, key: str, default: bool = False) -> bool:
     raw = settings.value(key, None)
     if raw is None:
@@ -1336,12 +1354,11 @@ class MainWindow(QMainWindow):
                     "LSPR_DISABLE_DIAGNOSTIC_EXPORT": "0" if diagnostics_export_enabled else "1",
                     "TOP_CONTENT_TRACE": os.environ.get("TOP_CONTENT_TRACE", "1" if diagnostics_profile == "deep" else "0"),
                 }
-                sys.stdout.write(
+                _console_write(
                     f"[suite_launcher] launching {target.title} | "
                     f"diagnostics={diagnostics_profile} | "
                     f"top_content_trace={extra_env['TOP_CONTENT_TRACE']}\n"
                 )
-                sys.stdout.flush()
             self._set_launch_progress(target.key, 45, "Spawning", f"Starting {target.title} process.")
             command, cwd, env = target.build_command(extra_env=extra_env)
             self._set_launch_progress(target.key, 58, "Spawning", f"Launching from {cwd}.")
@@ -1500,8 +1517,7 @@ class MainWindow(QMainWindow):
                     if text:
                         _maybe_emit_progress(text)
                     if _should_forward_line(line):
-                        sys.stdout.write(f"[{target.title}] {line}")
-                        sys.stdout.flush()
+                        _console_write(f"[{target.title}] {line}")
             finally:
                 try:
                     stream.close()
