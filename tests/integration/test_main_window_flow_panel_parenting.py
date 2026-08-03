@@ -64,6 +64,7 @@ class _FakeExperimentControlWindow:
         show_runtime_controls: bool = True,
         parent=None,
         undo_stack=None,
+        device_manager_settings=None,
     ) -> None:
         self.__class__.created_parent = parent
         self.__class__.created_kwargs = {
@@ -126,6 +127,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         window._pending_layout_preset_selected = ""
         window._experiment_control_panel_placeholder = SimpleNamespace()
         window._flow_panel_placeholder = window._experiment_control_panel_placeholder
+        window._device_manager_settings = None
         window.set_theme = lambda _theme: None  # type: ignore[method-assign]
 
         with (
@@ -156,6 +158,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         window._experiment_control_panel_placeholder = SimpleNamespace()
         window._flow_panel_placeholder = window._experiment_control_panel_placeholder
         window._launch_profile_spec = launch_profile_spec(LAUNCH_PROFILE_CONTROL_EDITOR)
+        window._device_manager_settings = None
         window.set_theme = lambda _theme: None  # type: ignore[method-assign]
 
         with (
