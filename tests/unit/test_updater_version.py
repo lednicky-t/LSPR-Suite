@@ -69,5 +69,48 @@ class FetchLatestReleaseTests(unittest.TestCase):
             updater.urllib.request.urlopen = original_urlopen
 
 
+class AppReleasePayloadParsingTests(unittest.TestCase):
+    def test_parse_app_release_payload_needs_no_asset(self) -> None:
+        # Unlike the Suite bundle, per-app releases have no downloadable zip -
+        # they exist only so the launcher can compare tagged versions.
+        payload = {
+            "tag_name": "v0.5.0",
+            "body": "Adds pump calibration.",
+            "published_at": "2026-07-01T12:00:00Z",
+        }
+        info = updater._parse_app_release_payload("lednicky-t/SingleSpotLSPR-Acquisition", payload)
+        self.assertEqual(info.repo, "lednicky-t/SingleSpotLSPR-Acquisition")
+        self.assertEqual(info.tag, "v0.5.0")
+        self.assertEqual(info.version, (0, 5, 0))
+        self.assertEqual(info.notes, "Adds pump calibration.")
+        self.assertEqual(info.published_at, "2026-07-01T12:00:00Z")
+
+    def test_parse_app_release_payload_requires_a_tag(self) -> None:
+        with self.assertRaises(LookupError):
+            updater._parse_app_release_payload("owner/repo", {"tag_name": ""})
+
+
+class FetchLatestAppReleaseTests(unittest.TestCase):
+    def test_fetch_latest_app_release_surfaces_network_errors(self) -> None:
+        def _raise_urlopen(*_args, **_kwargs):
+            raise urllib.error.URLError("no internet")
+
+        original_urlopen = updater.urllib.request.urlopen
+        updater.urllib.request.urlopen = _raise_urlopen
+        try:
+            with self.assertRaises(urllib.error.URLError):
+                updater.fetch_latest_app_release("owner/repo")
+        finally:
+            updater.urllib.request.urlopen = original_urlopen
+
+
+class FormatReleaseDateTests(unittest.TestCase):
+    def test_format_release_date_strips_time_component(self) -> None:
+        self.assertEqual(updater.format_release_date("2026-07-01T12:00:00Z"), "2026-07-01")
+
+    def test_format_release_date_handles_empty_string(self) -> None:
+        self.assertEqual(updater.format_release_date(""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

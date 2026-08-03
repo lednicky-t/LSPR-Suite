@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+_APP_VERSION_RE = re.compile(r'^APP_VERSION\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
 def _suite_root() -> Path:
@@ -54,12 +57,35 @@ class AppTarget:
     extra_paths: tuple[Path, ...] = ()
     note: str = ""
     enabled: bool = True
+    github_repo: str = ""
+    version_file: str = ""
 
     def resolve_root(self) -> Path | None:
         for candidate in self.root_candidates:
             if candidate.exists():
                 return candidate
         return None
+
+    def resolve_local_version(self) -> str | None:
+        """Read this app's own APP_VERSION straight out of its version.py.
+
+        Reads the file directly instead of importing the app's package, since the
+        launcher runs each app as a separate subprocess (see build_command()) and
+        can't rely on the app's package being importable from the launcher's own
+        process, especially in the frozen portable build.
+        """
+        if not self.version_file:
+            return None
+        root = self.resolve_root()
+        if root is None:
+            return None
+        path = root / self.version_file
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        match = _APP_VERSION_RE.search(text)
+        return match.group(1) if match else None
 
     def resolve_python(self) -> Path:
         for candidate in self.python_candidates:
@@ -132,6 +158,8 @@ TARGETS = [
             SUITE_ROOT / "apps" / "sLSPR" / "acq" / "src",
         ),
         note="Prefers the suite-local workspace when present; set LSPR_LEGACY_SINGLE_ROOT for an external legacy workspace.",
+        github_repo="lednicky-t/SingleSpotLSPR-Acquisition",
+        version_file="src/lspr_app/version.py",
     ),
     AppTarget(
         key="slspr_eva",
@@ -150,6 +178,8 @@ TARGETS = [
             LEGACY_ROOT,
         ),
         note="Uses the suite-local evaluator when present; set LSPR_LEGACY_EVAL_ROOT only if you want the old workspace.",
+        github_repo="lednicky-t/SingleSpotLSPR-Evaluation",
+        version_file="src/lspr_single_evaluation/version.py",
     ),
     AppTarget(
         key="lspri_acq",
@@ -184,5 +214,7 @@ TARGETS = [
             *_venv_python(LSPRIMAGING_ROOT),
         ),
         note="Implemented in this workspace. Set LSPR_LEGACY_IMAGING_ROOT to point at a legacy workspace if needed.",
+        github_repo="lednicky-t/LSPRimaging-Evaluation",
+        version_file="src/lspr_imaging_app/version.py",
     ),
 ]

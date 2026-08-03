@@ -522,6 +522,15 @@ class LaunchCard(QFrame):
         address.setObjectName("CardAddress")
         address.setWordWrap(True)
         header_col.addWidget(address)
+
+        local_version = target.resolve_local_version()
+        self.version_label = QLabel(f"v{local_version}" if local_version else "")
+        self.version_label.setObjectName("CardVersion")
+        self.version_label.setWordWrap(True)
+        self.version_label.setVisible(bool(local_version))
+        header_col.addWidget(self.version_label)
+        self._local_version = local_version
+
         top_row.addLayout(header_col, 1)
         top_row.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(top_row)
@@ -583,6 +592,14 @@ class LaunchCard(QFrame):
                 color: #92a0b3;
                 font-size: 8px;
                 font-family: Consolas, 'Courier New', monospace;
+            }}
+            QLabel#CardVersion {{
+                color: #92a0b3;
+                font-size: 8px;
+                font-weight: 600;
+            }}
+            QLabel#CardVersion[updateAvailable="true"] {{
+                color: #F39C12;
             }}
             QLabel#CardBadge {{
                 min-width: 84px;
@@ -785,12 +802,38 @@ class LaunchCard(QFrame):
         self._refresh_primary_button_state()
         self._update_profile_chip()
 
+    def set_release_status(self, info: "updater.AppReleaseInfo | None", error: str | None) -> None:
+        """Update the version label once the background release check for this app returns.
+
+        `info` is None on error (network failure, no release published yet, etc.) -
+        in that case we just keep showing the local version with no comparison.
+        """
+        if not self._local_version:
+            return
+        if error is not None or info is None:
+            self.version_label.setText(f"v{self._local_version}")
+            self.version_label.setToolTip(f"Could not check for updates: {error}" if error else "")
+            self.version_label.setProperty("updateAvailable", False)
+        elif updater.is_newer(self._local_version, info.tag):
+            release_date = updater.format_release_date(info.published_at)
+            date_part = f", released {release_date}" if release_date else ""
+            self.version_label.setText(f"v{self._local_version} → {info.tag} available{date_part}")
+            self.version_label.setToolTip(info.notes or "")
+            self.version_label.setProperty("updateAvailable", True)
+        else:
+            self.version_label.setText(f"v{self._local_version} (up to date)")
+            self.version_label.setToolTip("")
+            self.version_label.setProperty("updateAvailable", False)
+        self.version_label.style().unpolish(self.version_label)
+        self.version_label.style().polish(self.version_label)
+
 
 class MainWindow(QMainWindow):
     launch_progress_changed = pyqtSignal(str, int, str)
     update_check_finished = pyqtSignal(object, object)
     update_download_progress = pyqtSignal(int)
     update_download_finished = pyqtSignal(object, object)
+    app_release_check_finished = pyqtSignal(str, object, object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -809,6 +852,7 @@ class MainWindow(QMainWindow):
         self.update_check_finished.connect(self._handle_update_check_finished)
         self.update_download_progress.connect(self._handle_update_download_progress)
         self.update_download_finished.connect(self._handle_update_download_finished)
+        self.app_release_check_finished.connect(self._handle_app_release_check_finished)
         self._countdown_timer = QTimer(self)
         self._countdown_timer.setInterval(250)
         self._countdown_timer.timeout.connect(self._tick_auto_launch_countdown)
@@ -843,7 +887,10 @@ class MainWindow(QMainWindow):
         self.update_button = QPushButton("Check for Updates")
         self.update_button.setObjectName("SettingsHeaderButton")
         self.update_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.update_button.setToolTip("Check GitHub for a newer LSPR Suite release.")
+        self.update_button.setToolTip(
+            "Check GitHub for a newer LSPR Suite release, and for newer versions of each app "
+            "(shown on its card)."
+        )
         self.update_button.clicked.connect(self._check_for_updates)
         title_row.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignRight)
         self.settings_button = QPushButton("Settings")
@@ -966,6 +1013,34 @@ class MainWindow(QMainWindow):
             self.update_check_finished.emit(info, None)
 
         threading.Thread(target=_worker, daemon=True).start()
+        self._check_app_updates()
+
+    def _check_app_updates(self) -> None:
+        """Check each app's own repo for a newer tagged release than what's pinned here.
+
+        Runs alongside the Suite bundle check, but reports back per-card instead of a
+        dialog - each card's version label updates itself when its check returns.
+        """
+        for key, card in self.cards.items():
+            repo = card.target.github_repo
+            if not repo:
+                continue
+
+            def _worker(key: str = key, repo: str = repo) -> None:
+                try:
+                    info = updater.fetch_latest_app_release(repo)
+                except Exception as exc:
+                    self.app_release_check_finished.emit(key, None, str(exc))
+                    return
+                self.app_release_check_finished.emit(key, info, None)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+    def _handle_app_release_check_finished(self, key: object, info: object, error: object) -> None:
+        card = self.cards.get(str(key))
+        if card is None:
+            return
+        card.set_release_status(info, error)  # type: ignore[arg-type]
 
     def _handle_update_check_finished(self, info: object, error: object) -> None:
         self.update_button.setEnabled(True)

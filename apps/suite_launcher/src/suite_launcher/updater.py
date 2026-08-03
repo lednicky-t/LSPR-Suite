@@ -75,6 +75,54 @@ def fetch_latest_release(timeout: float = REQUEST_TIMEOUT_S) -> ReleaseInfo:
     return _parse_release_payload(payload)
 
 
+@dataclass(frozen=True)
+class AppReleaseInfo:
+    """Latest tagged release for one of the individual apps (acq/eva/imaging).
+
+    Unlike ReleaseInfo, this carries no download URL: the apps aren't distributed
+    as standalone downloads, only bundled together inside the Suite's own portable
+    zip. This is informational - it tells you whether an app has a newer tagged
+    version than what's currently pinned in this umbrella repo's submodule.
+    """
+
+    repo: str
+    tag: str
+    version: tuple[int, ...]
+    notes: str
+    published_at: str
+
+
+def _parse_app_release_payload(repo: str, payload: dict) -> AppReleaseInfo:
+    tag = str(payload.get("tag_name", "")).strip()
+    if not tag:
+        raise LookupError("The latest release has no tag name.")
+    return AppReleaseInfo(
+        repo=repo,
+        tag=tag,
+        version=parse_version(tag),
+        notes=str(payload.get("body", "") or "").strip(),
+        published_at=str(payload.get("published_at", "") or ""),
+    )
+
+
+def fetch_latest_app_release(repo: str, timeout: float = REQUEST_TIMEOUT_S) -> AppReleaseInfo:
+    """Fetch the newest published release for one app repo, e.g. "owner/name".
+
+    Raises urllib.error.URLError / LookupError / ValueError on failure - callers
+    are expected to catch these and show a friendly message rather than crash.
+    """
+    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return _parse_app_release_payload(repo, payload)
+
+
+def format_release_date(published_at: str) -> str:
+    """Turn a GitHub ISO-8601 timestamp ("2026-07-01T12:00:00Z") into "2026-07-01"."""
+    return published_at.split("T", 1)[0] if published_at else ""
+
+
 def download_release(
     info: ReleaseInfo,
     dest_path: Path,

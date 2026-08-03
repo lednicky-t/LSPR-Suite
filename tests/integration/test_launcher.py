@@ -212,3 +212,44 @@ class MainWindowUpdateCheckTests(unittest.TestCase):
         question_mock.assert_not_called()
         self.assertIn("v999.0.0", info_mock.call_args.args[2])
         self.assertIn("git pull", info_mock.call_args.args[2])
+
+    def test_app_release_check_up_to_date_updates_card_label(self) -> None:
+        card = self.window.cards["slspr_acq"]
+        card._local_version = "0.4.0"
+        release = updater.AppReleaseInfo(
+            repo="lednicky-t/SingleSpotLSPR-Acquisition",
+            tag="v0.4.0",
+            version=(0, 4, 0),
+            notes="",
+            published_at="2026-07-01T12:00:00Z",
+        )
+        self.window._handle_app_release_check_finished("slspr_acq", release, None)
+        self.assertIn("up to date", card.version_label.text())
+
+    def test_app_release_check_newer_version_updates_card_label_with_date(self) -> None:
+        card = self.window.cards["slspr_acq"]
+        card._local_version = "0.4.0"
+        release = updater.AppReleaseInfo(
+            repo="lednicky-t/SingleSpotLSPR-Acquisition",
+            tag="v0.5.0",
+            version=(0, 5, 0),
+            notes="Adds pump calibration.",
+            published_at="2026-07-01T12:00:00Z",
+        )
+        self.window._handle_app_release_check_finished("slspr_acq", release, None)
+        self.assertIn("v0.5.0 available", card.version_label.text())
+        self.assertIn("2026-07-01", card.version_label.text())
+        self.assertEqual(card.version_label.toolTip(), "Adds pump calibration.")
+
+    def test_app_release_check_error_keeps_local_version_only(self) -> None:
+        card = self.window.cards["slspr_acq"]
+        card._local_version = "0.4.0"
+        self.window._handle_app_release_check_finished("slspr_acq", None, "no internet")
+        self.assertEqual(card.version_label.text(), "v0.4.0")
+
+    def test_check_for_updates_starts_a_worker_thread_per_app_with_a_github_repo(self) -> None:
+        apps_with_repos = [target for target in TARGETS if target.github_repo]
+        self.assertTrue(apps_with_repos, "expected at least one app target to declare a github_repo")
+        with mock.patch("suite_launcher.app.threading.Thread") as thread_mock:
+            self.window._check_app_updates()
+        self.assertEqual(thread_mock.call_count, len(apps_with_repos))
