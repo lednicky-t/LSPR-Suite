@@ -61,7 +61,7 @@ class _FakeScrollArea:
         return self._visible
 
 
-def _make_window(*, source_mode: str, initial_scan_pending: bool, hardware_available: bool = False, tool_panel_visible: bool = False):
+def _make_window(*, source_mode: str, initial_scan_pending: bool, hardware_available: bool = False, tool_panel_visible: bool = False, live_active: bool = False):
     window = type("_FakeWindow", (), {})()
     window.status_label = type("_L", (), {"setText": lambda self, text: None})()
     window._device_activity_text = {}
@@ -71,7 +71,9 @@ def _make_window(*, source_mode: str, initial_scan_pending: bool, hardware_avail
     window._initial_hardware_scan_pending = initial_scan_pending
     window._left_controls_scroll = _FakeScrollArea(tool_panel_visible)
     window._measurement_active = False
+    window._live_active = live_active
     window.calls: list[str] = []
+    window._stop_live_acquisition = lambda message="": window.calls.append(f"stop_live_acquisition:{message}")
     return window
 
 
@@ -136,6 +138,43 @@ class SpectrometerAutoConnectTests(unittest.TestCase):
         handle_hardware_init_step_for(window, event)
 
         self.assertTrue(window._hardware_available)
+        mock_apply_mode.assert_called_once_with(window, "spectrometer", restart_live=True)
+
+    @patch("lspr_app.gui.main_window_lifecycle.refresh_hw_device_status_strip", lambda window: None)
+    @patch("lspr_app.gui.main_window_lifecycle.apply_source_mode_for")
+    @patch("lspr_app.gui.main_window_lifecycle.update_source_link_buttons")
+    def test_auto_connect_stops_a_still_running_simulation_worker_first(self, mock_update_icons, mock_apply_mode) -> None:
+        # Regression test: simulation auto-starts its live worker on launch/
+        # mode-switch, so it is almost always still running when a
+        # spectrometer is discovered later (e.g. "Reinitialize hardware").
+        # start_live_acquisition() no-ops while _live_active is already True,
+        # so apply_source_mode_for(..., restart_live=True) alone silently
+        # failed to actually start a spectrometer-mode worker - the GUI
+        # flipped to "spectrometer" while the stale simulation worker kept
+        # running underneath, showing no raw spectra until the user manually
+        # toggled source tabs (which stops-then-restarts correctly). Must
+        # stop the live worker before switching source, same as
+        # request_source_mode_switch (main_window_headers.py) already does.
+        window = _make_window(source_mode="simulation", initial_scan_pending=False, tool_panel_visible=True, live_active=True)
+        real_spectrometer = _FakeRealSpectrometer()
+        event = DeviceLifecycleEvent(device_key="spectrometer", stage=STAGE_READY, message="ready", probe=real_spectrometer)
+
+        handle_hardware_init_step_for(window, event)
+
+        self.assertEqual(window.calls, ["stop_live_acquisition:Switching source..."])
+        mock_apply_mode.assert_called_once_with(window, "spectrometer", restart_live=True)
+
+    @patch("lspr_app.gui.main_window_lifecycle.refresh_hw_device_status_strip", lambda window: None)
+    @patch("lspr_app.gui.main_window_lifecycle.apply_source_mode_for")
+    @patch("lspr_app.gui.main_window_lifecycle.update_source_link_buttons")
+    def test_auto_connect_does_not_stop_live_when_nothing_is_running(self, mock_update_icons, mock_apply_mode) -> None:
+        window = _make_window(source_mode="simulation", initial_scan_pending=True, live_active=False)
+        real_spectrometer = _FakeRealSpectrometer()
+        event = DeviceLifecycleEvent(device_key="spectrometer", stage=STAGE_READY, message="ready", probe=real_spectrometer)
+
+        handle_hardware_init_step_for(window, event)
+
+        self.assertEqual(window.calls, [])
         mock_apply_mode.assert_called_once_with(window, "spectrometer", restart_live=True)
 
     @patch("lspr_app.gui.main_window_lifecycle.refresh_hw_device_status_strip", lambda window: None)
