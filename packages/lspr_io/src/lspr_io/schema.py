@@ -21,10 +21,21 @@ from __future__ import annotations
 # tracked one (smoothed_max/poly_max/gaussian_center/centroid) at the moment
 # it was recorded - see get_analysis_metrics in apps/sLSPR/acq's
 # gui/processing_helpers.py. Readers must tolerate its absence in older files.
+#
+# 6.3: additive, compatible change - two new, previously-drafted-but-unwritten
+# tables. devices/inventory: one row per known device (label, type, role,
+# driver, endpoint, display_name, model, serial_number, connected), snapshotted
+# once when a measurement starts. metadata/assignment_tables/
+# switch_solution_details: optional concentration/concentration_unit/notes per
+# M-switch port, keyed by switch_port to join against the pre-existing
+# switch_solution_map table - a deliberately minimal alternative to the fuller
+# /metadata/solutions registry still described (but not implemented) in
+# measurement_file_format.md. Readers must tolerate both tables' absence in
+# older files; neither existing table/column is touched.
 LSPR_MEASUREMENT_SCHEMA_NAME = "lspr_measurement"
-LSPR_MEASUREMENT_SCHEMA_VERSION = "6.2"
+LSPR_MEASUREMENT_SCHEMA_VERSION = "6.3"
 LSPR_MEASUREMENT_SCHEMA_MAJOR = 6
-LSPR_MEASUREMENT_SCHEMA_MINOR = 2
+LSPR_MEASUREMENT_SCHEMA_MINOR = 3
 LSPR_MEASUREMENT_FORMAT_NAME = "experiment_run"
 LSPR_MEASUREMENT_FORMAT_VERSION = 6
 
@@ -53,6 +64,7 @@ LSPR_MEASUREMENT_RUNTIME_DATASET_NAME = "experiment_control_runtime"
 LSPR_MEASUREMENT_RUNTIME_TIMESTAMP_UTC_COLUMN = "timestamp_utc_ms"
 LSPR_MEASUREMENT_ASSIGNMENT_TABLES_GROUP_NAME = "assignment_tables"
 LSPR_MEASUREMENT_SWITCH_SOLUTION_MAP_DATASET_NAME = "switch_solution_map"
+LSPR_MEASUREMENT_SWITCH_SOLUTION_DETAILS_DATASET_NAME = "switch_solution_details"
 LSPR_MEASUREMENT_VALVE_STATE_MAP_DATASET_NAME = "valve_state_map"
 LSPR_MEASUREMENT_COLOR_PALETTE_ENTRIES_DATASET_NAME = "color_palette_entries"
 LSPR_PROCESSED_METRICS_GROUP_NAME = "metrics"
@@ -105,6 +117,24 @@ LSPR_DEVICE_ENVIRONMENT_GROUP_NAME = "environment"
 LSPR_DEVICE_ENVIRONMENT_TIMESTAMP_UTC_MS_DATASET_NAME = "timestamp_utc_ms"
 LSPR_DEVICE_ENVIRONMENT_TEMPERATURE_C_DATASET_NAME = "temperature_c"
 LSPR_DEVICE_ENVIRONMENT_HUMIDITY_PERCENT_DATASET_NAME = "humidity_percent"
+
+LSPR_DEVICE_INVENTORY_GROUP_NAME = "inventory"
+LSPR_DEVICE_INVENTORY_SCHEMA_NAME = "lspr_device_inventory"
+LSPR_DEVICE_INVENTORY_SCHEMA_VERSION = "1.0"
+LSPR_DEVICE_INVENTORY_FORMAT_NAME = "device_inventory"
+LSPR_DEVICE_INVENTORY_FORMAT_VERSION = 1
+LSPR_DEVICE_INVENTORY_TABLE_DATASET_NAME = "devices"
+LSPR_DEVICE_INVENTORY_COLUMNS = [
+    "label",
+    "type",
+    "role",
+    "driver",
+    "endpoint",
+    "display_name",
+    "model",
+    "serial_number",
+    "connected",
+]
 
 LSPR_MEASUREMENT_PLAN_COLUMNS = [
     "step",

@@ -304,6 +304,85 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
         self.assertEqual(processing_config["baseline_method"], "none")
         self.assertEqual(processing_config["trace_metrics"], ["smoothed_max", "centroid"])
 
+    def test_switch_solution_details_and_device_inventory_are_written(self) -> None:
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            writer = HDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            )
+            writer.write_device_inventory(
+                [
+                    ["spectrometer_1", "spectrometer", "primary", "OceanSpectrometer", "USB0", "Ocean HR4000", "HR4000", "SN123", "true"],
+                    ["pump_1", "pump", "", "RegloICCClient", "COM3", "", "", "", "false"],
+                ]
+            )
+            writer.update_acquisition_state(
+                {
+                    "source_mode": "spectrometer",
+                    "plot_mode": "sample",
+                    "live_rate_hz": 4.0,
+                    "show_residual": False,
+                    "freeze_plots": False,
+                    "experiment_control": {
+                        "switch_solution_mode": True,
+                        "switch_solution_rows": [["A", "buffer"], ["B", "sample"]],
+                        "switch_solution_detail_rows": [
+                            ["A", "10 mM", "mM", "prepared fresh"],
+                            ["B", "", "", ""],
+                        ],
+                    },
+                }
+            )
+            writer.close()
+
+            with h5py.File(path, "r") as handle:
+                root_schema_version = handle.attrs["schema_version"]
+                assignment_tables = handle["metadata"]["assignment_tables"]
+                details_table = assignment_tables["switch_solution_details"]
+                details_columns = [
+                    column.decode("utf-8") if isinstance(column, bytes) else str(column)
+                    for column in details_table.attrs["columns"]
+                ]
+                details_rows = [
+                    [cell.decode("utf-8") if isinstance(cell, bytes) else str(cell) for cell in row]
+                    for row in details_table[...]
+                ]
+                inventory_group = handle["devices"]["inventory"]
+                inventory_group_attrs = dict(inventory_group.attrs.items())
+                inventory_table = inventory_group["devices"]
+                inventory_columns = [
+                    column.decode("utf-8") if isinstance(column, bytes) else str(column)
+                    for column in inventory_table.attrs["columns"]
+                ]
+                inventory_rows = [
+                    [cell.decode("utf-8") if isinstance(cell, bytes) else str(cell) for cell in row]
+                    for row in inventory_table[...]
+                ]
+
+        self.assertEqual(root_schema_version, "6.3")
+        self.assertEqual(details_columns, ["switch_port", "concentration", "concentration_unit", "notes"])
+        self.assertEqual(details_rows, [["A", "10 mM", "mM", "prepared fresh"], ["B", "", "", ""]])
+        self.assertEqual(inventory_group_attrs["schema_name"], "lspr_device_inventory")
+        self.assertEqual(inventory_group_attrs["schema_version"], "1.0")
+        self.assertEqual(
+            inventory_columns,
+            ["label", "type", "role", "driver", "endpoint", "display_name", "model", "serial_number", "connected"],
+        )
+        self.assertEqual(
+            inventory_rows,
+            [
+                ["spectrometer_1", "spectrometer", "primary", "OceanSpectrometer", "USB0", "Ocean HR4000", "HR4000", "SN123", "true"],
+                ["pump_1", "pump", "", "RegloICCClient", "COM3", "", "", "", "false"],
+            ],
+        )
+
     def test_compression_metadata_and_filters_are_written(self) -> None:
         processing = ProcessingSettings()
         wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)

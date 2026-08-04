@@ -72,7 +72,7 @@ class IoMetadataTests(unittest.TestCase):
 
         self.assertEqual(metadata["schema_name"], "lspr_measurement")
         self.assertEqual(metadata["schema_major"], 6)
-        self.assertEqual(metadata["schema_minor"], 2)
+        self.assertEqual(metadata["schema_minor"], 3)
         self.assertEqual(metadata["app_name"], "Test App")
         self.assertEqual(metadata["app_version"], "9.8.7")
         self.assertEqual(metadata["started_at_utc"], "2026-01-02T03:04:05Z")

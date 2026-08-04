@@ -9,9 +9,9 @@ The shared implementation lives in `packages/lspr_io`.
 Recommended root attributes:
 
 - `schema_name = lspr_measurement`
-- `schema_version = 6.0`
+- `schema_version = 6.3`
 - `schema_major = 6`
-- `schema_minor = 0`
+- `schema_minor = 3`
 - `format_name = experiment_run`
 - `format_version = 6`
 - `app_name`
@@ -39,6 +39,10 @@ Recommended root attributes:
 - pump-plan rows in metadata
 - assignment tables for switch labels, valve labels/colors, and palette entries
 - the valve assignment table is unified as a single state/label/color table
+- optional concentration/concentration_unit/notes per switch port (`switch_solution_details`,
+  schema 6.3+), keyed by port to join against the switch-label assignment table
+- a device inventory snapshot at `/devices/inventory/devices` (schema 6.3+): one row per known
+  device (label, type, role, driver, endpoint, display_name, model, serial_number, connected)
 
 ## Raw Spectra
 

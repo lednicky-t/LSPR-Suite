@@ -14,6 +14,10 @@ import numpy as np
 
 from lspr_core import ExperimentPlan, SuiteIdentity, summarize_experiment_plan
 from .schema import (
+    LSPR_DEVICE_INVENTORY_FORMAT_NAME,
+    LSPR_DEVICE_INVENTORY_FORMAT_VERSION,
+    LSPR_DEVICE_INVENTORY_SCHEMA_NAME,
+    LSPR_DEVICE_INVENTORY_SCHEMA_VERSION,
     LSPR_EXPERIMENT_PLAN_DATASET_NAME,
     LSPR_MEASUREMENT_ASSIGNMENT_TABLES_GROUP_NAME,
     LSPR_MEASUREMENT_COLOR_PALETTE_ENTRIES_DATASET_NAME,
@@ -308,6 +312,27 @@ def write_processed_metrics_metadata(
     metrics_group.attrs["settings_schema_name"] = settings_schema_name
     metrics_group.attrs["settings_schema_version"] = settings_schema_version
     metrics_group.attrs["description"] = "Derived metrics and the processing configuration used to compute them."
+
+
+def write_device_inventory_metadata(
+    inventory_group: h5py.Group,
+    *,
+    schema_name: str = LSPR_DEVICE_INVENTORY_SCHEMA_NAME,
+    schema_version: str = LSPR_DEVICE_INVENTORY_SCHEMA_VERSION,
+    format_name: str = LSPR_DEVICE_INVENTORY_FORMAT_NAME,
+    format_version: int = LSPR_DEVICE_INVENTORY_FORMAT_VERSION,
+) -> None:
+    inventory_group.attrs["schema_name"] = schema_name
+    inventory_group.attrs["schema_version"] = schema_version
+    major_text, minor_text = str(schema_version).split(".", 1)
+    inventory_group.attrs["schema_major"] = int(major_text)
+    inventory_group.attrs["schema_minor"] = int(minor_text)
+    inventory_group.attrs["format_name"] = format_name
+    inventory_group.attrs["format_version"] = int(format_version)
+    inventory_group.attrs["description"] = (
+        "Snapshot of known devices (label/type/role/driver/endpoint/model/serial_number/"
+        "connected) taken when the measurement started."
+    )
 
 
 def write_processing_settings_metadata(
