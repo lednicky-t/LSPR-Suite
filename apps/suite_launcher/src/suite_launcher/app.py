@@ -9,9 +9,11 @@ import sys
 import tempfile
 import threading
 import ctypes
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Callable
 
 from platformdirs import user_config_dir
@@ -878,6 +880,11 @@ class MainWindow(QMainWindow):
         self._auto_launch_timer.setSingleShot(True)
         self._auto_launch_timer.timeout.connect(self._launch_pending_target)
         self._processes_by_key: dict[str, list[subprocess.Popen[object]]] = {}
+        # Populated on each launch, drained/cleared in _handle_process_exit once
+        # that launch's exit is reported (or the process outlives the "just
+        # crashed" window) - see _refresh_running_app_statuses.
+        self._process_launch_started_at: dict[str, float] = {}
+        self._process_output_tail: dict[str, deque[str]] = {}
         self._process_poll_timer = QTimer(self)
         self._process_poll_timer.setInterval(1000)
         self._process_poll_timer.timeout.connect(self._refresh_running_app_statuses)
@@ -1372,6 +1379,8 @@ class MainWindow(QMainWindow):
                 bufsize=1,
             )
             self._processes_by_key.setdefault(target.key, []).append(process)
+            self._process_launch_started_at[target.key] = perf_counter()
+            self._process_output_tail[target.key] = deque(maxlen=200)
             self._set_launch_progress(target.key, 70, "Running", f"{target.title} is starting up.")
             self._forward_process_output(process, target)
             self._mark_started(target)
@@ -1460,13 +1469,38 @@ class MainWindow(QMainWindow):
         for target in TARGETS:
             processes = self._processes_by_key.get(target.key, [])
             alive = [process for process in processes if process.poll() is None]
+            dead = [process for process in processes if process not in alive]
             if alive:
                 self._processes_by_key[target.key] = alive
             else:
                 self._processes_by_key.pop(target.key, None)
+            for process in dead:
+                self._handle_process_exit(target, process)
             card = self.cards.get(target.key)
             if card is not None:
                 card.set_running(bool(alive))
+
+    def _handle_process_exit(self, target: AppTarget, process: subprocess.Popen[object]) -> None:
+        """Surface an app that exited on its own shortly after this hub launched
+        it - e.g. the bundled interpreter itself failing to start. Without this,
+        _refresh_running_app_statuses silently flips the card back to "Launch"
+        with no indication anything went wrong, indistinguishable from the user
+        closing the app normally."""
+        started_at = self._process_launch_started_at.pop(target.key, None)
+        tail = list(self._process_output_tail.pop(target.key, ()))
+        if started_at is None:
+            return
+        returncode = process.returncode
+        if returncode in (0, None):
+            return
+        elapsed_s = perf_counter() - started_at
+        detail = "\n".join(tail[-40:]) if tail else "(no output captured)"
+        QMessageBox.critical(
+            self,
+            "App exited unexpectedly",
+            f"{target.title} exited {elapsed_s:.1f}s after launch with exit code {returncode}.\n\n"
+            f"Last output:\n{detail}",
+        )
 
     def _forward_process_output(self, process: subprocess.Popen[object], target: AppTarget) -> None:
         stream = process.stdout
@@ -1516,6 +1550,9 @@ class MainWindow(QMainWindow):
                     text = line.strip()
                     if text:
                         _maybe_emit_progress(text)
+                        tail = self._process_output_tail.get(target.key)
+                        if tail is not None:
+                            tail.append(text)
                     if _should_forward_line(line):
                         _console_write(f"[{target.title}] {line}")
             finally:

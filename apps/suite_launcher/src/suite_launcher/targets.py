@@ -34,8 +34,17 @@ def _venv_python(root: Path | None) -> tuple[Path, ...]:
     if root is None:
         return ()
     return (
+        # A dev-created venv (python -m venv) puts python.exe in Scripts/.
         root / ".venv" / "Scripts" / "python.exe",
         root / ".venv" / "bin" / "python.exe",
+        # The portable build's .venv is a full, self-contained Python install
+        # (see build_portable.ps1) copied wholesale, not a venv - python.exe
+        # sits at its own root, same layout as a normal Python installation.
+        # A venv's Scripts/python.exe is not relocatable (it depends on the
+        # base interpreter's DLL/stdlib living at the exact absolute path
+        # recorded in pyvenv.cfg's "home", which only exists on the machine
+        # that created it) - shipping a full install instead avoids that.
+        root / ".venv" / "python.exe",
     )
 
 
