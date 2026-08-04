@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from unittest.mock import patch
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
 
@@ -27,6 +28,7 @@ from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QStyleOptionViewItem, QTableView
 
+from lspr_app.device.reglo_icc import PUMP_DISPLAY_MAX_LENGTH
 from lspr_app.domain.pump_plan import ACTIVE_PUMP_CHANNELS, PumpPlanStep
 from lspr_app.gui.flow_plan_model import ExperimentPlanCommentDelegate, ExperimentPlanTableModel, _HighlightingCommentLineEdit
 
@@ -128,6 +130,11 @@ class CommentDelegateGlobalHighlightTests(unittest.TestCase):
 
 class HighlightingCommentLineEditTests(unittest.TestCase):
     def test_splits_live_while_text_fits_without_scrolling(self) -> None:
+        # Checks the actual paint decision (was the split-text drawing helper
+        # invoked, with the right text/limit) rather than sampling rendered
+        # pixel colors: font hinting/DPI differences between machines shift
+        # glyph pixels by a row or two, which made a pixel-color assertion
+        # here flaky across environments even when the highlight painted fine.
         editor = _HighlightingCommentLineEdit(highlight_active=True)
         editor.setGeometry(QRect(0, 0, 400, 24))
         editor.setText(_LONG_COMMENT)
@@ -135,8 +142,13 @@ class HighlightingCommentLineEditTests(unittest.TestCase):
 
         pixmap = QPixmap(editor.size())
         pixmap.fill()
-        editor.render(pixmap)
-        self.assertTrue(_has_overflow_color(pixmap))
+        with patch("lspr_app.gui.flow_plan_model._draw_split_comment_text") as draw_split:
+            editor.render(pixmap)
+
+        draw_split.assert_called_once()
+        _painter, _rect, text_arg, limit_arg, *_rest = draw_split.call_args.args
+        self.assertEqual(text_arg, _LONG_COMMENT)
+        self.assertEqual(limit_arg, PUMP_DISPLAY_MAX_LENGTH)
 
     def test_falls_back_to_native_rendering_when_text_would_scroll(self) -> None:
         editor = _HighlightingCommentLineEdit(highlight_active=True)
