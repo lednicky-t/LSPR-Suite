@@ -1,5 +1,10 @@
 name: release
 
+# Manual release path: push an annotated "vX.Y.Z" tag yourself (see
+# apps/suite_launcher/docs or apps/sLSPR/acq/docs/versioning.md for the
+# by-hand checklist) and this builds + publishes it. For releases that
+# happen automatically whenever an app changes, see auto-release.yml.
+
 on:
   push:
     tags:
@@ -10,56 +15,7 @@ permissions:
 
 jobs:
   build-and-publish:
-    runs-on: windows-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Verify tag matches suite_launcher version
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          $expected = $tag.TrimStart("v")
-          $versionFile = "apps/suite_launcher/src/suite_launcher/version.py"
-          $match = Select-String -Path $versionFile -Pattern '^APP_VERSION = "(.+)"$'
-          if (-not $match) {
-              throw "Could not find APP_VERSION in $versionFile."
-          }
-          $actual = $match.Matches[0].Groups[1].Value
-          if ($actual -ne $expected) {
-              throw "Tag $tag does not match APP_VERSION '$actual' in $versionFile. Bump APP_VERSION and commit before tagging."
-          }
-          Write-Host "Tag $tag matches APP_VERSION $actual."
-
-      - name: Create virtual environment and install dependencies
-        shell: pwsh
-        run: |
-          python -m venv .venv
-          .\.venv\Scripts\python.exe -m pip install --upgrade pip
-          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-          .\.venv\Scripts\python.exe -m pip install AMFTools
-
-      - name: Build portable bundle
-        shell: pwsh
-        run: .\apps\suite_launcher\build_portable.ps1
-
-      - name: Zip portable bundle
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          Compress-Archive -Path "dist\LSPR-Suite-Portable\*" -DestinationPath "LSPR-Suite-Portable-$tag.zip"
-
-      - name: Publish GitHub release
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $tag = "${{ github.ref_name }}"
-          gh release create $tag "LSPR-Suite-Portable-$tag.zip" --title "LSPR Suite $tag" --generate-notes
+    uses: ./.github/workflows/_build-and-publish.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

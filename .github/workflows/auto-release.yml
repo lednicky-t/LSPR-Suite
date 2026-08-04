@@ -1,0 +1,80 @@
+name: auto-release
+
+# Keeps the Suite bundle from going stale relative to the apps it ships.
+# Any push to main that touches an app, a shared package, or the pinned
+# dependency list gets an automatic release: patch-bump
+# apps/suite_launcher/src/suite_launcher/version.py (unless this push already
+# bumped it by hand, e.g. for a deliberate minor/major release - that value
+# is used as-is instead), tag it, and build+publish via _build-and-publish.yml.
+#
+# The `github.actor != 'github-actions[bot]'` guard stops the auto-bump
+# commit this workflow pushes from re-triggering itself.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "requirements.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  bump-and-tag:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version and create tag
+        id: version
+        shell: pwsh
+        run: |
+          $versionFile = "apps/suite_launcher/src/suite_launcher/version.py"
+          $match = Select-String -Path $versionFile -Pattern '^APP_VERSION = "(.+)"$'
+          if (-not $match) {
+              throw "Could not find APP_VERSION in $versionFile."
+          }
+          $current = $match.Matches[0].Groups[1].Value
+
+          $alreadyTagged = git tag --list "v$current"
+          if ($alreadyTagged) {
+              $parts = $current.Split(".")
+              if ($parts.Length -ne 3) {
+                  throw "Unexpected version format: $current"
+              }
+              $patch = [int]$parts[2] + 1
+              $next = "$($parts[0]).$($parts[1]).$patch"
+
+              (Get-Content $versionFile) -replace [regex]::Escape("APP_VERSION = `"$current`""), "APP_VERSION = `"$next`"" |
+                  Set-Content $versionFile -Encoding utf8
+
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add $versionFile
+              git commit -m "chore(release): auto-bump Suite Launcher to v$next [skip ci]"
+              git push
+              Write-Host "Auto-bumped v$current -> v$next"
+          } else {
+              $next = $current
+              Write-Host "APP_VERSION v$next was already bumped by hand in this push and has no tag yet; tagging as-is."
+          }
+
+          git tag -a "v$next" -m "LSPR Suite v$next (auto-release)"
+          git push origin "v$next"
+          "tag=v$next" >> $env:GITHUB_OUTPUT
+
+  build-and-publish:
+    needs: bump-and-tag
+    uses: ./.github/workflows/_build-and-publish.yml
+    with:
+      tag: ${{ needs.bump-and-tag.outputs.tag }}
+    secrets: inherit

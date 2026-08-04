@@ -1,0 +1,73 @@
+name: build-and-publish
+
+# Reusable workflow: builds the portable Suite bundle for a given release tag
+# and publishes it as a GitHub Release. Called by both release.yml (manual
+# tag push) and auto-release.yml (automatic bump-and-tag on push to main), so
+# the build/publish steps live in exactly one place.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify tag matches suite_launcher version
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          $expected = $tag.TrimStart("v")
+          $versionFile = "apps/suite_launcher/src/suite_launcher/version.py"
+          $match = Select-String -Path $versionFile -Pattern '^APP_VERSION = "(.+)"$'
+          if (-not $match) {
+              throw "Could not find APP_VERSION in $versionFile."
+          }
+          $actual = $match.Matches[0].Groups[1].Value
+          if ($actual -ne $expected) {
+              throw "Tag $tag does not match APP_VERSION '$actual' in $versionFile. Bump APP_VERSION and commit before tagging."
+          }
+          Write-Host "Tag $tag matches APP_VERSION $actual."
+
+      - name: Create virtual environment and install dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+          .\.venv\Scripts\python.exe -m pip install AMFTools
+
+      - name: Build portable bundle
+        shell: pwsh
+        run: .\apps\suite_launcher\build_portable.ps1
+
+      - name: Zip portable bundle
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          Compress-Archive -Path "dist\LSPR-Suite-Portable\*" -DestinationPath "LSPR-Suite-Portable-$tag.zip"
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ inputs.tag }}"
+          gh release create $tag "LSPR-Suite-Portable-$tag.zip" --title "LSPR Suite $tag" --generate-notes
