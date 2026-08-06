@@ -49,7 +49,7 @@ class FakeDeviceCommunicationService:
         self.default_command_success = True
         self.refresh_calls = 0
         self.port_refresh_data = PortRefreshData(
-            generation=0, pump_ports=[], valve_ports=[], selector_devices=[], amf_tools_available=True,
+            generation=0, ports_by_family={}, amf_tools_available=True,
         )
 
     def _record(self, name, *args, **kwargs):
@@ -229,9 +229,11 @@ class RunFullCycleTests(unittest.TestCase):
         service = FakeDeviceCommunicationService()
         service.port_refresh_data = PortRefreshData(
             generation=0,
-            pump_ports=[ControllerPort(device="COM3", description="Reglo", hwid="VID_265C&PID_0001")],
-            valve_ports=[ControllerPort(device="COM4", description="ItsyBitsy", hwid="VID_239A")],
-            selector_devices=[ControllerProbe(port="COM9", controller_type="amf-mswitch", model="RVMFS")],
+            ports_by_family={
+                PUMP: [ControllerPort(device="COM3", description="Reglo", hwid="VID_265C&PID_0001")],
+                SWITCH: [ControllerPort(device="COM4", description="ItsyBitsy", hwid="VID_239A")],
+                SELECTOR: [ControllerProbe(port="COM9", controller_type="amf-mswitch", model="RVMFS")],
+            },
             amf_tools_available=True,
         )
         service.probe_endpoint_result = ProbeResult(endpoint="COM4", detected_type="itsybitsy-32u4-valve", driver="itsybitsy-32u4-valve", identity={"model": "ItsyBitsy"}, success=True, error=None, duration_ms=1.0)
@@ -489,9 +491,9 @@ class RunFullCycleSkipsDisabledDeviceTests(unittest.TestCase):
         service = FakeDeviceCommunicationService()
         service.port_refresh_data = PortRefreshData(
             generation=0,
-            pump_ports=[],
-            valve_ports=[],
-            selector_devices=[ControllerProbe(port="COM9", controller_type="amf-mswitch", model="RVMFS")],
+            ports_by_family={
+                SELECTOR: [ControllerProbe(port="COM9", controller_type="amf-mswitch", model="RVMFS")],
+            },
             amf_tools_available=True,
         )
         with patch.object(dl, "load_enabled_devices", return_value={PUMP: True, SWITCH: True, SELECTOR: False}):

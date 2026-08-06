@@ -1,0 +1,677 @@
+# LSPRimaging Acquisition — Architecture & Build Plan
+
+Status: **planning document, no code written yet**. This is the design the maintainer
+signed off on before implementation starts. Update it as decisions change; don't let it
+drift out of sync with what actually gets built.
+
+This document covers two things that have to happen together:
+
+1. Extracting the modality-agnostic parts of singleLSPR Acquisition (`apps/sLSPR/acq`)
+   into a shared package, so a bug fix in fluidics/experiment-control/sensorgram/HDF5
+   only has to happen once.
+2. Building the new `LSPRimaging Acquisition` app (`apps/LSPRi/acq`) on top of that
+   shared shell, with its own camera + illumination device layer, image/ROI panels,
+   and extinction-spectrum-to-sensorgram pipeline.
+
+Decisions already made (see prior conversation, not repeated here in full):
+- Separate app, not a mode bolted onto sLSPR acq — but sharing a real code layer, not
+  duplicating it.
+- Shared shell extracted **before** the new app is built against it (safer sequencing
+  than build-then-extract).
+- v1 targets **SW-triggered** acquisition only (explicit set-wavelength → grab-frame
+  sequencing). HW-triggered (TTL sync) is a deliberate fast-follow once SW-triggered
+  timing is measured for real.
+- A camera+ROI throughput spike (Phase 0 below) runs **before** any of this is built,
+  to replace guesses about 16 Hz/5 MP feasibility with real numbers.
+- ROI domain types and vectorized mask/mean extraction are **ported** (copied and
+  adapted) from `apps/LSPRi/eva`, not imported — that app stays fully decoupled.
+- The Lori control SW audit (buffer/desync root cause: synchronous save sharing a
+  thread with live display) is a concrete "don't repeat this" reference for the new
+  acquisition worker design (§8).
+
+---
+
+## 1. Goals and non-goals
+
+**Goals for v1:**
+- Control a multispectral illumination source (LCTF or LED array) and a camera
+  (Basler first) through a common device abstraction that doesn't hardcode a specific
+  vendor pairing.
+- Sweep a configured wavelength list, assemble a spectral cube, extract per-ROI
+  extinction spectra, compute a metric, and feed a sensorgram — continuously, for the
+  duration of an experiment.
+- Run the existing pump/valve experiment-plan machinery alongside acquisition,
+  unmodified in behavior, reused rather than duplicated.
+- Record raw frames losslessly without the live view falling behind (the Lori SW bug,
+  avoided by construction).
+
+**Explicit non-goals for v1** (do not build these yet):
+- HW-triggered (TTL sync) acquisition.
+- Chromatic correction across wavelengths.
+- Automated ROI/spot detection (manual ROI placement is enough for v1).
+- Any camera vendor beyond Basler (IDS comes after the abstraction is proven).
+
+---
+
+## 2. Ecosystem change
+
+```
+LSPR Suite
+├── apps/
+│   ├── sLSPR/acq     — spectrometer-specific acquisition, now built on the shell
+│   ├── sLSPR/eva
+│   ├── LSPRi/acq     — NEW: camera + illumination acquisition, built on the shell
+│   └── LSPRi/eva
+└── packages/
+    ├── lspr_core
+    ├── lspr_io       — HDF5 schema extended with image + ROI groups (§10)
+    ├── lspr_ui
+    └── lspr_acq_shell — NEW: fluidics device framework, experiment-control runtime,
+                          sensorgram widget, session/HDF5-writer base, diagnostics
+```
+
+`docs/architecture/overview.md`'s dependency rule ("`lspr_core`, `lspr_io`, `lspr_ui`
+must not depend on each other or on any app package") is about those three specific
+packages being pairwise-independent. `lspr_acq_shell` is a new, fourth shared package
+that legitimately depends on all three — it's shared *application* code (Qt widgets,
+device runtime), not a domain/IO/theme primitive, so it doesn't belong in any of the
+existing three. Update `docs/architecture/general/dependency-matrix.md` to record this
+exception explicitly when Phase 1 starts, so it doesn't look like an accidental
+violation later.
+
+---
+
+## 3. Phase 0 — Performance validation spike
+
+**Do this first, standalone, before touching any app architecture.** Goal: replace the
+16 Hz / 5 MP assumption with a measured number, and find out whether the bottleneck (if
+any) is capture, frame transport, or per-ROI compute.
+
+Location: a throwaway script, not part of any app — e.g.
+`C:\Users\Admin\AppData\Local\Temp\claude\...\scratchpad` or a personal scratch folder,
+explicitly **not** committed into `apps/LSPRi/acq` since that doesn't exist yet.
+
+What it measures:
+1. Sustained Basler capture rate via `pypylon` at the target resolution/pixel format,
+   free-running (no illumination switching yet) — establishes the camera's own ceiling.
+2. Per-frame cost of the ROI extraction primitive (cached boolean mask + `image[mask].mean()`,
+   the pattern already proven fast in LSPRimaging eva's `processing/roi.py`) at a
+   realistic ROI count (ask: how many sample + reference ROIs do you actually expect
+   per experiment? This number changes the compute budget a lot — 5 ROIs and 50 ROIs
+   are different engineering problems).
+3. Combined: capture + ROI extraction + a trivial extinction calculation, sustained for
+   e.g. 30 seconds, watching for frame drops or growing backlog.
+
+Output of this phase: a short note (append it to this document under a new "Phase 0
+results" heading) stating achieved fps, per-frame ROI-compute latency at your real ROI
+count, and whether a plain single-threaded loop suffices or a producer/consumer split
+(camera thread → processing thread, like sLSPR acq's pattern) is needed even for v1.
+
+This also answers a design question for §8: if per-ROI compute is cheap (likely, since
+it's vectorized numpy), the sweep loop can plausibly stay simple; if it's not, the
+processing stage needs its own thread from the start.
+
+---
+
+## 4. Phase 1 — Extract `lspr_acq_shell`
+
+### 4.1 Ground truth: two in-repo plans this phase must build on, not duplicate
+
+Before writing anything, read these — they change how this phase should be sequenced:
+
+- **`apps/sLSPR/acq/docs/experiment-control/CODEX_EXPERIMENT_CONTROL_REUSE_SPLIT_V49.md`**
+  — an existing plan for exactly the experiment-control extraction this phase needs,
+  already partially implemented. It specifies a module split (shared visualization /
+  runtime controller / device backend / IO), a capability-flag system
+  (`devices_enabled`, `runtime_control_enabled`, `plan_import_export_enabled`,
+  `show_runtime_buttons`, `show_device_columns`, `show_device_status_strip`,
+  `show_step_navigation_controls`), and a public API
+  (`set_capabilities`/`load_plan`/`save_plan`/`set_runtime_state`/`set_connected_devices`/
+  `request_run`/`request_stop`/`request_pause`/`request_hold`/`request_step_next`/
+  `request_step_previous`/`request_step_jump`). It targets reuse across sLSPR
+  acquisition, sLSPR evaluation, and LSPRi evaluation — which already implies these need
+  to live somewhere importable by separate git submodules, i.e. a shared package, even
+  though the document itself doesn't name one. **This phase is "finish V49, and land the
+  result in `lspr_acq_shell` instead of inside `apps/sLSPR/acq`."**
+  Confirmed already in progress: `gui/experiment_control_backend.py` exists with an
+  `ExperimentControlBackend` `Protocol` (`capabilities()`, `device_states()`,
+  `is_device_connected()`, `refresh_devices()`, `send_command()`, `connect_device()`,
+  `disconnect_device()`), a `NullExperimentControlBackend`, and
+  `AcquisitionExperimentControlBackend` (sLSPR's concrete implementation, which wraps
+  `ExperimentControlWindow` and — per its own docstring — is not yet the full split:
+  "window's lifecycle operations... remain window-owned until the full V49 split
+  lands"). `experiment_control_capabilities.py` and `experiment_control_controller.py`
+  also already exist as separate files. The backend Protocol is exactly the seam LSPRi
+  acq will implement its own concrete backend against (§7 below) — don't redesign it,
+  finish extracting it.
+
+- **`apps/sLSPR/acq/docs/device-layer/DEVICE_LAYER_AUDIT_2026.md`** and
+  **`CODEX_DEVICE_LAYER_NUMBERED_LABELS_V51_IMPLEMENTATION.md`** — the fluidics device
+  layer's real incident history. Read the whole audit file, not a summary — it documents
+  roughly 30 real bugs found and fixed against real hardware in the last few weeks
+  (dated through 2026-07-23), several of them genuinely subtle: an AMF vendor SDK that
+  isn't thread-safe (fixed by routing all hardware I/O through a single-lane
+  `device_io_pool()`), a two-lock design in `DeviceCommunicationService` (`_state_lock`
+  for fast reads, `_lock`/`_device_lock` for hardware I/O, one-way nesting only, to
+  avoid both deadlock and a GUI freeze bug that already happened once), per-instance
+  port-claim ownership (`self._claim_owner = f"{controller_type}:{id(self)}"`, fixed
+  after two different device types got this wrong in two different ways), and canonical
+  device labels resolved via `ensure_device_profile()` rather than
+  `find_or_create_profile()` (fixed after a stale duplicate profile silently stole a
+  real device's identity — incident #31, "selector silently ignored plan-step move
+  commands"). **This is not stable, quiescent code.** `DeviceLifecycleController`
+  (`device_lifecycle.py`, pure Python, no Qt) plus `DeviceCommunicationService`
+  (`device_manager.py`) are, as of the rewrite documented there, the single owner of
+  discovery/connect/disconnect for spectrometer/pump/valve/selector — a real, hard-won
+  architecture that took multiple rounds of real-hardware testing to get right. Treat
+  it accordingly (§4.2).
+
+  Also relevant: this audit explicitly discussed and **dropped** simulated
+  pump/valve/selector devices, for reasons specific to those devices — no Windows
+  virtual-COM-port pairing without an unsigned kernel driver, and the AMF selector
+  bypasses `pyserial` entirely via a proprietary SDK. **This decision does not transfer
+  to Camera/IlluminationSource** — see §4.4.
+
+### 4.2 Risk framing: sequence the fragile piece last, move it verbatim, generalize separately
+
+Given §4.1, the fluidics extraction is the highest-risk item in this phase, not a
+routine file move. Two rules:
+
+1. **Extract `device_manager.py`, `device_lifecycle.py`, `communication_models.py`,
+   `serial_controllers.py`, `connection_registry.py`, and `port_assignments.py` as close
+   to a mechanical relocation as possible** — same logic, same two-lock discipline, same
+   single-lane `device_io_pool()`, same per-instance `_claim_owner` pattern, same
+   `ensure_device_profile()`-based canonical-label resolution. The goal of this step is
+   "still works exactly like before, just importable from `lspr_acq_shell`" — verified
+   against real pump/valve/selector hardware afterward, not rewritten along the way.
+2. **Do the registry generalization (the actual fix for the hardcoded `PUMP`/`SWITCH`/
+   `SELECTOR` triad, so `Camera`/`IlluminationSource` can register into the same system)
+   as a separate, distinct, reviewed step afterward** — once the verbatim move is
+   confirmed stable. Don't bundle "move this fragile code" and "change this fragile
+   code's structure" into one commit; §4.5 below is that second step.
+3. Sequence the fluidics move **last** among the shell-extraction items (after settings,
+   diagnostics, the HDF5-writer plumbing, sensorgram/session, and experiment-control) —
+   by the time you get to it, the extraction pattern (how imports move, how tests get
+   re-homed, how to verify against sLSPR acq afterward) will already be practiced on
+   lower-risk code, and there will be a working shell to extract it into rather than
+   being the first, riskiest thing moved into an empty package.
+
+### 4.3 Extraction order
+
+After **each** item: run `python -m pytest tests/`, launch sLSPR acq (Full and
+Simulation profiles), and confirm nothing regressed before moving to the next item.
+
+1. **Settings persistence pattern** — `lspr_settings.json`-style JSON read/write helpers
+   currently in sLSPR acq's `storage/app_config.py`. Small, no device coupling.
+2. **Diagnostics** — `gui/runtime_diagnostics.py`'s profile system (off/normal/debug/deep)
+   and the launch-profile env-var plumbing already in `lspr_core` (`LAUNCH_PROFILE_*`).
+   Mostly already shared-package-shaped; confirm it has zero sLSPR-specific assumptions.
+3. **HDF5 async-writer base** — the threading/queue plumbing in `storage/hdf5_export.py`'s
+   `AsyncHDF5MeasurementWriter` (tag-dispatch `append`/`append_metrics`/etc., same-process
+   `threading.Thread` + `queue.Queue`). This part was already noted as closer to reusable
+   than the concrete schema in the earlier audit — extract the plumbing, leave the
+   spectrum-specific dataset/group code behind in sLSPR acq.
+4. **Sensorgram plotting + session/run management** — `gui/plot_controller.py`'s
+   sensorgram half, `gui/sensorgram_secondary_axis.py`, and the run/session bookkeeping.
+   Already curve-data-shaped (time + metric value), not spectrum-shaped, so this should
+   be a relatively clean lift, and doing it before experiment-control means the shell
+   already has a plotting surface to wire the experiment-control's `set_runtime_state`
+   events into.
+5. **Finish V49 (experiment-control)** — per §4.1, this is largely already scoped:
+   - Move `experiment_control_capabilities.py` and `experiment_control_backend.py`
+     (the `Protocol` + `NullExperimentControlBackend`) as-is — `lspr_acq_shell`'s owned
+     seam. `AcquisitionExperimentControlBackend` stays behind in sLSPR acq (it's the
+     concrete sLSPR-specific implementation); LSPRi acq will write its own concrete
+     class against the same Protocol (§7).
+   - Split the remaining satellite files per V49's own proposed destinations
+     (`experiment_control_panel.py`/`_view.py`/`_controller.py`/`_io.py`) — the plan
+     table, timeline, step editor, import/export controls, layout state, and theme
+     application. From the current file set, `_controller.py`, `_editing.py`,
+     `_step_runner.py`, `_runtime.py`, `_timeline.py`, `_table.py`, `_plan_view.py`,
+     `_widgets.py`, `_dialogs.py`, `_builders.py`, `_export.py`, `_import.py` are the
+     source material — none of them, on inspection, hold spectrometer-specific state;
+     this subsystem is genuinely about pump/valve plan execution, not measurement data.
+   - `experiment_control_window.py` becomes, per V49's own recommendation, "a thin
+     app-specific composition layer" in each app — sLSPR acq keeps a thin wrapper;
+     LSPRi acq gets its own thin wrapper instantiating the same shared panel with its
+     own backend and capability set.
+   - **Flag and resolve, don't silently carry forward**: `AcquisitionExperimentControlBackend
+     .device_states()` iterates literal keys `("pump", "valve", "mswitch")`, but
+     `device_types.py`'s canonical constants (post-V51 numbered-label migration) are
+     `PUMP="pump"`, `SWITCH="switch"`, `SELECTOR="selector"` — `"valve"`/`"mswitch"`
+     don't match `SWITCH`/`SELECTOR` directly. Check whether `_normalize_device_type()`'s
+     legacy-alias handling actually covers this (the audit's migration-alias pattern
+     suggests it might) before assuming it's fine; resolve one way or the other as part
+     of this extraction rather than moving an unverified inconsistency into the shared
+     package.
+6. **Fluidics device framework** — verbatim move per §4.2, rule 1. Verify against real
+   pump/valve/selector hardware before proceeding to §4.5.
+
+### 4.4 Simulated devices — a different decision for imaging than for fluidics
+
+The fluidics "no simulated devices" call (§4.1) was for reasons specific to pump/valve/
+selector hardware, neither of which applies to Camera/IlluminationSource:
+
+- VariSpec and the Lori-protocol LED array are both plain ASCII-over-serial — a
+  `FakeSerial` test double at the `pyserial` boundary (the same idea the device-layer
+  audit considered and rejected *only* because AMF bypasses `pyserial` entirely) is
+  realistic here and should be built for both.
+- Basler's pylon SDK ships an emulated-camera device, enabled via the `PYLON_CAMEMU`
+  environment variable — worth using directly in `SimulatedCamera` if it behaves as
+  documented; confirm against the actually-installed pylon version before relying on
+  it, since this hasn't been verified in this environment.
+
+So `apps/LSPRi/acq`'s device layer should follow the `SimulatedSpectrometer` pattern
+sLSPR acq already uses for its spectrometer (§11), even though the fluidics layer in the
+same app deliberately does not have simulated pump/valve/selector devices. That's not an
+inconsistency to resolve — it's the correct call in both cases, for different reasons.
+
+### 4.5 The registry generalization (after §4.3 item 6 is verified stable)
+
+Concrete before/after, using the exact current shapes:
+
+- **Before**: `PortRefreshData(generation, pump_ports, valve_ports, selector_devices,
+  amf_tools_available)` — a frozen dataclass with fixed fields
+  (`communication_models.py:47-53`). `DEVICE_ORDER: tuple[str, ...] = (PUMP, SWITCH,
+  SELECTOR)` (`device_lifecycle.py:47`), and `_discover_and_connect()`
+  (`device_lifecycle.py:431-436`) is a three-way `if device_key == PUMP: ... if
+  device_key == SWITCH: ... else: # selector` dispatch to
+  `_discover_and_connect_pump`/`_discover_and_connect_valve`/`_discover_and_connect_selector`.
+- **After**: `PortRefreshData` carries `ports_by_family: dict[str, list[object]]` instead
+  of three named fields. `DEVICE_ORDER` becomes a registration list populated by a
+  `register_device_family(key: str, discover_and_connect: Callable[[Sequence[object], EmitFn], DeviceLifecycleEvent])`
+  call per family, made once at controller construction — pump/switch/selector register
+  through the same call new families (camera, illumination) will use, so no new
+  hardcoded branches are needed for Phase 2's device layer.
+- **Preserve exactly, do not simplify away**: the two-lock discipline in
+  `DeviceCommunicationService` (one-way nesting only — the I/O lock may acquire the
+  state lock, never the reverse); the single-lane `device_io_pool()` requirement for any
+  vendor SDK not proven thread-safe; per-instance `_claim_owner = f"{type}:{id(self)}"`;
+  and canonical-role resolution via `ensure_device_profile()` rather than
+  `find_or_create_profile()` for any device this app treats as a fixed singleton role
+  (exactly the bug class in incident #31 — a stale duplicate profile silently owning
+  the real device under the wrong label — would recur for Camera/IlluminationSource if
+  this rule isn't followed).
+- Whether Camera/IlluminationSource in LSPRi acq need their **own** single-lane pool or
+  can share `device_io_pool()`'s pattern is a decision, not an assumption: they're
+  unrelated hardware in a different app/process from sLSPR's fluidics, so a separate
+  pool is the natural default — but if Phase 0's spike or early driver testing shows
+  `pypylon` or the serial drivers misbehave under concurrent access (the same class of
+  problem the AMF SDK had), apply the same defensive single-lane pattern rather than
+  assuming "simpler protocol" means "thread-safe."
+
+After Phase 1, sLSPR acq should be **functionally identical** to before, just assembled
+from `lspr_acq_shell` + its own spectrometer-specific device/domain/panel code, verified
+against real hardware, not just the test suite. That equivalence is the acceptance
+criterion for this phase — not a rewrite, a relocation (plus one deliberate, separately
+reviewed generalization step at the very end).
+
+---
+
+## 5. Phase 2 — New app scaffold: `apps/LSPRi/acq`
+
+Mirrors sLSPR acq's package layout so the pattern stays familiar:
+
+```
+apps/LSPRi/acq/
+├── pyproject.toml          — depends on lspr_core, lspr_io, lspr_ui, lspr_acq_shell
+├── src/main.py
+└── src/lspri_acq_app/
+    ├── app.py
+    ├── device/
+    │   ├── camera_base.py          — Camera ABC (§6)
+    │   ├── basler_camera.py        — pypylon implementation
+    │   ├── simulated_camera.py     — for tests, mirrors sLSPR's SimulatedSpectrometer
+    │   ├── illumination_base.py    — IlluminationSource ABC (§6)
+    │   ├── variSpec_lctf.py        — VariSpec serial driver, from the manual
+    │   ├── lori_led_array.py       — LED-array driver, protocol from Lori SW audit
+    │   └── simulated_illumination.py
+    ├── domain/
+    │   ├── models.py               — Frame, SpectralCube, ImagingAcquisitionSettings (§9)
+    │   ├── roi.py                  — AreaRoi/AreaRoiGroup, ported from LSPRi eva
+    │   └── extinction.py           — absorbance_from_means, metric/fit functions
+    ├── processing/
+    │   └── roi_extraction.py       — cached-mask vectorized ROI mean extraction, ported
+    ├── gui/
+    │   ├── main_window.py          — assembles shell panels + new imaging panels
+    │   ├── image_view_panel.py
+    │   ├── roi_panel.py
+    │   └── image_processing_panel.py  — crop/rotate/background-flatten only, v1
+    └── storage/
+        └── image_writer.py         — extends lspr_io's HDF5 schema (§10)
+```
+
+Launcher wiring: `apps/suite_launcher/src/suite_launcher/targets.py` already has the
+`lspri_acq` `AppTarget` (currently `enabled=False`, `note="Coming soon."`). Once the app
+has a working entry point, flip `enabled=True` and point `root_candidates`/`script` at
+the real paths — no new launch-profile mode needed, this reuses the existing card.
+
+---
+
+## 6. Device layer
+
+Two ABCs, registered into the generalized device registry from Phase 1 §4 as new
+families alongside `PUMP`/`SWITCH`/`SELECTOR`.
+
+```python
+class Camera(ABC):
+    def open(self) -> None: ...
+    def close(self) -> None: ...
+    def configure(self, settings: CameraSettings) -> None: ...  # exposure, gain, pixel format
+    def acquire_frame(self, timeout_ms: int) -> Frame: ...       # single synchronous grab, v1
+    def device_name(self) -> str: ...
+    def capabilities(self) -> CameraCapabilities: ...            # resolution, max fps, trigger modes
+
+class IlluminationSource(ABC):
+    def open(self) -> None: ...
+    def close(self) -> None: ...
+    def set_wavelength(self, nm: float) -> None: ...
+    def current_wavelength(self) -> float | None: ...
+    def wavelength_range(self) -> tuple[float, float] | None: ...   # None for discrete-channel devices
+    def settle_time_ms(self) -> float: ...                          # how long to wait after set_wavelength
+    def device_name(self) -> str: ...
+```
+
+**Important asymmetry discovered from the two real protocols available**: VariSpec is
+*continuously tunable* (`W <nm>`, any value in range) while the Lori LED array is
+*discrete-channel* (`CONF_LED_CURRENT=<channel>,<value>` — a fixed set of LED channels,
+each with a nominal wavelength, no continuous tuning). `set_wavelength(nm)` on a
+channel-based device should resolve to "nearest configured channel," with the concrete
+driver owning a channel→nm table. Don't design the ABC assuming continuous tuning
+everywhere — that would misrepresent how LED arrays actually work.
+
+### 6.1 Registering into the generalized device registry
+
+LSPRi acq gets its **own** `DeviceCommunicationService`/`DeviceLifecycleController`
+instance (imported from `lspr_acq_shell`, post-§4.5 generalization) — not a shared
+instance with sLSPR acq, since these are separate app processes potentially running on
+different host PCs with different attached hardware. That instance registers **five**
+device families through the same `register_device_family()` call: `PUMP`, `SWITCH`,
+`SELECTOR` (unchanged, reused as-is if this app also drives fluidics — confirm this
+against your actual setup, since the plan so far assumes it does, per the original
+request to reuse "already implemented flow control system"), plus new `CAMERA` and
+`ILLUMINATION` families. Each new family's `discover_and_connect` callback follows the
+same shape as the existing pump/valve/selector ones (probe candidates, rank them,
+connect the best match, emit `DeviceLifecycleEvent`s) — `Camera`/`IlluminationSource`
+implementations plug into lifecycle management (BUSY state during a sweep, canonical
+label resolution via `ensure_device_profile()`, single-lane pool if warranted per §4.5's
+last point) for free, rather than needing their own bespoke connect/disconnect code path.
+
+### 6.2 Implementing LSPRi acq's `ExperimentControlBackend`
+
+Per §4.3 item 5, `ExperimentControlBackend` (the `Protocol` from `lspr_acq_shell`) is
+already generic — `device_key: str` isn't hardcoded to fluidics roles in the interface
+itself, only in sLSPR's concrete `AcquisitionExperimentControlBackend`. LSPRi acq writes
+its own concrete class (e.g. `ImagingExperimentControlBackend`) that:
+- Implements `device_states()` by iterating whichever fluidics device keys this app's
+  `DeviceCommunicationService` instance actually has registered (pump/switch/selector,
+  if reused) — camera/illumination status is a separate concern, surfaced through the
+  image-view/ROI panels' own status display, not through the experiment-control panel,
+  since that panel's job (per V49) is fluidics plan execution, not imaging device state.
+- Sets `ExperimentControlCapabilities` appropriately for an acquisition app (full
+  runtime controls, device columns, status strip — the same capability profile sLSPR
+  acq uses, not the restricted evaluation-app profile V49 also defines).
+- Delegates `send_command`/`connect_device`/`disconnect_device` to this app's own
+  service instance, exactly mirroring `AcquisitionExperimentControlBackend`'s shape.
+
+**VariSpec LCTF driver** (`variSpec_lctf.py`) — protocol is fully specified in the
+manual you provided (`1794348.pdf`, now worth saving into
+`apps/LSPRi/acq/docs/manuals/` once the app exists, matching sLSPR acq's
+`docs/manuals/` convention):
+- USB-virtual-COM, ASCII, `<c/r>` terminated, one-letter commands.
+- Startup: filter self-initializes on power-up (<1s for current-gen USB units); issue
+  `I 1` only if idle >8h or temperature drifted >3°C (per manual, §"Initialize").
+- Use **Brief format** (`B 1`) to cut per-command overhead — the manual explicitly
+  describes this as existing for exactly this purpose.
+- `W <nm> <cr>` to tune; `W ? <cr>` to query current wavelength (confirms tuning
+  completed — poll or just trust the documented 50-150ms response time and the `!`
+  busy-check character before declaring settled).
+- Error handling: after any command, an error puts the Status LED red and records a
+  code (Table 5 in the manual) queryable via `R ?`; clear with `R 1`. The driver should
+  surface this as a raised exception with the decoded error meaning, not swallow it.
+- `settle_time_ms()` → 50ms for VIS-range filters, 150ms for NIR-range, per the
+  manual's operating specifications table — read the actual model's spec rather than
+  hardcoding one value.
+
+**LED-array driver** (`lori_led_array.py`) — protocol reconstructed from the audited
+Lori SW source (`Form1.cs` "LED driver control" region), two serial ports (`MASTER`/`SLAVE`):
+- `CONF_LED_CURRENT=<channel>,<value_mA>` — set a channel's drive current.
+- `CONF_LED_CURRENT_LIMIT=<channel>,<limit_mA>` — safety ceiling per channel.
+- `CONF_STEP=<ch>,<ch>,<delay>,<pulse>` — timing config (appears to configure per-channel
+  pulse delay/width; confirm exact semantics before relying on it — this was inferred
+  from usage, not from a spec document).
+- `START_EXTERN_TRIGGERED_MASTER`/`START_EXTERN_TRIGGERED_SLAVE`, `STOP` — this
+  existing system is actually HW-triggered by design (LEDs step on an external pulse).
+  For v1's SW-triggered mode, the new driver should NOT use this trigger mode — issue a
+  one-shot pulse/enable per channel under direct software control instead. Confirm this
+  is possible with the real controller (may need a different command not visible in the
+  decompiled subset) before committing to it.
+- This driver is explicitly a **second reference implementation**, not necessarily the
+  production driver for whatever LED hardware you actually pair with the new app later
+  — its value here is validating that the `IlluminationSource` ABC works for a
+  discrete-channel device, not VariSpec-shaped continuous tuning alone.
+
+**Generic LED controller** — placeholder only until you provide the protocol doc for
+the actual device being paired with this build. Don't guess at its command set.
+
+**Basler camera driver** (`basler_camera.py`) — `pypylon` (confirmed installed).
+Straightforward: `pylon.TlFactory`, `InstantCamera`, `GrabOne`/`RetrieveResult` for v1's
+synchronous single-frame acquire. Grayscale per your hardware — request `Mono8`/`Mono12`
+pixel format explicitly rather than trusting a default.
+
+---
+
+## 7. Domain model
+
+```python
+@dataclass(slots=True)
+class Frame:
+    image: np.ndarray            # 2D grayscale, dtype matches camera bit depth
+    wavelength_nm: float
+    acquired_at: datetime
+    metadata: dict
+
+@dataclass(slots=True)
+class SpectralCube:
+    frames: list[Frame]          # one per swept wavelength, in sweep order
+    cube_index: int               # increments once per completed sweep
+    started_at: datetime
+    completed_at: datetime
+
+@dataclass(slots=True)
+class ImagingAcquisitionSettings:
+    wavelengths_nm: list[float]   # the sweep list
+    exposure_us: float
+    gain: float | None
+    settle_time_override_ms: float | None   # None = use illumination.settle_time_ms()
+
+@dataclass(slots=True)
+class AbsorbanceSpectrumResult:
+    roi_id: int
+    wavelengths_nm: np.ndarray
+    absorbance: np.ndarray
+    cube_index: int
+```
+
+`AreaRoi`/`AreaRoiGroup` — ported verbatim (they're already Qt-free `@dataclass(slots=True)`)
+from `apps/LSPRi/eva/src/lspr_imaging_app/domain/models.py`. Use the current names, not
+the `DetectedSpot`/`SpotGroup` aliases — that rename is still in-progress in the source
+app, no reason to import the legacy names into a new app.
+
+---
+
+## 8. Acquisition pipeline (v1, SW-triggered)
+
+This is where the Lori SW bug is the explicit design constraint: **saving must never
+share a thread with anything that has to keep pace with the next frame.**
+
+```
+Sweep controller thread (one per running experiment):
+  for wavelength in acquisition_settings.wavelengths_nm:
+      illumination.set_wavelength(wavelength)
+      sleep(settle_time_ms)
+      frame = camera.acquire_frame(timeout_ms=...)
+      cube_builder.add(frame)
+  cube = cube_builder.finalize()          # one SpectralCube
+  processing_queue.put_latest(cube)        # display/eval — drop stale, like sLSPR acq's rule
+  save_queue.put(cube)                     # lossless — dedicated writer thread, own queue
+
+Save writer thread (dedicated, like the Lori SW fix):
+  for cube in save_queue:                 # GetConsumingEnumerable-equivalent, drains on shutdown
+      write_cube_to_hdf5(cube)             # never blocks the sweep controller
+
+Processing thread (separate from both):
+  for cube in processing_queue:            # latest-only — a slow processing cycle should
+      for roi_pair in configured_rois:      # skip stale cubes, not queue them up
+          spectrum = extract_roi_spectrum(cube, roi_pair)   # cached-mask vectorized means
+          metric = compute_metric(spectrum)  # centroid / peak / fit
+          sensorgram.append_point(roi_pair.id, cube.completed_at, metric)
+      display.show_latest(cube)             # image view — latest frame of the cube, not every frame
+```
+
+Three independent threads/queues, matching sLSPR acq's proven pattern (separate
+acquisition/processing, latest-only display, lossless recording queue) — but unlike
+sLSPR acq's current implementation, **do not** route the lossless queue through
+`multiprocessing.Queue` pickling from the start. Image-sized payloads make that
+transport choice expensive (audited finding: pickling a 5MP frame repeatedly through
+`mp.Queue` doesn't scale the way it does for KB-sized spectra). Start with same-process
+`threading.Thread` + `queue.Queue` (cheaper for in-process numpy arrays, no pickling)
+and only move to shared memory / a separate process if Phase 0's measurements show the
+GIL contention between capture and processing actually matters in practice — don't
+build the more complex version speculatively.
+
+`put_latest` for the processing queue — reuse or reimplement the same "replace pending
+item instead of enqueueing" pattern documented in sLSPR acq's `gui/workers.py`
+(`_queue_put_latest`) — this is exactly the "lossy is OK for display, never for raw
+recording" rule from `runtime_pipeline_architecture.md`, applied to cubes instead of
+spectra.
+
+---
+
+## 9. Storage: HDF5 schema extension
+
+Extend `lspr_io`'s schema (the mature, versioned one already used by sLSPR acq —
+`LSPR_MEASUREMENT_SCHEMA_VERSION` — not LSPRi eva's separate JSON-integer convention).
+New groups, additive (minor version bump per the suite's HDF5 contract in
+`docs/schemas/hdf_standard.md`):
+
+- `/raw/cubes/{cube_index}/frames` — dataset shaped `(n_wavelengths, height, width)`,
+  `maxshape=(None, height, width)` is wrong here since each cube is one append unit —
+  append along a cube axis instead: overall dataset `(None, n_wavelengths, height, width)`,
+  chunked per-cube for compressed sequential writes.
+- `/raw/cubes/{cube_index}/wavelengths_nm` — the actual wavelength for each frame in
+  that cube (should match `wavelengths_nm` in settings, but record what was actually
+  achieved, not just requested — if a `set_wavelength` call errors mid-sweep, this is
+  where that's visible later).
+- `/processed/roi_definitions` — `AreaRoi`/`AreaRoiGroup` snapshot at experiment start.
+- `/processed/absorbance_spectra/{roi_id}` — `(None, n_wavelengths)`, appended once per
+  completed cube.
+- `/processed/sensorgram/{roi_id}` — `(None, 2)` (timestamp, metric value), same shape
+  family as sLSPR acq's existing sensorgram storage.
+
+Write via the extracted async-writer plumbing from Phase 1 §4 item 3 — new tags
+(`"cube"`, `"roi_definitions"`) dispatched the same way `"append"`/`"metrics"` already
+are.
+
+---
+
+## 10. GUI panels
+
+- **Image view**: live display, latest-frame-of-latest-cube only (never blocks on the
+  processing/save threads). A `pyqtgraph.ImageView`-based widget is a reasonable
+  starting point for a fast-updating grayscale image at this frame size — verify
+  redraw cost against Phase 0's numbers before committing.
+- **ROI panel**: manual placement/editing only for v1 (no auto-detection). The pure
+  geometry helpers in LSPRi eva's `domain/roi_editor_tools.py` (clamp-to-image,
+  move/resize) are reusable as-is; the interaction/overlay code around them
+  (`ImageInteractionController`, `OverlayManager`) is Qt-coupled to that app's specific
+  `MainWindow` and needs a genuine rewrite for this app's panel, not a port.
+- **Image processing panel**: crop/rotate/background-flatten only for v1, using the
+  vectorized functions from LSPRi eva's `processing/preprocess.py` (`apply_preprocessing`,
+  `flatten_background`) as a starting point — these are already numpy/scipy-vectorized,
+  no Qt dependency, safe to port.
+- **Sensorgram + spectrum panels**: reused directly from `lspr_acq_shell` (Phase 1 §4
+  item 6) — no new code, this is the payoff of doing the extraction first.
+- **Experiment control panel**: reused directly from `lspr_acq_shell` — pump/valve plan
+  editing and execution UI, unchanged.
+
+---
+
+## 11. Testing strategy
+
+- **Unit, no Qt/no hardware**: ROI mask/mean extraction, `absorbance_from_means`,
+  metric/fit functions, HDF5 schema read/write round-trip. These should be fast and
+  numerous.
+- **Simulated devices**: `SimulatedCamera` (returns synthetic frames, e.g. a Gaussian
+  spot pattern with configurable noise) and `SimulatedIllumination` (instant
+  `set_wavelength`, zero settle time) — mirrors `SimulatedSpectrometer`'s existing role
+  in sLSPR acq's test suite. This is what lets `tests/integration/` exercise the full
+  sweep → cube → extinction → sensorgram pipeline without any hardware present, same as
+  the rest of the suite's "all tests pass without real hardware" rule.
+- **Golden-path smoke test**: one complete sweep with simulated devices and 2-3 ROI
+  pairs, asserting a sensorgram point is produced with a sane value — this is the test
+  that would have caught a threading bug like the Lori SW one, since it exercises save +
+  display + processing concurrently.
+
+---
+
+## 12. Delivery milestones
+
+Use this as the actual TODO list when implementation starts — check items off, don't
+let this document become aspirational fiction while the code diverges.
+
+- [ ] Phase 0: throughput spike run, results appended to this document.
+- [ ] Read V49 (`CODEX_EXPERIMENT_CONTROL_REUSE_SPLIT_V49.md`) and the device-layer audit
+      (`DEVICE_LAYER_AUDIT_2026.md`, `CODEX_DEVICE_LAYER_NUMBERED_LABELS_V51_IMPLEMENTATION.md`)
+      in full before touching either subsystem (§4.1).
+- [ ] Phase 1.3.1–1.3.4: settings, diagnostics, HDF5-writer plumbing, sensorgram/session
+      extracted; sLSPR acq verified working after each step.
+- [ ] Phase 1.3.5: V49 finished (experiment-control split into `lspr_acq_shell`),
+      including resolving the `("pump","valve","mswitch")` vs. canonical device-type-key
+      mismatch flagged in §4.3.
+- [ ] Phase 1.3.6: fluidics device framework moved **verbatim**, verified against real
+      pump/valve/selector hardware, before any structural change to it.
+- [x] Registry generalization implemented in place, ahead of the shell extraction
+      sequencing originally planned above: `PortRefreshData` now carries
+      `ports_by_family: dict[str, list[object]]` (with `pump_ports`/`valve_ports`/
+      `selector_devices` kept as backward-compatible read-only properties),
+      `DEVICE_ORDER` is now derived from a `register_device_family()` registry
+      (pump/switch/selector registered as the three built-ins, unchanged behavior),
+      and the `_discover_and_connect_pump`/`_valve`/`_selector` methods, the
+      two-lock discipline, `device_io_pool()`, and per-instance `_claim_owner`
+      pattern are all untouched. Full test suite green (861 passed, 1 pre-existing
+      unrelated flaky HDF5 test confirmed to pass in isolation), pyflakes clean.
+      **Still needed**: real pump/valve/selector hardware re-verification — not
+      possible from this environment. Do this before relying on it for a real
+      experiment. Camera/illumination families are not registered anywhere yet
+      (they don't exist until Phase 2) — this only proves the mechanism works for
+      the existing three.
+- [ ] `dependency-matrix.md` updated with the `lspr_acq_shell` exception.
+- [ ] Phase 2 scaffold: `apps/LSPRi/acq` created, depends on the shell + existing shared packages.
+- [ ] `Camera`/`IlluminationSource` ABCs + simulated implementations + unit tests.
+- [ ] Basler driver, manually verified against real hardware.
+- [ ] VariSpec driver, manually verified against real hardware (manual now in
+      `docs/manuals/` once the app exists).
+- [ ] Lori-protocol LED driver — reference implementation, confirm `CONF_STEP` semantics
+      and software-triggered single-pulse capability against real hardware before trusting it.
+- [ ] Sweep controller + three-thread pipeline (§8), tested against simulated devices.
+- [ ] HDF5 schema extension in `lspr_io`, minor version bump, changelog entry.
+- [ ] ROI panel (manual placement) + image view + minimal processing panel.
+- [ ] End-to-end smoke test with simulated devices passes.
+- [ ] Launcher: `lspri_acq` target flipped to `enabled=True`.
+- [ ] Real-hardware end-to-end run, sensorgram compared against a known-good sample if
+      one is available (e.g., cross-check against Lori SW's own output for the same
+      sample, since that system is a working reference for expected behavior).
+
+---
+
+## 13. Open items — need your input before the corresponding step can start
+
+- LED controller protocol for the device you'll actually pair with this build (separate
+  from the Lori-protocol reference driver above).
+- Expected sample + reference ROI count per experiment (changes Phase 0's compute
+  budget and whether the processing stage needs its own thread even at v1 scope).
+- IDS camera SDK choice (`pyueye` vs. IDS's newer Python SDK) — not needed until the
+  second camera vendor is actually being added.
+- Wavelength list characteristics (how many steps, spacing, VIS vs NIR range) — affects
+  VariSpec `settle_time_ms()` defaults and expected sweep duration.
