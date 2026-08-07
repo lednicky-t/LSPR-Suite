@@ -111,6 +111,108 @@ This also answers a design question for §8: if per-ROI compute is cheap (likely
 it's vectorized numpy), the sweep loop can plausibly stay simple; if it's not, the
 processing stage needs its own thread from the start.
 
+**Location correction**: this ended up living in `spikes/lspri_acq_phase0/benchmark_ui.py`
+(a live-preview + timed-benchmark PyQt6 tool, not a headless script) rather than a
+purely throwaway scratchpad file — it turned out worth keeping and rerunning as
+settings changed, and it's a useful reference for the real acquisition worker's
+capture-thread pattern (§8). Still not part of any app package.
+
+### Phase 0 results
+
+Camera: Basler a2A3840-45umBAS (USB3, native 3840×2160 ≈ 8.3MP). Target: 16 Hz.
+
+**2026-08-07, run 1 — full resolution, buggy ROI extraction** (pixel format Mono10,
+binning 1×1, 10 ROIs, 30s): 21.80 fps achieved, 0 late frames, but ROI extraction
+avg **27.465 ms**, max 44.480 ms — almost the entire ~46ms frame period at that fps.
+Root cause: the benchmark's first `extract_roi_means()` indexed each ROI with a
+*full-image-sized* boolean mask (`image[full_size_mask]`), which is O(total image
+pixels) per ROI regardless of ROI size — numpy has to scan every element of the mask
+to gather the `True` positions. Fixed by cropping to each ROI's bounding box first,
+then masking only that small sub-array (O(ROI area) per ROI). See the `RoiMasks`
+docstring in `benchmark_ui.py` for the detail — **this lesson carries into the real
+app's `processing/roi_extraction.py` (§7): use bounding-box-cropped local masks, not
+full-image masks, no matter how the code gets there.**
+
+**2026-08-07, run 2 — 2×2 binning, fixed ROI extraction** (pixel format Mono12,
+binning 2×2 → 1920×1080 ≈ 2.1MP, exposure 1146µs, 10 ROIs, 30s): **48.73 fps**
+achieved, 0 late frames, ROI extraction avg **0.448 ms**, max 2.087 ms. At a 16 Hz
+budget of 62.5ms/frame, ROI extraction for 10 ROIs now costs under 1% of it — the fix
+alone was roughly a 60× improvement, confirming the bug (not fundamental compute
+cost) was the dominant factor in run 1.
+
+**Interpretation so far**: at 2×2 binning, both capture (3× the target rate) and
+per-frame ROI compute (negligible) have comfortable headroom. The camera's free-running
+ceiling (~43 fps unbinned, per its own `ResultingFrameRate` node) was already above
+run 1's 21.8 fps result even before any fix — meaning run 1's bottleneck was the
+*consumption* side (the ROI bug, plus general Qt/display overhead), not the camera.
+
+**2026-08-07, run 3 — full resolution, fixed ROI extraction** (Mono12, binning 1×1,
+10 ROIs, 30s): **21.43 fps**, 0 late frames, ROI extraction avg **0.519 ms**, max
+0.764 ms. This is the trustworthy full-res number run 1 couldn't provide. It matches
+`DeviceLinkThroughputLimit` (360MB/s) ÷ (3840×2160×2 bytes for 10/12-bit unpacked) =
+21.70 fps theoretical almost exactly — **full resolution is bandwidth-capped by the
+USB3 throughput limit, not by anything in our code.** This also retroactively explains
+the very first (pre-benchmark) observation of `ResultingFrameRate ≈ 43.4` at Mono8
+(1 byte/pixel, so double the fps at the same bandwidth cap) — same formula, same
+constant. Corollary: run 1's 27ms ROI bug was *not* actually the bottleneck at full
+res — the USB3 link was already capping the frame period below where the bug would
+have started causing drops. That was luck, not something to rely on at a higher ROI
+count.
+
+**2026-08-07, run 4 — 2×2 binning, 200 ROIs** (Mono12, 1920×1080, fixed ROI code,
+30s): **48.70 fps** (unchanged from the 10-ROI binned run), 0 late frames, ROI
+extraction avg **6.653 ms**, max 10.869 ms — a 20× ROI-count increase cost ~15× more
+time (sub-linear), still under 11% of the 62.5ms/16Hz budget. Binned mode's 86.8 fps
+theoretical bandwidth ceiling (same formula as above, smaller frame) is well above
+the achieved 48.7 fps, meaning binned mode is **not** bandwidth-limited — something
+else (most likely sensor readout time at that binning mode: frame period 20.5ms −
+1.146ms exposure ≈ 19.4ms of readout/overhead) sets its ceiling instead.
+
+**2026-08-07, run 5 — 2×2 binning, 150 ROIs, concurrent disk-write load** (Mono12,
+1920×1080, dedicated `SaveWriterThread` per §8's design — plain `threading.Thread`
++ `queue.Queue`, writing real frame bytes to a bounded rotating set of files, 30s):
+**48.77 fps** — unchanged from the no-disk-write case. **Max save-queue depth seen:
+0** for the entire run — the writer thread never once fell behind. Write latency
+avg 5.66ms, max 14.45ms, comfortably under the ~20.5ms inter-frame period even at
+its worst. ~7.9GB written over 30s. **This empirically confirms §8's "save must never
+block capture/display" assumption on real hardware, not just by design** — the
+architecture's own answer to the exact Lori SW bug this project started by auditing
+(2026-08-06 build-log entry) holds up under real, sustained disk I/O.
+
+**Still open — deferred to Phase 2, not blocking further Phase 0 work:**
+- [ ] **Full spectral-cube sweep-cycle rate** — everything measured so far is
+      free-running continuous capture with no illumination switching. The real v1
+      design's actual rate-limiter (set wavelength → settle → grab, repeated per
+      wavelength step) is illumination settle time × step count, a different metric
+      entirely from camera fps. Camera+ROI+disk-write throughput is now conclusively
+      *not* a bottleneck in either binning mode; full-sweep rate is untested and needs
+      the real LCTF/LED driver to measure.
+
+**Phase 0 conclusion**: camera capture, ROI extraction (once the bounding-box fix
+landed), and concurrent disk writing are all confirmed comfortably capable of running
+well past any realistic target on this hardware — full resolution alone clears the
+original 16Hz reference point by >30%, 2×2 binning clears it by ~3×, and none of the
+three degrade each other when run together. The goal, per the maintainer, was never a
+16Hz pass/fail line but "as fast as achievable" — on that framing, the remaining
+question isn't "is this fast enough" but "how much faster/higher-resolution can we
+still go if the science wants it," which is now a comfortable position to be in
+heading into Phase 2.
+
+**Working recommendation** (pending the maintainer's call — resolution affects spatial
+precision/signal quality, a science question, not a throughput one): 2×2 binning
+(≈2.1MP) gives ~3× headroom on capture rate vs. full res's ~1.3×, negligible ROI cost
+even at 200 ROIs, and a smaller HDF5 footprint later. Full resolution remains viable
+(21.4 fps still clears 16Hz) if spatial resolution turns out to matter for ROI
+placement precision or signal quality.
+
+Other camera-level levers identified but not yet added to the tool (see chat/build
+log for the full discussion): sensor ROI/ crop (ask: does the imaging area only cover
+part of the sensor?), raising `DeviceLinkThroughputLimit` toward its ~419MB/s max,
+packed pixel formats (`Mono10p`/`Mono12p`) if >8-bit precision is needed and
+bandwidth turns out to matter, and `GrabStrategy_OneByOne` (vs. the tool's current
+`LatestImageOnly`) to measure true lossless camera throughput rather than "safe
+sustained display rate."
+
 ---
 
 ## 4. Phase 1 — Extract `lspr_acq_shell`
@@ -615,53 +717,101 @@ are.
 
 ---
 
-## 12. Delivery milestones
+## 12. Delivery milestones (the TODO list)
 
-Use this as the actual TODO list when implementation starts — check items off, don't
-let this document become aspirational fiction while the code diverges.
+This is the actual, living TODO list — check items off as they're done, add new ones
+as they're discovered, and don't let it drift from reality. Each item that's done
+should have a matching dated entry in
+[`lspri_acq_build_log.md`](lspri_acq_build_log.md) explaining what was actually done
+and what, if anything, is still outstanding (e.g. "done, but not verified against
+real hardware") — the checkbox alone doesn't carry enough information for someone
+picking this up cold.
 
-- [ ] Phase 0: throughput spike run, results appended to this document.
-- [ ] Read V49 (`CODEX_EXPERIMENT_CONTROL_REUSE_SPLIT_V49.md`) and the device-layer audit
-      (`DEVICE_LAYER_AUDIT_2026.md`, `CODEX_DEVICE_LAYER_NUMBERED_LABELS_V51_IMPLEMENTATION.md`)
-      in full before touching either subsystem (§4.1).
-- [ ] Phase 1.3.1–1.3.4: settings, diagnostics, HDF5-writer plumbing, sensorgram/session
-      extracted; sLSPR acq verified working after each step.
-- [ ] Phase 1.3.5: V49 finished (experiment-control split into `lspr_acq_shell`),
-      including resolving the `("pump","valve","mswitch")` vs. canonical device-type-key
-      mismatch flagged in §4.3.
-- [ ] Phase 1.3.6: fluidics device framework moved **verbatim**, verified against real
-      pump/valve/selector hardware, before any structural change to it.
-- [x] Registry generalization implemented in place, ahead of the shell extraction
-      sequencing originally planned above: `PortRefreshData` now carries
-      `ports_by_family: dict[str, list[object]]` (with `pump_ports`/`valve_ports`/
-      `selector_devices` kept as backward-compatible read-only properties),
-      `DEVICE_ORDER` is now derived from a `register_device_family()` registry
-      (pump/switch/selector registered as the three built-ins, unchanged behavior),
-      and the `_discover_and_connect_pump`/`_valve`/`_selector` methods, the
-      two-lock discipline, `device_io_pool()`, and per-instance `_claim_owner`
-      pattern are all untouched. Full test suite green (861 passed, 1 pre-existing
-      unrelated flaky HDF5 test confirmed to pass in isolation), pyflakes clean.
-      **Still needed**: real pump/valve/selector hardware re-verification — not
-      possible from this environment. Do this before relying on it for a real
-      experiment. Camera/illumination families are not registered anywhere yet
-      (they don't exist until Phase 2) — this only proves the mechanism works for
-      the existing three.
-- [ ] `dependency-matrix.md` updated with the `lspr_acq_shell` exception.
-- [ ] Phase 2 scaffold: `apps/LSPRi/acq` created, depends on the shell + existing shared packages.
-- [ ] `Camera`/`IlluminationSource` ABCs + simulated implementations + unit tests.
-- [ ] Basler driver, manually verified against real hardware.
-- [ ] VariSpec driver, manually verified against real hardware (manual now in
-      `docs/manuals/` once the app exists).
-- [ ] Lori-protocol LED driver — reference implementation, confirm `CONF_STEP` semantics
-      and software-triggered single-pulse capability against real hardware before trusting it.
-- [ ] Sweep controller + three-thread pipeline (§8), tested against simulated devices.
-- [ ] HDF5 schema extension in `lspr_io`, minor version bump, changelog entry.
-- [ ] ROI panel (manual placement) + image view + minimal processing panel.
-- [ ] End-to-end smoke test with simulated devices passes.
-- [ ] Launcher: `lspri_acq` target flipped to `enabled=True`.
-- [ ] Real-hardware end-to-end run, sensorgram compared against a known-good sample if
-      one is available (e.g., cross-check against Lori SW's own output for the same
-      sample, since that system is a working reference for expected behavior).
+### Phase 0 — Performance spike
+
+- [x] Camera connected 2026-08-07; spike tool built (`spikes/lspri_acq_phase0/benchmark_ui.py`).
+- [x] Sustained Basler capture rate measured, full-res and 2×2 binned.
+- [x] Per-frame ROI-extraction cost measured (10, then 200/150 ROIs) — a real
+      O(image size)-per-ROI bug found and fixed along the way (see §3 results and
+      the 2026-08-07 build-log entries).
+- [x] Concurrent disk-write load tested — confirmed the save-writer thread never
+      blocks capture/display, empirically, not just by design (run 5, §3).
+- [x] Results appended to this document (§3) and to the build log.
+- [ ] **Not yet tested, deferred to Phase 2**: full spectral-cube sweep-cycle rate
+      with real illumination switching (needs the LCTF/LED driver) — see §3's
+      "still open" note. Camera/ROI/disk-write throughput alone is no longer a
+      blocking question.
+
+### Phase 1 — Extract `lspr_acq_shell`
+
+- [x] Read V49 (`CODEX_EXPERIMENT_CONTROL_REUSE_SPLIT_V49.md`) and the device-layer
+      audit (`DEVICE_LAYER_AUDIT_2026.md`, `CODEX_DEVICE_LAYER_NUMBERED_LABELS_V51_IMPLEMENTATION.md`)
+      in full (§4.1). *(2026-08-06)*
+- [x] Registry generalization (§4.5) done **in place in `apps/sLSPR/acq`**, ahead of
+      extraction — see the 2026-08-06 build-log entry for exactly what changed and
+      what tests cover it. Real pump/valve/selector hardware re-verification still
+      outstanding; do that before relying on it for a real experiment.
+- [x] `packages/lspr_acq_shell` scaffolded (empty package: `pyproject.toml`,
+      `README.md`, `version.py`, `__init__.py`), installs and imports cleanly, added
+      to `requirements.txt`. *(2026-08-06)* **Nothing extracted into it yet.**
+- [x] `dependency-matrix.md` updated with the `lspr_acq_shell` entry and the
+      pairwise-independence-exception note. *(2026-08-06)*
+- [x] `overview.md`'s ecosystem map updated. *(2026-08-06)*
+- [ ] **1.3.1 — Settings persistence pattern** extracted from `storage/app_config.py`
+      into `lspr_acq_shell`. Lowest risk, no device coupling — natural next step.
+- [ ] **1.3.2 — Diagnostics** (`gui/runtime_diagnostics.py`'s profile system)
+      extracted; confirmed zero sLSPR-specific assumptions before moving.
+- [ ] **1.3.3 — HDF5 async-writer plumbing** (`AsyncHDF5MeasurementWriter`'s
+      threading/queue mechanism, not the spectrum-specific schema) extracted.
+- [ ] **1.3.4 — Sensorgram + session/run management** extracted
+      (`plot_controller.py`'s sensorgram half, `sensorgram_secondary_axis.py`, run/
+      session bookkeeping).
+- [ ] **1.3.5 — Finish V49** (experiment-control split into `lspr_acq_shell`,
+      per §4.3): move `experiment_control_backend.py`/`_capabilities.py` as-is;
+      split the remaining satellite files per V49's destinations; resolve the
+      `("pump","valve","mswitch")` vs. canonical device-type-key mismatch flagged
+      in §4.3 rather than carrying it forward unresolved.
+- [ ] **1.3.6 — Fluidics device framework moved verbatim** (`device_manager.py`,
+      `device_lifecycle.py`, `communication_models.py`, `serial_controllers.py`,
+      `connection_registry.py`, `port_assignments.py`) into `lspr_acq_shell`,
+      same logic, same locking discipline — verified against real pump/valve/
+      selector hardware afterward, not rewritten along the way (§4.2).
+- [ ] After every 1.3.x item: `python -m pytest tests/` green, sLSPR acq launches
+      (Full and Simulation profiles) with no regression, before moving to the next.
+- [ ] After Phase 1 completes: sLSPR acq confirmed **functionally identical** to
+      before (the acceptance criterion for this whole phase, §4.3).
+
+### Phase 2 — New app scaffold: `apps/LSPRi/acq`
+
+- [ ] App scaffold created (`pyproject.toml`, `src/main.py`, package layout per §5),
+      depends on `lspr_core`/`lspr_io`/`lspr_ui`/`lspr_acq_shell`.
+- [ ] `Camera`/`IlluminationSource` ABCs + `SimulatedCamera`/`SimulatedIllumination`
+      + unit tests (§4.4, §6).
+- [ ] `Camera`/`IlluminationSource` registered as new families into the generalized
+      registry from `lspr_acq_shell` (§6.1).
+- [ ] `ImagingExperimentControlBackend` implemented against the shared
+      `ExperimentControlBackend` Protocol (§6.2).
+- [ ] Basler driver (`pypylon`), manually verified against real hardware.
+- [ ] VariSpec driver, manually verified against real hardware. Manual (`1794348.pdf`)
+      copied into `apps/LSPRi/acq/docs/manuals/` once the app directory exists.
+- [ ] Lori-protocol LED driver (reference implementation) — confirm `CONF_STEP`
+      semantics and software-triggered single-pulse capability against real
+      hardware before trusting it; this is explicitly a reference, not necessarily
+      the production driver for whatever LED hardware ends up paired with this app.
+- [ ] Domain model (`Frame`, `SpectralCube`, `AreaRoi`/`AreaRoiGroup` ported from
+      LSPRi eva, `AbsorbanceSpectrumResult`, `ImagingAcquisitionSettings`) — §9.
+- [ ] Sweep controller + three-thread pipeline (§8) built and tested against
+      simulated devices — same-process `threading.Thread`/`queue.Queue`, not
+      `multiprocessing.Queue`, unless Phase 0's results say otherwise.
+- [ ] HDF5 schema extension in `lspr_io` (§10) — minor version bump, changelog entry.
+- [ ] GUI: image view (latest-frame-only), ROI panel (manual placement only for v1),
+      minimal image-processing panel (crop/rotate/background-flatten) — §11.
+- [ ] Unit tests for ROI/extinction/metric math (no Qt, no hardware) — §12.
+- [ ] End-to-end smoke test with simulated devices: sweep → cube → extinction →
+      sensorgram point.
+- [ ] Launcher: `lspri_acq` target in `targets.py` flipped to `enabled=True`.
+- [ ] Real-hardware end-to-end run; sensorgram cross-checked against the Lori SW's
+      own output for the same sample if available, since it's a working reference.
 
 ---
 
