@@ -538,3 +538,93 @@ acq launched twice more (`LSPR_FORCE_SIMULATOR=1`, 10s each - once before, once 
 this item's changes) with no errors/tracebacks either time.
 
 **Not done**: nothing from today committed yet, pending the maintainer's go-ahead.
+
+## 2026-08-07/08: Phase 1 item 1.3.3 — HDF5 async-writer generalized into AsyncTaggedWriter
+
+Picked up 1.3.3 next. Unlike 1.3.1/1.3.2, this one couldn't be a mostly-mechanical move -
+flagged and confirmed with the maintainer before writing any code, since it defines a
+seam Phase 2 will build against later.
+
+**Why a literal move wouldn't have worked**: `storage/hdf5_export.py`'s
+`AsyncHDF5MeasurementWriter` (267 lines) is the "threading/queue plumbing" the plan
+names, but its background-thread `_run()` hardcoded `writer = HDF5MeasurementWriter(...)`
+construction directly, and every queued tag (`"append"`, `"metrics"`, `"baselines"`, ...)
+was `Spectrum`/`ProcessingSettings`-shaped by name. Moving the class as-is would have
+relocated an sLSPR-specific class into the shared package, not something LSPRi acq's
+future `SpectralCube` writer could actually reuse - defeating the point, and contradicting
+the plan's own §8/§9 language ("new tags (cube, roi_definitions) dispatched the same way
+append/metrics already are"), which already assumes a genuinely generic base exists.
+
+**What's actually generic vs. what isn't**: the queue/thread lifecycle, the periodic-flush
+timing loop, close()'s drain-then-join-with-timeout, the four structural operations
+(`flush`/`close`/`save_copy`/`timeout`) and their exact ordering (flush pending →
+`writer.flush()` → for `save_copy`, `writer.copy_into()` only after that flush completes -
+this ordering is what keeps a second concurrent file handle from ever touching the file
+mid-write), and the on_error escape hatch when the underlying writer fails - none of that
+is spectrum-specific. What isn't generic: the concrete writer type, and which tags exist /
+what each one does with its payload.
+
+**Design landed**: `lspr_acq_shell.AsyncTaggedWriter` (`packages/lspr_acq_shell/src/lspr_acq_shell/async_writer.py`),
+an ABC owning everything in the paragraph above, with three hooks a subclass fills in:
+- `_open_writer()` - construct/open the concrete writer, called once on the background
+  thread before the dispatch loop starts.
+- `_apply(writer, tag, payload)` - handle one dequeued item whose tag isn't one of the
+  four structural ones. Immediate-effect tags call straight through to `writer`;
+  batch-until-flush tags (sLSPR's `"append"`/`"metrics"`) accumulate into subclass-owned
+  instance state instead.
+- `_flush_pending(writer)` - write out and clear whatever `_apply` batched. Called before
+  every `writer.flush()`, including every periodic timeout tick (even when nothing was
+  pending, matching the original's unconditional per-tick `writer.flush()` call) - a
+  subclass with no batching can leave this a no-op.
+- Two optional message-formatting overrides (`_open_error_message`/`_run_error_message`)
+  so a subclass can keep its exact original on_error wording instead of the base's
+  generic default text - used to preserve sLSPR acq's exact strings ("Could not open
+  measurement file: ...", "Measurement recording stopped unexpectedly: ...") byte-for-byte,
+  since nothing else about the on_error contract changed.
+
+`AsyncHDF5MeasurementWriter` is now a ~140-line subclass: its public API (`update_processing`,
+`append_batch`, `append_metrics`, `append_environment_reading`,
+`append_experiment_control_runtime`/`append_flow_state`, `append_device_state`,
+`write_device_inventory`, `update_baselines`, `update_acquisition_state`) is unchanged in
+every method's signature and behavior (each is now a one-line `self._put(tag, payload)` call
+instead of a hand-rolled `if self._closed: return; self._queue.put(...)`), and
+`flush()`/`save_copy()`/`close()` are inherited from the base unmodified - none of the 2
+real call sites (`gui/acquisition_controller.py`, `storage/measurement_archive.py`) needed
+any change. The original big if/elif tag-dispatch block moved into `_apply`/`_flush_pending`
+with identical logic, just renamed `pending_spectra`/`pending_metrics` etc. to
+`self._pending_spectra`/`self._pending_metrics` (now instance state, since the base's
+generic `_run()` loop no longer owns local dispatch variables).
+
+`hdf5_export.py`'s top-of-file imports lost `queue`/`threading`/`import time.monotonic`
+(no longer used anywhere else in the file once the class moved) and gained
+`from lspr_acq_shell import AsyncTaggedWriter`.
+
+**Unrelated incident during verification, resolved**: the first full-suite run (background,
+started before this item's changes were verified) took an abnormally long time (~150s vs.
+the usual ~90-110s) and coincided with the maintainer reporting all three running app
+windows frozen. Investigated rather than assumed unrelated: system free memory was at
+4.9GB/31.8GB, and `Get-CimInstance Win32_Process` showed, alongside this session's own
+test run, six stale `pytest tests/unit/test_live_processing_worker.py` processes dated
+2026-08-01 and 2026-08-04 (abandoned mid-session in some earlier, unrelated work and never
+cleaned up) plus four `blender-mcp` extension processes and two orphaned
+`multiprocessing-fork` workers - none started by this session. Stopped this session's own
+background test run first (freed 5.6GB), then, with the maintainer's explicit go-ahead,
+killed all fourteen of the other stale/unrelated processes by PID - free memory recovered
+to 15.1GB and zero `python.exe` processes remained. Not a bug in anything built today;
+noted here only because it interrupted this item's verification pass and because leftover
+test processes accumulating across sessions is apparently a real, recurring thing on this
+machine worth the maintainer knowing about.
+
+**Verified** (after the above was resolved): full umbrella suite, 861/862 in 59.8s (back
+to the normal duration, confirming the earlier slowness was the stale-process contention,
+not this change) - the one failure is the same pre-existing Windows temp-dir-cleanup race
+as every prior entry (`test_async_writer_reports_failure_via_on_error_callback`, now
+logging through `lspr_acq_shell.async_writer` instead of the old module path, exactly as
+expected since the exception originates in the shared base now), reconfirmed passing in
+isolation. `pyflakes` clean on all 3 touched files
+(`packages/lspr_acq_shell/src/lspr_acq_shell/async_writer.py`, that package's
+`__init__.py`, `storage/hdf5_export.py`). sLSPR acq launched twice more
+(`LSPR_FORCE_SIMULATOR=1`, 10s each) with no errors/tracebacks, and left no orphaned
+process behind either time (checked explicitly this time, given the incident above).
+
+**Not done**: nothing from today committed yet, pending the maintainer's go-ahead.

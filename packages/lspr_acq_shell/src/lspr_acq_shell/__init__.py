@@ -9,6 +9,7 @@ moved in - do not add speculative re-exports ahead of the real extraction.
 
 from __future__ import annotations
 
+from .async_writer import AsyncTaggedWriter, WriterProtocol
 from .diagnostics import (
     DiagnosticsConfig,
     DiagnosticsProfile,
@@ -45,6 +46,8 @@ __all__ = [
     "APP_VERSION",
     "__version__",
     "version_string",
+    "AsyncTaggedWriter",
+    "WriterProtocol",
     "DiagnosticsConfig",
     "DiagnosticsProfile",
     "apply_diagnostic_info_filter",

@@ -345,9 +345,20 @@ Simulation profiles), and confirm nothing regressed before moving to the next it
    window, reusing only `DiagnosticsConfig`.
 3. **HDF5 async-writer base** — the threading/queue plumbing in `storage/hdf5_export.py`'s
    `AsyncHDF5MeasurementWriter` (tag-dispatch `append`/`append_metrics`/etc., same-process
-   `threading.Thread` + `queue.Queue`). This part was already noted as closer to reusable
-   than the concrete schema in the earlier audit — extract the plumbing, leave the
-   spectrum-specific dataset/group code behind in sLSPR acq.
+   `threading.Thread` + `queue.Queue`). Leave the spectrum-specific dataset/group code
+   (`HDF5MeasurementWriter`) behind in sLSPR acq.
+   **Extracted 2026-08-07/08**: turned out the "plumbing" wasn't actually decoupled from
+   the concrete writer - the original `_run()` hardcoded `HDF5MeasurementWriter(...)`
+   construction and spectrum-shaped tags directly, so a literal move would have relocated
+   an sLSPR-specific class, not a reusable base. Generalized into `lspr_acq_shell.AsyncTaggedWriter`
+   (queue/thread/periodic-flush/close-draining/save-copy-ordering, generic across four
+   structural tags - `flush`/`close`/`save_copy`/`timeout`) with three subclass hooks:
+   `_open_writer()`, `_apply(writer, tag, payload)` (handle one non-structural queued
+   item), `_flush_pending(writer)` (write out anything `_apply` batched). Confirmed with
+   the maintainer before implementing - this is the seam LSPRi acq's cube writer builds
+   against later (§8/§9's "new tags dispatched the same way append/metrics already are").
+   `AsyncHDF5MeasurementWriter` is now a thin subclass with its exact original dispatch
+   logic moved into those hooks; public API unchanged.
 4. **Sensorgram plotting + session/run management** — `gui/plot_controller.py`'s
    sensorgram half, `gui/sensorgram_secondary_axis.py`, and the run/session bookkeeping.
    Already curve-data-shaped (time + metric value), not spectrum-shaped, so this should
@@ -820,8 +831,19 @@ picking this up cold.
       build-log entry for the full reasoning and for a note on
       `lspr_core/launch_profiles.py`'s content also being sLSPR-specific
       (left in place, not this item's problem to solve).
-- [ ] **1.3.3 — HDF5 async-writer plumbing** (`AsyncHDF5MeasurementWriter`'s
-      threading/queue mechanism, not the spectrum-specific schema) extracted.
+- [x] **1.3.3 — HDF5 async-writer plumbing** extracted — done, but required
+      real generalization, not a mechanical move (the original class hardcoded
+      `HDF5MeasurementWriter(...)` construction and spectrum-shaped tags
+      directly in its run loop, so a literal move would have relocated an
+      sLSPR-specific class). New generic `AsyncTaggedWriter` base in
+      `lspr_acq_shell` (queue/thread/flush-timing/close-draining/
+      save-copy-ordering) with three subclass hooks (`_open_writer`,
+      `_apply`, `_flush_pending`); `AsyncHDF5MeasurementWriter` is now a thin
+      subclass implementing those hooks with its exact original tag
+      dispatch. Public API to its 2 real callers unchanged. Confirmed with
+      the maintainer before implementing, since this defines the seam
+      LSPRi acq's future cube writer builds against (§8/§9). See the
+      2026-08-07/08 build-log entry.
 - [ ] **1.3.4 — Sensorgram + session/run management** extracted
       (`plot_controller.py`'s sensorgram half, `sensorgram_secondary_axis.py`, run/
       session bookkeeping).
