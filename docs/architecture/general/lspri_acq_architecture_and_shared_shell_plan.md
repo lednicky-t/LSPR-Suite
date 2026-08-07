@@ -789,8 +789,12 @@ picking this up cold.
 - [x] `dependency-matrix.md` updated with the `lspr_acq_shell` entry and the
       pairwise-independence-exception note. *(2026-08-06)*
 - [x] `overview.md`'s ecosystem map updated. *(2026-08-06)*
-- [ ] **1.3.1 — Settings persistence pattern** extracted from `storage/app_config.py`
-      into `lspr_acq_shell`. Lowest risk, no device coupling — natural next step.
+- [x] **1.3.1 — Settings persistence pattern** extracted from `storage/app_config.py`
+      into `lspr_acq_shell` (`settings_store.py`) — done, umbrella + pyflakes clean,
+      sLSPR acq launched (Simulation) with no errors. `user_profile.py` extracted
+      alongside it (not originally scoped to this item, but coupled — see the
+      2026-08-07 build-log entry for why and for the app-scoping generalization
+      this required).
 - [ ] **1.3.2 — Diagnostics** (`gui/runtime_diagnostics.py`'s profile system)
       extracted; confirmed zero sLSPR-specific assumptions before moving.
 - [ ] **1.3.3 — HDF5 async-writer plumbing** (`AsyncHDF5MeasurementWriter`'s

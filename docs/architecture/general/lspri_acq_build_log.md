@@ -403,3 +403,81 @@ combined end-to-end run (LCTF + camera together) was performed; both halves meas
 independently was enough to answer the question. Full data and reasoning in
 `spikes/lspri_acq_phase0/docs/camera_backend_and_throughput_findings.md`; §3 and §12 of
 the plan doc updated to match. Nothing from today committed yet.
+
+## 2026-08-07 (continued): Phase 1 item 1.3.1 — settings persistence + user_profile extracted
+
+Maintainer asked to resume Phase 1 (the shell extraction, not the GUI work discussed in
+the same session - that's Phase 2, deliberately deferred until the shell is done, per
+this doc's own sequencing). Picked up at the next unchecked item, 1.3.1.
+
+**Scope grew by one module, deliberately**: the plan only named `storage/app_config.py`,
+but `app_config.py`'s path resolution depends on `storage/user_profile.py` (the per-user
+settings-file registry), and that module's own docstring already flagged itself as "not
+a shared package function yet... if a second app needs the same registry, promote this
+to `lspr_core` then, with a real second caller to design against." LSPRimaging acq is
+that second caller, so - confirmed with the maintainer first - moved both together
+rather than extracting one and leaving the other stranded pointing at app-specific
+internals.
+
+**Real bug caught before it was written**: `user_profile.py`'s paths are suite-wide
+(`user_config_dir("lspr-suite")`), but every settings-file path (`GLOBAL_CONFIG_PATH`,
+`user_settings_path(name)`) was a *hardcoded* filename (`lspr_settings.json`), not scoped
+per app. Moved verbatim, this would have made sLSPR acq and LSPRi acq silently share one
+settings file per user - LSPRi acq's UI state, theme, acquisition state would overwrite
+(and be overwritten by) sLSPR acq's on every save. Fixed by adding an optional `filename`
+parameter to `global_config_path()`/`user_settings_path()`/`current_config_path()`,
+defaulting to `DEFAULT_SETTINGS_FILENAME = "lspr_settings.json"` (sLSPR acq's historical
+name) so sLSPR acq's on-disk per-user files and every existing call site are completely
+unaffected - a future LSPRi acq caller passes its own `filename` explicitly. The *user
+registry* itself (`lspr_users.json` - known/active users) stays unparameterized and
+genuinely shared, since "who's logged in" is one concept across the whole suite.
+
+**What moved**: `packages/lspr_acq_shell/src/lspr_acq_shell/user_profile.py` (the
+registry + the app-scoping fix above + `safe_path_component`, previously in sLSPR acq's
+`storage/output_paths.py`) and `.../settings_store.py` (the generic JSON payload cache,
+atomic write, corruption quarantine, and `ui_state`/`app` key-value helpers - what the
+plan's §4.3 item 1 actually named). `lspr_acq_shell/__init__.py` now re-exports both,
+replacing the "nothing exported yet" placeholder.
+
+**What stayed behind in sLSPR acq, and why**: `storage/app_config.py` keeps
+`save_processing_settings`/`load_processing_settings` (`ProcessingSettings`-shaped),
+`save_processing_settings_to_hdf5`/`load_processing_settings_from_hdf5` (sLSPR's own
+HDF5 metadata schema), `save_dark_reference_cache`/`load_dark_reference_cache`
+(`Spectrum`-shaped), and `save_acquisition_state`/`load_acquisition_state` (thin
+wrappers) - none of these are app-agnostic, matching §4.3 item 3's stated principle
+("extract the plumbing, leave the concrete schema behind") applied a step early, to
+item 1.
+
+**Backward compatibility, not a rewrite of ~20 call sites**: `storage/user_profile.py`
+and the generic parts of `storage/app_config.py` are now thin re-export shims over
+`lspr_acq_shell` - every existing `from lspr_app.storage.app_config import
+save_app_setting` (etc.) call site across the app (gui/main_window*.py,
+device/device_lifecycle.py, device/device_manager.py, and 15+ others) needed zero
+changes. This was a deliberate choice for this first extraction (lowest-risk item,
+meant to be practiced on before the riskier ones later in §4.3) - a "clean" version
+that updates every call site to import from `lspr_acq_shell` directly is possible later
+but isn't required for correctness.
+
+**Test fallout, found by running the suite, not guessed**: four integration tests
+(`test_discovery_blank_plot.py`, `test_main_window_settings_undo.py`,
+`test_source_mode_switch_sync.py`, `test_start_tracking_ready_indicator.py`) patch
+`user_profile`'s private module attributes (`_SHARED_CONFIG_DIR`, `_REGISTRY_PATH`,
+`GLOBAL_CONFIG_PATH`) directly to isolate a temp config dir - patching those on the new
+re-export shim does nothing, since the shim doesn't own that state anymore. Fixed by
+pointing all four (plus `tests/unit/test_user_profile.py`, which owns the actual
+behavioral coverage) at `lspr_acq_shell.user_profile` - the real state owner - instead of
+`lspr_app.storage.user_profile`. No other production call site needed this (none of them
+patch internals, they just call the public functions), confirmed by grepping every
+`user_profile`/`_SHARED_CONFIG_DIR` reference in `tests/` before considering this done.
+
+**Verified**: full umbrella suite, 862/862 (the one failure on the first run,
+`test_async_writer_reports_failure_via_on_error_callback`, is the same pre-existing
+Windows temp-dir-cleanup race documented in the 2026-08-06 registry-generalization
+entry above - confirmed passing in isolation again, unrelated to this change).
+`pyflakes` clean on all 11 touched files. sLSPR acq launched
+(`LSPR_FORCE_SIMULATOR=1`, 10s run) with no errors/tracebacks in the log - a real
+process launch, not just the test suite, since this touches settings loaded at startup.
+
+**Not done**: real per-user-settings-file behavior on real hardware (not applicable -
+this is pure file I/O, already covered by the test suite); nothing from today
+committed yet, pending the maintainer's go-ahead (submodule + umbrella commit).

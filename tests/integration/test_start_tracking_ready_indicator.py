@@ -45,7 +45,7 @@ from lspr_app.domain.session import MeasurementSession
 from lspr_app.gui.icon_helpers import transport_icon
 from lspr_app.gui.main_window import MainWindow
 from lspr_app.gui.main_window_plotting import set_sensorgram_tracking_active_for
-from lspr_app.storage import user_profile as up
+from lspr_acq_shell import user_profile as up
 
 
 _APP = QApplication.instance() or QApplication([])

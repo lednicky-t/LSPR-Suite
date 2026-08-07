@@ -1,27 +1,26 @@
-"""Unit tests for lspr_app.storage.user_profile - the per-user identity
+"""Unit tests for lspr_acq_shell.user_profile - the per-user identity
 registry backing the User look-up field next to the recording destination
-(no password; see the module docstring). Every test points the module's
-three path constants at a fresh temp directory so nothing touches the
-real user_config_dir("lspr-suite") location.
+(no password; see the module docstring). Moved here from
+apps/sLSPR/acq/tests (Phase 1 shell extraction, 2026-08-07) - this is now
+the real owner of the module-level state these tests patch;
+apps/sLSPR/acq/src/lspr_app/storage/user_profile.py is a thin re-export
+shim over this module and has no state of its own to test. Every test
+points the module's three path constants at a fresh temp directory so
+nothing touches the real user_config_dir("lspr-suite") location.
 """
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import ensure_repo_paths
 
 ensure_repo_paths()
 
-APP_SRC = REPO_ROOT / "apps" / "sLSPR" / "acq" / "src"
-if str(APP_SRC) not in sys.path:
-    sys.path.insert(0, str(APP_SRC))
-
-from lspr_app.storage import user_profile as up
+from lspr_acq_shell import user_profile as up
 
 
 class _TempConfigDirTestCase(unittest.TestCase):
