@@ -179,31 +179,53 @@ block capture/display" assumption on real hardware, not just by design** — the
 architecture's own answer to the exact Lori SW bug this project started by auditing
 (2026-08-06 build-log entry) holds up under real, sustained disk I/O.
 
-**Still open — deferred to Phase 2, not blocking further Phase 0 work:**
-- [ ] **Full spectral-cube sweep-cycle rate** — everything measured so far is
-      free-running continuous capture with no illumination switching. The real v1
-      design's actual rate-limiter (set wavelength → settle → grab, repeated per
-      wavelength step) is illumination settle time × step count, a different metric
-      entirely from camera fps. Camera+ROI+disk-write throughput is now conclusively
-      *not* a bottleneck in either binning mode; full-sweep rate is untested and needs
-      the real LCTF/LED driver to measure.
+**Resolved — full spectral-cube sweep-cycle rate** (was: deferred, needs the real
+LCTF/LED driver to measure). Two more pieces of Phase 0 work, one in a separate
+session, closed this out: LCTF settle-time characterization and passband calibration
+against the real VariSpec filter (`illumination_probe.py`), and a second camera vendor
+(IDS uEye) added to `benchmark_ui.py` along with a real software-trigger-latency
+measurement. Full detail and data in
+[`spikes/lspri_acq_phase0/docs/camera_backend_and_throughput_findings.md`](../../../spikes/lspri_acq_phase0/docs/camera_backend_and_throughput_findings.md),
+[`settle_time_analysis.md`](../../../spikes/lspri_acq_phase0/docs/settle_time_analysis.md),
+and
+[`lctf_passband_centroid_shift.md`](../../../spikes/lspri_acq_phase0/docs/lctf_passband_centroid_shift.md).
+Headline conclusion, not a full combined end-to-end run but enough to answer the
+question: **the LCTF's own settle time dominates the per-step budget, not camera
+latency.** A single software-triggered capture (Mono12, native resolution, either
+camera family) takes ~17-20ms; the LCTF's settle time is ~35-40ms in its best case
+(small ascending steps) and up to ~80-90ms in its worst (descending, or a single
+direction-agnostic safety margin) - camera latency is under half the filter's *best*
+case and under a quarter of its worst. Per-wavelength-step budget for Phase 1's
+sweep loop should be `LCTF settle margin (35-90ms, direction/step-size dependent) +
+~20ms capture`, dominated by the first term; whole-sweep time is that × wavelength-step
+count. Camera choice is therefore not a sweep-*speed* question between any of the
+cameras evaluated so far - it's a science/imaging-quality one (resolution, pixel
+size/SNR, shutter type).
 
 **Phase 0 conclusion**: camera capture, ROI extraction (once the bounding-box fix
-landed), and concurrent disk writing are all confirmed comfortably capable of running
-well past any realistic target on this hardware — full resolution alone clears the
-original 16Hz reference point by >30%, 2×2 binning clears it by ~3×, and none of the
-three degrade each other when run together. The goal, per the maintainer, was never a
-16Hz pass/fail line but "as fast as achievable" — on that framing, the remaining
-question isn't "is this fast enough" but "how much faster/higher-resolution can we
-still go if the science wants it," which is now a comfortable position to be in
-heading into Phase 2.
+landed), concurrent disk writing, and now the full sweep-cycle rate question are all
+confirmed comfortably capable of running well past any realistic target on this
+hardware — full resolution alone clears the original 16Hz reference point by >30%,
+2×2 binning clears it by ~3×, none of the three degrade each other when run together,
+and the LCTF (not the camera) sets the real sweep-cycle ceiling regardless of which
+evaluated camera is used. The goal, per the maintainer, was never a 16Hz pass/fail line
+but "as fast as achievable" — on that framing, Phase 0's throughput questions are fully
+answered and the remaining decisions (camera model, resolution/binning) are science
+calls, not open engineering risk, heading into Phase 1.
 
-**Working recommendation** (pending the maintainer's call — resolution affects spatial
-precision/signal quality, a science question, not a throughput one): 2×2 binning
-(≈2.1MP) gives ~3× headroom on capture rate vs. full res's ~1.3×, negligible ROI cost
-even at 200 ROIs, and a smaller HDF5 footprint later. Full resolution remains viable
-(21.4 fps still clears 16Hz) if spatial resolution turns out to matter for ROI
-placement precision or signal quality.
+**Working recommendation** (pending the maintainer's call — resolution/pixel-size/
+shutter-type affect spatial precision and signal quality, a science question, not a
+throughput one): maintainer's current call is to stay on the Basler a2A3840-45umBAS as
+primary; 2×2 binning (≈2.1MP) gives ~3× headroom on capture rate vs. full res's ~1.3×,
+negligible ROI cost even at 200 ROIs, and a smaller HDF5 footprint later, while full
+resolution remains viable (21.4 fps still clears 16Hz) if spatial resolution turns out
+to matter for ROI placement precision or signal quality. The IDS UI-3160CP-M-GL
+Rev.2.1 was evaluated as a documented alternative (see the findings doc linked above)
+- notably global-shutter (immune to the rolling-shutter/LED-PWM row-striping risk the
+other two cameras carry) at the cost of much lower resolution (2.3MP vs 8.3/20MP) and
+much larger pixels (4.8µm vs 2.0-2.4µm, better per-pixel SNR). Worth revisiting if
+LED-PWM striping turns out not to be fully solved by longer exposure/lower intensity
+in practice.
 
 Other camera-level levers identified but not yet added to the tool (see chat/build
 log for the full discussion): sensor ROI/ crop (ask: does the imaging area only cover
@@ -737,10 +759,20 @@ picking this up cold.
 - [x] Concurrent disk-write load tested — confirmed the save-writer thread never
       blocks capture/display, empirically, not just by design (run 5, §3).
 - [x] Results appended to this document (§3) and to the build log.
-- [ ] **Not yet tested, deferred to Phase 2**: full spectral-cube sweep-cycle rate
-      with real illumination switching (needs the LCTF/LED driver) — see §3's
-      "still open" note. Camera/ROI/disk-write throughput alone is no longer a
-      blocking question.
+- [x] LCTF settle time characterized against real VariSpec hardware (792 optically-
+      measured transitions, direction-aware margins) — see §3 and
+      `spikes/lspri_acq_phase0/docs/settle_time_analysis.md`.
+- [x] LCTF passband calibration measured (61-point optical sweep, offset correction
+      table produced) — see `spikes/lspri_acq_phase0/docs/lctf_passband_centroid_shift.md`.
+- [x] `benchmark_ui.py` generalized to a second camera vendor (IDS uEye via `pyueye`,
+      behind a `CameraBackend` interface) and evaluated against the two Baslers — see
+      `spikes/lspri_acq_phase0/docs/camera_backend_and_throughput_findings.md`.
+- [x] Software-trigger single-shot capture latency measured on real hardware (~17-20ms) —
+      same doc as above.
+- [x] Full spectral-cube sweep-cycle rate question closed: not one combined end-to-end
+      run, but both halves (LCTF settle time, camera trigger latency) independently
+      measured on real hardware, conclusively showing the LCTF dominates and camera
+      choice isn't a sweep-speed bottleneck — see §3.
 
 ### Phase 1 — Extract `lspr_acq_shell`
 

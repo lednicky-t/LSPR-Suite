@@ -308,3 +308,98 @@ test once the hardware is connected (separate session).
 **Not done**: sensor-ROI-crop, packed-pixel-format, and throughput-limit controls
 discussed but not added to the tool (not needed - Phase 0's questions are answered
 without them); nothing from today (including the disk-write feature) committed yet.
+
+## 2026-08-07 (continued): LCTF settle time and passband calibration measured (separate session, backfilled here)
+
+The illumination-side half of the deferred "full spectral-cube sweep-cycle rate"
+question, using `illumination_probe.py` (same `spikes/lspri_acq_phase0/` family as
+`benchmark_ui.py`) against the real VariSpec VIS filter (400-720nm, serial 52366).
+
+**Settle time**: 792 optically-measured transitions (tab 6's batch sweep, five step
+sizes, both directions, three-plus repeats each). Key finding: *direction* predicts
+settle time much better than *step size* does - ascending small steps need only
+~35-40ms margin (p99 28ms), while descending small steps need ~80ms (p99 57ms, max
+72ms); the two don't even have the same rank order across step sizes. Full detail,
+methodology, and the recommended direction-aware two-tier margin in
+`spikes/lspri_acq_phase0/docs/settle_time_analysis.md`.
+
+**Passband calibration**: 61-point optical spectral sweep (420-720nm, 5nm steps,
+dark-subtracted). Half-max centroid vs. commanded wavelength: mean shift -0.31nm (std
+0.51nm), no wavelength-dependent trend (slope -0.00026nm/nm - a small roughly-constant
+offset, not a scale error). Largest deviations (up to ±1.4nm) cluster in the filter's
+known 560-585nm low-throughput band and at the 705-720nm range edge, both low-SNR
+regions - read as measurement noise, not necessarily worse optical tuning there. An
+offset correction table was produced
+(`spikes/lspri_acq_phase0/lctf_wavelength_offset_calibration.csv`, columns include a
+`corrected_command_nm` ready to use directly) in case Phase 1 wants per-point
+wavelength correction. Full detail in
+`spikes/lspri_acq_phase0/docs/lctf_passband_centroid_shift.md`.
+
+Neither of these blocked anything - both closed out items the architecture plan (§3)
+had left as "needs the real LCTF/LED driver," which at the time of the previous entry
+above hadn't been connected yet.
+
+## 2026-08-07 (continued): second camera vendor added, IDS uEye fps bug found/fixed, sweep-cycle question closed
+
+Maintainer connected a third camera (IDS UI-3160CP-M-GL Rev.2.1) and asked for it to be
+usable independently of the Basler, plus a comparison. Generalized
+`benchmark_ui.py`'s `CameraGrabThread` from calling `pypylon` directly to driving a new
+`CameraBackend` ABC, with `PylonBackend` (the existing logic, unchanged behavior) and a
+new `UeyeBackend` for `pyueye`. Verified against the pyueye package actually installed
+(real function signatures/constants read from its source, not assumed from memory) and
+against IDS's own official `pyueye_example` reference pattern for the sequence-
+buffer/queue capture lifecycle.
+
+`pyueye` needs IDS's own `ueye_api.dll` (from the separate, non-pip-installable "IDS
+Software Suite" installer) - confirmed on this machine: the camera showed "Error"
+status in Device Manager and `from pyueye import ueye` failed at import time until the
+maintainer installed that driver mid-session. Because of this, every `pyueye` import in
+`UeyeBackend` is lazy (inside methods, never at module load), so the tool still runs
+and reports 0 IDS cameras rather than crashing when the driver isn't present. Added as
+an optional dependency comment in the umbrella repo's `requirements.txt`, matching the
+existing `AMFTools` pattern.
+
+**Bug found on first real benchmark run**: 25.03fps at Mono12/native/1×1, and - the
+tell - 2×2 binning made no difference, ruling out a bandwidth/data-volume explanation.
+Root-caused to a freshly-initialized uEye camera's conservative default pixel clock
+(200MHz of a 120-400MHz range) and a frame-rate cap stuck at ~25fps regardless of
+exposure/binning, neither a real sensor/USB limit. Fixed via a new
+`UeyeBackend.maximize_throughput()` (raises pixel clock to max via `is_PixelClock`,
+then requests the fastest legal frame rate via `is_GetFrameTimeRange`/`is_SetFrameRate`),
+called after binning and before exposure is applied. Verified on the bench:
+Mono8/native/1×1 25fps→~117fps, Mono12/native/1×1 (maintainer's real settings)
+25.03fps→**85.07fps** (confirmed via a real `benchmark_ui.py` timed-benchmark run: 2552
+frames/30s, 0 late frames).
+
+**Also fixed**: `is_WaitForNextImage`/`is_InitImageQueue` are marked deprecated in this
+pyueye release (`4.96.952`) with no bundled replacement for the queue-capture pattern
+still in use - confirmed functionally correct regardless. First fix attempt (filtering
+by `module="pyueye"`) silently didn't work because pyueye's `deprecated()` wrapper uses
+`stacklevel=2`, attributing the warning to the *calling* code's module, not to pyueye
+itself - fixed by filtering on the warning's message text instead. Verified with
+`warnings.simplefilter("always")` forcing everything else to show: zero targeted
+warnings leaked through a real capture run.
+
+**Camera comparison extended to three real models** (a2A3840-45umBAS, acA5472-17um,
+UI-3160CP-M-GL Rev.2.1) - resolution/pixel-size/frame-rate/shutter-type table and the
+global-shutter-vs-LED-PWM-striping reasoning (relevant here specifically, not just
+generically) in the new findings doc. Maintainer's call: stay on the a2A3840-45umBAS as
+primary; IDS camera documented as an alternative, notably for its global shutter, if
+LED-PWM striping turns out not to be fully solved by exposure/intensity tuning alone in
+practice.
+
+**Sweep-cycle rate question (§3's deferred item) closed**: maintainer clarified the
+real acquisition pattern is single-shot software-triggered capture (settle → trigger
+one frame → move on), not continuous streaming - a different question from everything
+`benchmark_ui.py` had measured so far. Measured standalone (uEye
+`is_SetExternalTrigger(IS_SET_TRIGGER_SOFTWARE)` + blocking `is_FreezeVideo(IS_WAIT)`,
+n=200 reps per setting, not yet wired into `UeyeBackend` itself - deliberately deferred,
+maintainer will implement triggered capture directly in the real app): ~17ms median
+round-trip at Mono12/native (maintainer's real settings), tight jitter (~0.4ms stdev).
+Combined with the settle-time numbers above: LCTF settle time (~35-90ms depending on
+direction) comfortably dominates camera latency (~17-20ms) in every case - camera choice
+is not a sweep-*speed* bottleneck for any of the three cameras evaluated. No single
+combined end-to-end run (LCTF + camera together) was performed; both halves measured
+independently was enough to answer the question. Full data and reasoning in
+`spikes/lspri_acq_phase0/docs/camera_backend_and_throughput_findings.md`; §3 and §12 of
+the plan doc updated to match. Nothing from today committed yet.

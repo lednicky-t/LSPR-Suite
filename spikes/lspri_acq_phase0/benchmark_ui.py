@@ -1,19 +1,39 @@
 """LSPRimaging Acquisition — Phase 0 throughput spike, with a live preview.
 
-Not part of any app. Purpose: measure real Basler capture rate and per-frame
+Not part of any app. Purpose: measure real camera capture rate and per-frame
 ROI-extraction cost on the actual camera. NOTE: there is no fixed rate target -
 the goal is "as fast as achievable", not "clear 16 Hz". 16 Hz appears in labels
 below only as a historical reference point from early planning, not a pass/fail
 line. See docs/architecture/general/lspri_acq_architecture_and_shared_shell_plan.md, §3.
+
+Supports two camera vendors behind a small CameraBackend interface (see
+below), auto-detecting whichever is plugged in - no model check, and no
+hardcoded resolution/format/exposure assumptions:
+- Basler, via pypylon (GenICam). Tested against both the a2A3840-45umBAS
+  (3840x2160, 45fps) and the acA5472-17um (5472x3648, 17fps).
+- IDS uEye, via pyueye (tested against a UI-3160CP-M-GL Rev.2.1). pyueye is a
+  ctypes wrapper around IDS's own ueye_api.dll driver, which ships separately
+  in IDS's "IDS Software Suite" installer (not pip-installable) - `from
+  pyueye import ueye` fails at import time if that driver isn't installed, so
+  this backend is written NOT TO BE IMPORTED until it's actually
+  selected/probed (see UeyeBackend's docstring). Verified end-to-end on real
+  hardware: model/resolution readback, Mono8/Mono10/Mono12 capture, and 2x2
+  binning all confirmed correct.
+
+Pixel format, binning, and exposure are all validated/adapted against
+whatever camera actually connects (see each backend's apply_* methods) and
+logged rather than failing outright if a different model doesn't support what
+was requested.
 
 Run: .venv\\Scripts\\python.exe spikes\\lspri_acq_phase0\\benchmark_ui.py
 
 What this shows:
 - A live preview (so you can confirm focus/exposure/framing while measuring -
   a pure console script can't do that).
-- Pixel format, hardware binning (1x/2x/4x - trades resolution for lower data
-  volume while keeping the full field of view), and exposure time, all
-  adjustable and applied on the next "Start capture".
+- Camera selection (auto-detect or force a specific vendor), pixel format,
+  hardware binning (1x/2x/4x - trades resolution for lower data volume while
+  keeping the full field of view), and exposure time, all adjustable and
+  applied on the next "Start capture".
 - N synthetic circular ROIs overlaid on the image, count adjustable live.
 - Rolling capture FPS and per-frame ROI-extraction time (bounding-box-cropped
   mask, not a full-image mask - see the note above RoiMasks for why that
@@ -35,9 +55,12 @@ import queue
 import sys
 import threading
 import time
+import warnings
+from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -56,13 +79,449 @@ from PyQt6.QtWidgets import (
 )
 import pyqtgraph as pg
 
-from pypylon import pylon
+
+# ── Camera backend interface ────────────────────────────────────────────────
+#
+# CameraGrabThread drives cameras only through this interface, never through a
+# vendor SDK directly - that's what lets it support Basler and IDS (and any
+# future vendor) without knowing which one is plugged in. Each backend owns
+# all vendor-specific translation (units, struct types, capability queries)
+# internally so the rest of this tool stays vendor-neutral (exposure is
+# always microseconds here, regardless of what the native SDK uses).
+
+class CameraBackend(ABC):
+    def __init__(self) -> None:
+        self.model_name: str = "unknown"
+
+    @staticmethod
+    @abstractmethod
+    def count_available() -> int:
+        """Number of cameras this backend can see, without opening one.
+        Must NEVER raise - return 0 if the vendor SDK/driver isn't even
+        installed. Used for auto-detect and must stay cheap/side-effect-free."""
+
+    @abstractmethod
+    def open(self) -> None:
+        """Open the first available device and populate self.model_name."""
+
+    @abstractmethod
+    def native_size(self) -> tuple[int, int]:
+        """(width, height) at full sensor resolution, no binning applied."""
+
+    @abstractmethod
+    def apply_pixel_format(self, requested: str, log: Callable[[str], None]) -> str:
+        """Apply `requested` ("Mono8"/"Mono10"/"Mono12") if supported, else
+        fall back to something the camera does support and log why. Returns
+        the format actually applied."""
+
+    @abstractmethod
+    def apply_binning(self, n: int, log: Callable[[str], None]) -> None:
+        """Apply NxN binning if supported, else log and leave at 1x1."""
+
+    @abstractmethod
+    def apply_exposure_us(self, requested_us: float, log: Callable[[str], None]) -> None:
+        """Apply exposure time (microseconds), clamped to the camera's real
+        range with a log message if the requested value was out of range."""
+
+    @abstractmethod
+    def maximize_throughput(self, log: Callable[[str], None]) -> None:
+        """Undo any conservative post-connect defaults (e.g. a low pixel
+        clock) that would cap achievable fps below what the current format/
+        binning/AOI can actually sustain - a no-op where the vendor SDK
+        doesn't need it (e.g. Basler already runs at full capability by
+        default). Call after apply_binning (frame size affects the ceiling)
+        and before apply_exposure_us."""
+
+    @abstractmethod
+    def start_grabbing(self) -> None: ...
+
+    @abstractmethod
+    def retrieve_frame(self, timeout_ms: int) -> np.ndarray | None:
+        """Block up to timeout_ms for the next frame. Returns None for "no
+        frame this cycle, not fatal" (e.g. a dropped grab); raises for a real
+        error (e.g. camera unplugged, hard timeout)."""
+
+    @abstractmethod
+    def stop_grabbing(self) -> None: ...
+
+    @abstractmethod
+    def close(self) -> None: ...
+
+
+class PylonBackend(CameraBackend):
+    """Basler cameras via pypylon (GenICam)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pylon = None
+        self.cam = None
+
+    @staticmethod
+    def count_available() -> int:
+        try:
+            from pypylon import pylon
+        except Exception:
+            return 0
+        try:
+            tlf = pylon.TlFactory.GetInstance()
+            return len(tlf.EnumerateDevices())
+        except Exception:
+            return 0
+
+    def open(self) -> None:
+        from pypylon import pylon
+        self._pylon = pylon
+        tlf = pylon.TlFactory.GetInstance()
+        devices = tlf.EnumerateDevices()
+        if not devices:
+            raise RuntimeError("No Basler camera found.")
+        self.cam = pylon.InstantCamera(tlf.CreateDevice(devices[0]))
+        self.cam.Open()
+        self.model_name = self.cam.DeviceModelName.Value
+
+    def native_size(self) -> tuple[int, int]:
+        return int(self.cam.Width.Max), int(self.cam.Height.Max)
+
+    def apply_pixel_format(self, requested: str, log: Callable[[str], None]) -> str:
+        # Different camera models expose different pixel-format sets - fall
+        # back to whatever the connected camera actually supports instead of
+        # failing outright on a format chosen against a different model.
+        pixel_format = requested
+        try:
+            supported_formats = list(self.cam.PixelFormat.Symbolics)
+        except Exception:
+            supported_formats = []
+        if supported_formats and pixel_format not in supported_formats:
+            fallback = supported_formats[0]
+            log(
+                f"{self.model_name} does not support pixel format {pixel_format} "
+                f"(supports: {', '.join(supported_formats)}) - using {fallback} instead."
+            )
+            pixel_format = fallback
+        self.cam.PixelFormat.SetValue(pixel_format)
+        return pixel_format
+
+    def apply_binning(self, n: int, log: Callable[[str], None]) -> None:
+        # Binning reduces resolution while keeping the full field of view
+        # (combines NxN sensor pixels into one output pixel) - unlike
+        # Width/Height/Offset cropping, which keeps full pixel resolution
+        # but narrows the FOV. Average mode (not Sum) keeps binned pixel
+        # values in roughly the same intensity range as unbinned, which
+        # matters once this feeds into intensity-ratio/absorbance math.
+        # Some camera models don't expose binning at all - degrade to 1x1
+        # rather than failing the whole connection over it.
+        try:
+            self.cam.BinningHorizontal.SetValue(n)
+            self.cam.BinningVertical.SetValue(n)
+            try:
+                self.cam.BinningHorizontalMode.SetValue("Average")
+                self.cam.BinningVerticalMode.SetValue("Average")
+            except Exception:
+                pass  # older/other models may not expose the mode selector
+        except Exception as exc:
+            if n != 1:
+                log(f"{self.model_name} does not support {n}x binning ({exc}) - continuing at 1x1.")
+        self.cam.Width.SetValue(self.cam.Width.Max)
+        self.cam.Height.SetValue(self.cam.Height.Max)
+
+    def apply_exposure_us(self, requested_us: float, log: Callable[[str], None]) -> None:
+        exposure_us = requested_us
+        try:
+            lo, hi = self.cam.ExposureTime.Min, self.cam.ExposureTime.Max
+            if not (lo <= exposure_us <= hi):
+                clamped = min(max(exposure_us, lo), hi)
+                log(
+                    f"Requested exposure {exposure_us:.0f}us is outside {self.model_name}'s range "
+                    f"({lo:.0f}-{hi:.0f}us) - clamped to {clamped:.0f}us."
+                )
+                exposure_us = clamped
+        except Exception:
+            pass  # if the range can't be read, let SetValue below surface the real error
+        self.cam.ExposureTime.SetValue(exposure_us)
+
+    def maximize_throughput(self, log: Callable[[str], None]) -> None:
+        pass  # pypylon cameras already run at full capability by default - nothing to unlock
+
+    def start_grabbing(self) -> None:
+        self.cam.StartGrabbing(self._pylon.GrabStrategy_LatestImageOnly)
+
+    def retrieve_frame(self, timeout_ms: int) -> np.ndarray | None:
+        result = self.cam.RetrieveResult(timeout_ms, self._pylon.TimeoutHandling_ThrowException)
+        try:
+            if result.GrabSucceeded():
+                return result.Array.copy()  # copy out of pylon's internal buffer before releasing
+            return None
+        finally:
+            result.Release()
+
+    def stop_grabbing(self) -> None:
+        if self.cam is not None and self.cam.IsGrabbing():
+            self.cam.StopGrabbing()
+
+    def close(self) -> None:
+        if self.cam is not None and self.cam.IsOpen():
+            self.cam.Close()
+
+
+class UeyeBackend(CameraBackend):
+    """IDS uEye cameras via pyueye - a low-level ctypes wrapper around IDS's
+    own ueye_api.dll. That DLL is NOT part of the pip package - it ships with
+    IDS's separate "IDS Software Suite" / "IDS peak" installer, and `from
+    pyueye import ueye` fails at IMPORT time (not just at use) if that driver
+    isn't installed. So unlike PylonBackend, every use of `ueye` here is
+    behind a lazy, guarded import - this backend must be safe to construct
+    and probe (count_available()) even on a machine that never installed the
+    IDS driver, without taking the rest of this tool down with it.
+
+    Modeled on IDS's own official pyueye_example (the Camera / ImageBuffer /
+    ImageData pattern from pyueye_example_camera.py and
+    pyueye_example_utils.py, (c) IDS Imaging Development Systems GmbH,
+    BSD-style license) rather than invented from scratch, since the uEye
+    SDK's sequence-buffer/queue lifecycle is easy to get subtly wrong (e.g.
+    buffer size not matching the post-binning AOI).
+
+    Verified end-to-end against a real UI-3160CP-M-GL Rev.2.1 once the IDS
+    Software Suite driver was installed: model name and native size read
+    back correctly (1920x1200), Mono8/Mono10/Mono12 all captured real frames
+    with the expected value range (Mono10 <=1023, Mono12 <=4095, confirming
+    the 16-bit-container assumption below), and 2x2 binning produced exactly
+    the expected 960x600 frames. Before that driver was installed on this
+    machine, `from pyueye import ueye` failed at import time (device showed
+    "Error" status in Windows Device Manager) - pip installing pyueye alone
+    does not make the camera usable, the separate driver install is required.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._ueye = None
+        self.h_cam = None
+        self._img_buffers: list[tuple] = []
+        self._native_w = 0
+        self._native_h = 0
+        self._color_mode = None
+        self._bits_per_pixel = 8
+        self._frame_w = 0
+        self._frame_h = 0
+
+    @staticmethod
+    def count_available() -> int:
+        try:
+            from pyueye import ueye
+        except Exception:
+            return 0  # covers both "pyueye not installed" and "IDS driver DLL not found"
+        try:
+            n = ueye.c_int(0)
+            if ueye.is_GetNumberOfCameras(n) != ueye.IS_SUCCESS:
+                return 0
+            return int(n.value)
+        except Exception:
+            return 0
+
+    def open(self) -> None:
+        from pyueye import ueye
+        # is_WaitForNextImage/is_InitImageQueue (used in retrieve_frame/
+        # start_grabbing below) are marked deprecated in this pyueye release,
+        # with no replacement shipped for the queue-capture pattern IDS's own
+        # official example uses - confirmed still functionally correct
+        # against real hardware, so this silences the otherwise very noisy
+        # per-frame warning rather than switching to an unverified API.
+        # Filtered by message, not module: pyueye's deprecated() wrapper
+        # passes stacklevel=2, which attributes the warning to whichever
+        # module CALLED the deprecated function (this one, or __main__) -
+        # not to pyueye itself - so a module-based filter silently never
+        # matches.
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Call to deprecated function is_(WaitForNextImage|InitImageQueue|ExitImageQueue)\.",
+            category=DeprecationWarning,
+        )
+        self._ueye = ueye
+        self.h_cam = ueye.HIDS(0)  # 0 = first available camera, mirrors pypylon's devices[0]
+        ret = ueye.is_InitCamera(self.h_cam, None)
+        if ret != ueye.IS_SUCCESS:
+            self.h_cam = None
+            raise RuntimeError(
+                f"is_InitCamera failed (error code {ret}) - is the IDS Software Suite driver "
+                "installed, and the camera not already held open by another program "
+                "(e.g. IDS Camera Manager / IDS peak Cockpit)?"
+            )
+
+        sensor_info = ueye.SENSORINFO()
+        ueye.is_GetSensorInfo(self.h_cam, sensor_info)
+        sensor_name = sensor_info.strSensorName.decode(errors="replace").rstrip("\x00")
+        self.model_name = f"IDS uEye ({sensor_name})" if sensor_name else "IDS uEye camera"
+        self._native_w = int(sensor_info.nMaxWidth)
+        self._native_h = int(sensor_info.nMaxHeight)
+
+        rect_aoi = ueye.IS_RECT()
+        rect_aoi.s32X = ueye.int(0)
+        rect_aoi.s32Y = ueye.int(0)
+        rect_aoi.s32Width = ueye.int(self._native_w)
+        rect_aoi.s32Height = ueye.int(self._native_h)
+        ueye.is_AOI(self.h_cam, ueye.IS_AOI_IMAGE_SET_AOI, rect_aoi, ueye.sizeof(rect_aoi))
+
+    def native_size(self) -> tuple[int, int]:
+        return self._native_w, self._native_h
+
+    def apply_pixel_format(self, requested: str, log: Callable[[str], None]) -> str:
+        ueye = self._ueye
+        # IS_CM_MONO10/12 pack samples into a 16-bit container, the same way
+        # the SDK's RAW10/RAW12 modes do - inferred from that pattern (see
+        # class docstring), not independently confirmed on real hardware.
+        color_modes = {
+            "Mono8": (ueye.IS_CM_MONO8, 8),
+            "Mono10": (ueye.IS_CM_MONO10, 16),
+            "Mono12": (ueye.IS_CM_MONO12, 16),
+        }
+        mode, bits = color_modes.get(requested, color_modes["Mono8"])
+        applied = requested if requested in color_modes else "Mono8"
+        ret = ueye.is_SetColorMode(self.h_cam, mode)
+        if ret != ueye.IS_SUCCESS:
+            if applied != "Mono8":
+                log(f"{self.model_name} does not support pixel format {requested} (error {ret}) - using Mono8 instead.")
+            mode, bits = color_modes["Mono8"]
+            ueye.is_SetColorMode(self.h_cam, mode)
+            applied = "Mono8"
+        self._color_mode = mode
+        self._bits_per_pixel = bits
+        return applied
+
+    def apply_binning(self, n: int, log: Callable[[str], None]) -> None:
+        ueye = self._ueye
+        if n == 1:
+            ueye.is_SetBinning(self.h_cam, ueye.IS_BINNING_DISABLE)
+            return
+        mode_by_factor = {
+            2: ueye.IS_BINNING_2X_HORIZONTAL | ueye.IS_BINNING_2X_VERTICAL,
+            4: ueye.IS_BINNING_4X_HORIZONTAL | ueye.IS_BINNING_4X_VERTICAL,
+        }
+        mode = mode_by_factor.get(n)
+        if mode is None:
+            log(f"{self.model_name}: {n}x binning not offered by this tool - continuing at 1x1.")
+            return
+        supported = ueye.is_SetBinning(self.h_cam, ueye.IS_GET_SUPPORTED_BINNING)
+        if not (supported & mode):
+            log(f"{self.model_name} does not support {n}x binning - continuing at 1x1.")
+            return
+        ret = ueye.is_SetBinning(self.h_cam, mode)
+        if ret != ueye.IS_SUCCESS:
+            log(f"{self.model_name}: setting {n}x binning failed (error {ret}) - continuing at 1x1.")
+
+    def apply_exposure_us(self, requested_us: float, log: Callable[[str], None]) -> None:
+        # uEye exposure is metric (milliseconds), unlike pypylon's
+        # microseconds - converted here so CameraGrabThread stays
+        # vendor-neutral (always microseconds).
+        ueye = self._ueye
+        lo_ms, hi_ms = ueye.c_double(), ueye.c_double()
+        ueye.is_Exposure(self.h_cam, ueye.IS_EXPOSURE_CMD_GET_EXPOSURE_RANGE_MIN, lo_ms, ueye.sizeof(lo_ms))
+        ueye.is_Exposure(self.h_cam, ueye.IS_EXPOSURE_CMD_GET_EXPOSURE_RANGE_MAX, hi_ms, ueye.sizeof(hi_ms))
+        requested_ms = requested_us / 1000.0
+        lo, hi = lo_ms.value, hi_ms.value
+        if hi > 0 and not (lo <= requested_ms <= hi):
+            clamped_ms = min(max(requested_ms, lo), hi)
+            log(
+                f"Requested exposure {requested_us:.0f}us is outside {self.model_name}'s range "
+                f"({lo * 1000:.0f}-{hi * 1000:.0f}us) - clamped to {clamped_ms * 1000:.0f}us."
+            )
+            requested_ms = clamped_ms
+        exposure_param = ueye.c_double(requested_ms)
+        ueye.is_Exposure(self.h_cam, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, exposure_param, ueye.sizeof(exposure_param))
+
+    def maximize_throughput(self, log: Callable[[str], None]) -> None:
+        # Freshly initialized uEye cameras default to a conservative pixel
+        # clock and an even more conservative frame-rate cap - measured on
+        # this camera as 200MHz (of a 120-400MHz range) and ~25fps
+        # regardless of exposure/binning, neither of which is a real sensor/
+        # USB bandwidth limit. Confirmed on the bench: raising both took
+        # this camera from 25fps to ~117fps at Mono8/native/1x1. Must run
+        # after apply_binning (frame size affects the achievable ceiling)
+        # and before apply_exposure_us (a long exposure can legitimately cap
+        # frame rate below this ceiling - that's fine, this just removes the
+        # *artificial* cap).
+        ueye = self._ueye
+        try:
+            pc_range = (ueye.UINT * 3)()
+            ret = ueye.is_PixelClock(self.h_cam, ueye.IS_PIXELCLOCK_CMD_GET_RANGE, pc_range, ueye.sizeof(pc_range))
+            if ret == ueye.IS_SUCCESS and pc_range[1].value > 0:
+                max_pc = pc_range[1].value
+                ueye.is_PixelClock(self.h_cam, ueye.IS_PIXELCLOCK_CMD_SET, ueye.UINT(max_pc), ueye.sizeof(ueye.UINT(max_pc)))
+        except Exception as exc:
+            log(f"{self.model_name}: could not raise pixel clock ({exc}) - achievable fps may be lower than possible.")
+
+        try:
+            min_s, max_s, inc_s = ueye.c_double(), ueye.c_double(), ueye.c_double()
+            ret = ueye.is_GetFrameTimeRange(self.h_cam, min_s, max_s, inc_s)
+            if ret == ueye.IS_SUCCESS and min_s.value > 0:
+                applied_fps = ueye.c_double()
+                ueye.is_SetFrameRate(self.h_cam, ueye.c_double(1.0 / min_s.value), applied_fps)
+                log(f"{self.model_name}: pixel clock/frame rate maximized for the current format/binning "
+                    f"(~{applied_fps.value:.1f} fps ceiling before exposure time is applied).")
+        except Exception as exc:
+            log(f"{self.model_name}: could not raise frame rate ({exc}) - it may default to ~25fps.")
+
+    def start_grabbing(self) -> None:
+        ueye = self._ueye
+        for mem_ptr, mem_id in self._img_buffers:
+            ueye.is_FreeImageMem(self.h_cam, mem_ptr, mem_id)
+        self._img_buffers = []
+
+        rect_aoi = ueye.IS_RECT()
+        ueye.is_AOI(self.h_cam, ueye.IS_AOI_IMAGE_GET_AOI, rect_aoi, ueye.sizeof(rect_aoi))
+        self._frame_w = rect_aoi.s32Width.value
+        self._frame_h = rect_aoi.s32Height.value
+
+        # 3 sequence buffers is IDS's own example default - enough to absorb
+        # normal scheduling jitter between capture and is_WaitForNextImage().
+        for _ in range(3):
+            mem_ptr = ueye.c_mem_p()
+            mem_id = ueye.int()
+            ueye.is_AllocImageMem(self.h_cam, self._frame_w, self._frame_h, self._bits_per_pixel, mem_ptr, mem_id)
+            ueye.is_AddToSequence(self.h_cam, mem_ptr, mem_id)
+            self._img_buffers.append((mem_ptr, mem_id))
+        ueye.is_InitImageQueue(self.h_cam, 0)
+        ueye.is_CaptureVideo(self.h_cam, ueye.IS_DONT_WAIT)
+
+    def retrieve_frame(self, timeout_ms: int) -> np.ndarray | None:
+        ueye = self._ueye
+        mem_ptr = ueye.c_mem_p()
+        mem_id = ueye.int()
+        ret = ueye.is_WaitForNextImage(self.h_cam, timeout_ms, mem_ptr, mem_id)
+        if ret != ueye.IS_SUCCESS:
+            return None
+        x, y, bits, pitch = ueye.int(), ueye.int(), ueye.int(), ueye.int()
+        ueye.is_InquireImageMem(self.h_cam, mem_ptr, mem_id, x, y, bits, pitch)
+        raw = ueye.get_data(mem_ptr, self._frame_w, self._frame_h, bits, pitch, True)
+        if self._bits_per_pixel == 8:
+            frame = raw.reshape(self._frame_h, self._frame_w).copy()
+        else:
+            frame = raw.view(np.uint16).reshape(self._frame_h, self._frame_w).copy()
+        ueye.is_UnlockSeqBuf(self.h_cam, mem_id, mem_ptr)
+        return frame
+
+    def stop_grabbing(self) -> None:
+        if self._ueye is None or self.h_cam is None:
+            return
+        self._ueye.is_StopLiveVideo(self.h_cam, self._ueye.IS_FORCE_VIDEO_STOP)
+        for mem_ptr, mem_id in self._img_buffers:
+            self._ueye.is_FreeImageMem(self.h_cam, mem_ptr, mem_id)
+        self._img_buffers = []
+
+    def close(self) -> None:
+        if self._ueye is not None and self.h_cam is not None:
+            self._ueye.is_ExitCamera(self.h_cam)
+            self.h_cam = None
+
+
+BACKENDS: dict[str, type[CameraBackend]] = {
+    "pylon": PylonBackend,
+    "ueye": UeyeBackend,
+}
 
 
 # ── Camera capture thread ───────────────────────────────────────────────────
 #
-# Runs pypylon's blocking RetrieveResult() loop off the GUI thread - the same
-# separation the real app's acquisition pipeline will need (§8 of the
+# Runs the backend's blocking retrieve_frame() loop off the GUI thread - the
+# same separation the real app's acquisition pipeline will need (§8 of the
 # architecture plan). frameReady carries the raw ndarray and the capture
 # timestamp; ROI extraction happens on the GUI thread for this spike (single-
 # threaded on purpose first - see whether that alone sustains the target
@@ -71,59 +530,60 @@ from pypylon import pylon
 
 class CameraGrabThread(QThread):
     frameReady = pyqtSignal(object, float)
+    logMessage = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, pixel_format: str = "Mono8", binning: int = 1, exposure_us: float | None = None) -> None:
+    def __init__(
+        self,
+        backend_name: str,
+        pixel_format: str = "Mono8",
+        binning: int = 1,
+        exposure_us: float | None = None,
+    ) -> None:
         super().__init__()
+        self._backend_name = backend_name
         self._pixel_format = pixel_format
         self._binning = binning
         self._exposure_us = exposure_us
         self._running = False
-        self.cam: pylon.InstantCamera | None = None
+        self.backend: CameraBackend | None = None
+        self.camera_model = "unknown"
 
     def run(self) -> None:
         try:
-            tlf = pylon.TlFactory.GetInstance()
-            devices = tlf.EnumerateDevices()
-            if not devices:
-                self.error.emit("No Basler camera found.")
+            backend_cls = BACKENDS.get(self._backend_name)
+            if backend_cls is None:
+                self.error.emit(f"Unknown camera backend '{self._backend_name}'.")
                 return
-            self.cam = pylon.InstantCamera(tlf.CreateDevice(devices[0]))
-            self.cam.Open()
-            self.cam.PixelFormat.SetValue(self._pixel_format)
-            # Binning reduces resolution while keeping the full field of view
-            # (combines NxN sensor pixels into one output pixel) - unlike
-            # Width/Height/Offset cropping, which keeps full pixel resolution
-            # but narrows the FOV. Average mode (not Sum) keeps binned pixel
-            # values in roughly the same intensity range as unbinned, which
-            # matters once this feeds into intensity-ratio/absorbance math.
-            self.cam.BinningHorizontal.SetValue(self._binning)
-            self.cam.BinningVertical.SetValue(self._binning)
-            try:
-                self.cam.BinningHorizontalMode.SetValue("Average")
-                self.cam.BinningVerticalMode.SetValue("Average")
-            except Exception:
-                pass  # older/other models may not expose the mode selector
-            self.cam.Width.SetValue(self.cam.Width.Max)
-            self.cam.Height.SetValue(self.cam.Height.Max)
+            self.backend = backend_cls()
+            self.backend.open()
+            self.camera_model = self.backend.model_name
+
+            applied_format = self.backend.apply_pixel_format(self._pixel_format, self.logMessage.emit)
+            self.backend.apply_binning(self._binning, self.logMessage.emit)
+            self.backend.maximize_throughput(self.logMessage.emit)
+            width, height = self.backend.native_size()
             if self._exposure_us is not None:
-                self.cam.ExposureTime.SetValue(self._exposure_us)
-            self.cam.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+                self.backend.apply_exposure_us(self._exposure_us, self.logMessage.emit)
+
+            self.logMessage.emit(
+                f"Connected: {self.camera_model}, native {width}x{height}, "
+                f"pixel format {applied_format}, binning {self._binning}x{self._binning}."
+            )
+
+            self.backend.start_grabbing()
             self._running = True
             while self._running:
-                result = self.cam.RetrieveResult(2000, pylon.TimeoutHandling_ThrowException)
-                if result.GrabSucceeded():
-                    frame = result.Array.copy()  # copy out of pylon's internal buffer before releasing
+                frame = self.backend.retrieve_frame(timeout_ms=2000)
+                if frame is not None:
                     self.frameReady.emit(frame, time.perf_counter())
-                result.Release()
-        except Exception as exc:  # noqa: BLE001 - surface any pylon error to the UI
+        except Exception as exc:  # noqa: BLE001 - surface any backend error to the UI
             self.error.emit(str(exc))
         finally:
             try:
-                if self.cam is not None and self.cam.IsGrabbing():
-                    self.cam.StopGrabbing()
-                if self.cam is not None and self.cam.IsOpen():
-                    self.cam.Close()
+                if self.backend is not None:
+                    self.backend.stop_grabbing()
+                    self.backend.close()
             except Exception:
                 pass
 
@@ -323,6 +783,11 @@ class BenchmarkWindow(QMainWindow):
         layout = QVBoxLayout(root)
 
         controls = QHBoxLayout()
+        controls.addWidget(QLabel("Camera:"))
+        self.camera_combo = QComboBox()
+        self.camera_combo.addItems(["Auto-detect", "Basler (pypylon)", "IDS (pyueye)"])
+        controls.addWidget(self.camera_combo)
+
         controls.addWidget(QLabel("Pixel format:"))
         self.pixel_format_combo = QComboBox()
         self.pixel_format_combo.addItems(["Mono8", "Mono10", "Mono12"])
@@ -330,10 +795,10 @@ class BenchmarkWindow(QMainWindow):
 
         controls.addWidget(QLabel("Binning:"))
         self.binning_combo = QComboBox()
-        # Label shows the resulting resolution for THIS camera (3840x2160 native) -
-        # if you run this against a different camera, the labels will be wrong
-        # relative to its native size, but the binning factor applied is correct.
-        self.binning_combo.addItems(["1x1 (3840x2160, ~8.3MP)", "2x2 (1920x1080, ~2.1MP)", "4x4 (960x540, ~0.5MP)"])
+        # Labels describe the binning factor only, not a fixed resolution - the
+        # actual resulting size depends on whatever camera is connected and is
+        # shown live in the stats line below (frame: WxH) once capturing.
+        self.binning_combo.addItems(["1x1 (native resolution)", "2x2 (1/4 resolution)", "4x4 (1/16 resolution)"])
         controls.addWidget(self.binning_combo)
 
         controls.addWidget(QLabel("Exposure (us):"))
@@ -395,15 +860,45 @@ class BenchmarkWindow(QMainWindow):
         else:
             self._stop_capture()
 
+    def _resolve_backend_name(self) -> str | None:
+        choice = self.camera_combo.currentText()
+        if choice.startswith("Basler"):
+            return "pylon"
+        if choice.startswith("IDS"):
+            return "ueye"
+        # Auto-detect: probe both without opening either, prefer Basler if
+        # both are present (matches this tool's original single-camera
+        # assumption), and tell the user so they can force the other one.
+        pylon_n = PylonBackend.count_available()
+        ueye_n = UeyeBackend.count_available()
+        if pylon_n and ueye_n:
+            self._log(
+                f"Auto-detect found both a Basler camera ({pylon_n}) and an IDS camera ({ueye_n}) - "
+                "using Basler. Pick a specific camera above to choose the other one."
+            )
+            return "pylon"
+        if pylon_n:
+            return "pylon"
+        if ueye_n:
+            return "ueye"
+        self._log("Auto-detect found no camera from either backend (Basler/pypylon or IDS/pyueye).")
+        return None
+
     def _start_capture(self) -> None:
+        backend_name = self._resolve_backend_name()
+        if backend_name is None:
+            return
         self._first_frame_shown = False
-        self._roi_masks = RoiMasks(boxes=[])  # force rebuild - image size may have changed (binning)
+        self._roi_masks = RoiMasks(boxes=[])  # force rebuild - image size may have changed (binning/camera)
         pf = self.pixel_format_combo.currentText()
         binning = int(self.binning_combo.currentText().split("x")[0])
         exposure_us = float(self.exposure_spin.value())
-        self._grab_thread = CameraGrabThread(pixel_format=pf, binning=binning, exposure_us=exposure_us)
+        self._grab_thread = CameraGrabThread(
+            backend_name=backend_name, pixel_format=pf, binning=binning, exposure_us=exposure_us
+        )
         self._grab_thread.frameReady.connect(self._on_frame)
         self._grab_thread.error.connect(self._on_error)
+        self._grab_thread.logMessage.connect(self._log)
         self._grab_thread.start()
         self.start_button.setText("Stop capture")
         if self.disk_write_check.isChecked():
@@ -413,7 +908,8 @@ class BenchmarkWindow(QMainWindow):
                       f"(rotating {_SCRATCH_FILE_COUNT} files, bounded disk use).")
         else:
             self._save_writer = None
-        self._log(f"Starting: pixel_format={pf}, binning={binning}x{binning}, exposure={exposure_us:.0f}us "
+        self._log(f"Starting: camera={backend_name}, pixel_format={pf}, binning={binning}x{binning}, "
+                   f"exposure={exposure_us:.0f}us "
                    "(settings from the controls above apply now - change them and Stop/Start again to re-apply).")
         self.benchmark_button.setEnabled(True)
 
@@ -539,9 +1035,10 @@ class BenchmarkWindow(QMainWindow):
                 f"growing/high = it fell behind and would need a bigger safety margin or faster storage), "
                 f"{mb}MB written to {_SCRATCH_DIR}\n"
             )
+        camera_model = self._grab_thread.camera_model if self._grab_thread is not None else "unknown"
         summary = (
             f"### Phase 0 results — {time.strftime('%Y-%m-%d %H:%M')}\n"
-            f"- Camera: Basler a2A3840-45umBAS, pixel format {pf}, binning {binning}, "
+            f"- Camera: {camera_model}, pixel format {pf}, binning {binning}, "
             f"exposure {exposure_us}us\n"
             f"- ROI count: {roi_count}\n"
             f"- Duration: {duration:.0f}s, frames captured: {self._benchmark_frame_count}\n"
