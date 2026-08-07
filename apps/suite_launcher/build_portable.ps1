@@ -90,6 +90,15 @@ foreach ($item in $copyTargets) {
     Copy-Item $source $destination -Recurse -Force
 }
 
+# End-user installation guide (written for someone who just received this
+# folder, unlike README.md above which is developer/build-from-source
+# oriented) - placed at the bundle root, not nested under docs/, so it's the
+# first thing visible when the folder is opened.
+$installGuideSource = Join-Path $suiteRoot "docs\portable_installation_guide.md"
+if (Test-Path $installGuideSource) {
+    Copy-Item $installGuideSource (Join-Path $bundleRoot "Installation Guide.md") -Force
+}
+
 # --- Bundled Python runtime for launching the (non-frozen) apps -------------
 #
 # A plain `python -m venv .venv` is NOT relocatable: on Windows its
