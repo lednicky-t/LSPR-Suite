@@ -481,3 +481,60 @@ process launch, not just the test suite, since this touches settings loaded at s
 **Not done**: real per-user-settings-file behavior on real hardware (not applicable -
 this is pure file I/O, already covered by the test suite); nothing from today
 committed yet, pending the maintainer's go-ahead (submodule + umbrella commit).
+
+## 2026-08-07 (continued): Phase 1 item 1.3.2 — diagnostics extracted, scope corrected
+
+Picked up 1.3.2 next, per the plan's ordering. This item's own description turned out
+to name the wrong file.
+
+**What the plan called "`gui/runtime_diagnostics.py`'s profile system" is actually two
+different things of very different sizes**: the real off/normal/debug/deep profile
+system is top-level `diagnostics.py` (231 lines, `DiagnosticsConfig` + env-var parsing +
+a logging filter) - small, and genuinely app-agnostic on inspection (every env var it
+reads - `LSPR_DIAGNOSTICS_PROFILE`, `LSPR_QUIET_DIAGNOSTICS`,
+`LSPR_SUPPRESS_DIAGNOSTIC_INFO_LOGS`, `LSPR_ENABLE_DIAGNOSTIC_EXPORT`,
+`LSPR_DISABLE_DIAGNOSTIC_EXPORT`, `TOP_CONTENT_TRACE` - is suite-scoped, not
+app-prefixed, and `from_window()`'s attribute reads follow a generic convention any
+main window could implement). `gui/runtime_diagnostics.py` is a different, much bigger
+file (~1200 lines) - `SessionDiagnosticsSnapshot`, the diagnostics-*panel*'s content
+builder, consuming `DiagnosticsConfig` but built entirely out of `getattr(window,
+"_last_spectrum_..._ms", ...)`-style reads against sLSPR acq's specific spectrum/trace/
+sensorgram plot internals, scheduler stats, and log-buffer counters. Checked
+`gui/main_window_startup_diagnostics.py` too (434 lines, widget-stack startup tracing) -
+same story, keyed to `_top_content_stack`/`_experiment_control_window`/`_spectra_block`
+identity checks specific to this app's window layout.
+
+**Decision**: extract only `diagnostics.py` (the actual profile/config layer). Leave
+`gui/runtime_diagnostics.py` and `gui/main_window_startup_diagnostics.py` behind -
+contrary to this item's original "mostly already shared-package-shaped" framing, neither
+has a modality-agnostic seam; they're consumers of the shared config, not shareable
+content themselves. LSPRi acq will write its own diagnostics-panel content builder
+later, against its own window, reusing `DiagnosticsConfig` from `lspr_acq_shell`.
+
+**Also checked, deliberately left alone**: `packages/lspr_core/src/lspr_core/launch_profiles.py`
+(`LAUNCH_PROFILE_*`, the Full/Simulation/Control-editor launch profile selector). It's
+already reachable from both `apps/sLSPR/acq` and `apps/suite_launcher` via `lspr_core`
+(confirmed by grep - the suite launcher imports it too, for the launcher's per-app
+profile dropdown), so the plan's "already in lspr_core" note holds and no relocation was
+needed for this item. Worth flagging for whoever picks up Phase 2 though: its *content*
+is 100% sLSPR-specific (`LSPR_ACQ_LAUNCH_PROFILE` env var name, `source_mode="spectrometer"`,
+`show_sensorgram`, etc.) - LSPRi acq will need its own `LaunchProfileSpec` set with
+different fields (camera/illumination-shaped, not spectrometer/sensorgram-shaped), not a
+shared one. Not a Phase 1 problem; noted here so it isn't rediscovered from scratch.
+
+**Mechanics**: same pattern as 1.3.1 - `lspr_acq_shell.diagnostics` gets the real
+`DiagnosticsConfig`/`apply_diagnostic_info_filter`; sLSPR acq's `diagnostics.py` becomes
+a thin re-export shim (5 call sites - `app.py`, `gui/main_window.py`,
+`gui/main_window_logging.py`, `gui/main_window_logging_ui.py`,
+`gui/runtime_diagnostics.py` - unaffected). `tests/integration/test_diagnostics.py`
+repointed at `lspr_acq_shell.diagnostics` directly (no state-patching concern here,
+unlike `user_profile` - `DiagnosticsConfig` is a stateless frozen dataclass - but kept
+the "test the real owner" convention from 1.3.1 anyway).
+
+**Verified**: full umbrella suite, 861/862 (the one failure is the same pre-existing
+Windows temp-dir-cleanup race as every prior entry - `test_async_writer_reports_failure_via_on_error_callback`,
+reconfirmed passing in isolation again). `pyflakes` clean on all 4 touched files. sLSPR
+acq launched twice more (`LSPR_FORCE_SIMULATOR=1`, 10s each - once before, once after
+this item's changes) with no errors/tracebacks either time.
+
+**Not done**: nothing from today committed yet, pending the maintainer's go-ahead.

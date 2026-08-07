@@ -9,6 +9,11 @@ moved in - do not add speculative re-exports ahead of the real extraction.
 
 from __future__ import annotations
 
+from .diagnostics import (
+    DiagnosticsConfig,
+    DiagnosticsProfile,
+    apply_diagnostic_info_filter,
+)
 from .settings_store import (
     get_and_clear_settings_corruption_notice,
     load_app_setting,
@@ -40,6 +45,9 @@ __all__ = [
     "APP_VERSION",
     "__version__",
     "version_string",
+    "DiagnosticsConfig",
+    "DiagnosticsProfile",
+    "apply_diagnostic_info_filter",
     "DEFAULT_SETTINGS_FILENAME",
     "GLOBAL_CONFIG_PATH",
     "active_user",

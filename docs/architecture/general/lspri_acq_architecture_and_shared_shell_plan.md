@@ -327,9 +327,22 @@ Simulation profiles), and confirm nothing regressed before moving to the next it
 
 1. **Settings persistence pattern** — `lspr_settings.json`-style JSON read/write helpers
    currently in sLSPR acq's `storage/app_config.py`. Small, no device coupling.
-2. **Diagnostics** — `gui/runtime_diagnostics.py`'s profile system (off/normal/debug/deep)
-   and the launch-profile env-var plumbing already in `lspr_core` (`LAUNCH_PROFILE_*`).
-   Mostly already shared-package-shaped; confirm it has zero sLSPR-specific assumptions.
+2. **Diagnostics** — the off/normal/debug/deep verbosity-profile system, actually in
+   top-level `diagnostics.py` (`DiagnosticsConfig`), not `gui/runtime_diagnostics.py`
+   (that file is the diagnostics-*panel*'s content builder, deeply main-window-specific
+   - see the extraction note below). Also the launch-profile env-var plumbing already in
+   `lspr_core` (`LAUNCH_PROFILE_*`) - no relocation needed there, it's already reachable
+   by every app and the suite launcher, though its *content* (profile labels,
+   sensorgram/spectrometer-specific flags) is sLSPR-specific; LSPRi acq will define its
+   own `LaunchProfileSpec` set later, not a Phase 1 concern.
+   **Extracted 2026-08-07**: `diagnostics.py` moved to `lspr_acq_shell` as-is - confirmed
+   zero sLSPR-specific assumptions (every env var it reads is suite-scoped, not
+   app-prefixed). `gui/runtime_diagnostics.py`'s `SessionDiagnosticsSnapshot` and
+   `gui/main_window_startup_diagnostics.py` do NOT move - unlike this profile/config
+   layer, both are deeply coupled to sLSPR acq's specific main window internals
+   (spectrum/trace/sensorgram plots, `_top_content_stack`) with no modality-agnostic
+   seam. LSPRi acq will need its own diagnostics-panel content builder against its own
+   window, reusing only `DiagnosticsConfig`.
 3. **HDF5 async-writer base** — the threading/queue plumbing in `storage/hdf5_export.py`'s
    `AsyncHDF5MeasurementWriter` (tag-dispatch `append`/`append_metrics`/etc., same-process
    `threading.Thread` + `queue.Queue`). This part was already noted as closer to reusable
@@ -795,8 +808,18 @@ picking this up cold.
       alongside it (not originally scoped to this item, but coupled — see the
       2026-08-07 build-log entry for why and for the app-scoping generalization
       this required).
-- [ ] **1.3.2 — Diagnostics** (`gui/runtime_diagnostics.py`'s profile system)
-      extracted; confirmed zero sLSPR-specific assumptions before moving.
+- [x] **1.3.2 — Diagnostics** extracted — done, but scope corrected from what
+      this item originally described. The actual "off/normal/debug/deep"
+      profile system is `diagnostics.py` (`DiagnosticsConfig`, top-level, not
+      `gui/`) - genuinely app-agnostic, confirmed zero sLSPR-specific
+      assumptions, moved as-is. `gui/runtime_diagnostics.py` (~1200 lines,
+      `SessionDiagnosticsSnapshot`) and `gui/main_window_startup_diagnostics.py`
+      turned out to be deeply coupled to sLSPR acq's specific main window
+      (spectrum/trace/sensorgram plot internals) with no modality-agnostic
+      seam - correctly left behind, not extracted. See the 2026-08-07
+      build-log entry for the full reasoning and for a note on
+      `lspr_core/launch_profiles.py`'s content also being sLSPR-specific
+      (left in place, not this item's problem to solve).
 - [ ] **1.3.3 — HDF5 async-writer plumbing** (`AsyncHDF5MeasurementWriter`'s
       threading/queue mechanism, not the spectrum-specific schema) extracted.
 - [ ] **1.3.4 — Sensorgram + session/run management** extracted

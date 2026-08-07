@@ -1,3 +1,8 @@
+"""Moved here from apps/sLSPR/acq/tests (Phase 1 shell extraction,
+2026-08-07) - lspr_acq_shell.diagnostics is the real owner of DiagnosticsConfig
+now; apps/sLSPR/acq/src/lspr_app/diagnostics.py is a thin re-export shim with
+no behavior of its own to test.
+"""
 from __future__ import annotations
 
 import unittest
@@ -8,14 +13,7 @@ from tests._paths import ensure_repo_paths
 
 ensure_repo_paths()
 
-from pathlib import Path
-import sys
-
-APP_SRC = Path(__file__).resolve().parents[1] / "apps" / "sLSPR" / "acq" / "src"
-if str(APP_SRC) not in sys.path:
-    sys.path.insert(0, str(APP_SRC))
-
-from lspr_app.diagnostics import DiagnosticsConfig
+from lspr_acq_shell.diagnostics import DiagnosticsConfig
 
 
 class DiagnosticsConfigTests(unittest.TestCase):
