@@ -951,15 +951,31 @@ picking this up cold.
       abstract (no default), unlike `lspr_acq_shell.Spectrometer`'s precedent - see the
       build-log entry for why a default doesn't transfer safely to these two. 9 unit
       tests, no Qt/no hardware.
-- [ ] `Camera`/`IlluminationSource` registered as new families into the generalized
-      registry from `lspr_acq_shell` (§6.1). **Deliberately deferred** *(2026-08-08)* -
-      needs a real `discover_and_connect` design decision that shouldn't be guessed at
-      ahead of an actual Basler/VariSpec driver; see the build-log entry.
+- [x] `Camera` registered as a new family into the generalized registry from
+      `lspr_acq_shell` (§6.1) - **`IlluminationSource` still pending**, alongside a real
+      driver for it. *(2026-08-08)* Found and fixed a real gap first: the plan assumed
+      `DeviceCommunicationService.connect()` was already generic (only *discovery* was,
+      from the earlier registry generalization - construction was still a hardcoded
+      three-way `reglo_icc`/`amf-mswitch`/valve-detect dispatch). Confirmed with the
+      maintainer before implementing: added an additive `register_driver_connect_factory()`
+      to `device_manager.py` (same idiom as `register_device_family()`, for the
+      construction step), inserted before the valve catch-all branch (which would
+      otherwise have silently swallowed any new driver key). See the build-log entry,
+      including a real test-isolation finding (`register_device_family()` mutates
+      process-global state - this app's tests must not run in the same pytest
+      invocation as the umbrella `tests/` suite).
 - [ ] `ImagingExperimentControlBackend` implemented against the shared
       `ExperimentControlBackend` Protocol (§6.2).
-- [ ] Basler driver (`pypylon`), manually verified against real hardware.
+- [x] Basler driver (`pypylon`) built *(2026-08-08)* - **not yet manually verified
+      against real hardware** (no Basler camera was attached in the environment this
+      was written in; confirmed 0 devices via real `pylon.TlFactory.EnumerateDevices()`
+      calls, which is what the unit tests exercise). Pixel-format/binning/exposure
+      handling mirrors the Phase 0 spike's real-hardware-verified `PylonBackend`;
+      software-trigger sequencing and single-shot `GrabOne`-style acquisition are new
+      and unverified. Verify end-to-end against physical hardware before relying on it.
 - [ ] VariSpec driver, manually verified against real hardware. Manual (`1794348.pdf`)
-      copied into `apps/LSPRi/acq/docs/manuals/` once the app directory exists.
+      copied into `apps/LSPRi/acq/docs/manuals/` *(2026-08-08, done - relocated from
+      `spikes/lspri_acq_phase0/` per this item's own note)*.
 - [ ] Lori-protocol LED driver (reference implementation) — confirm `CONF_STEP`
       semantics and software-triggered single-pulse capability against real
       hardware before trusting it; this is explicitly a reference, not necessarily

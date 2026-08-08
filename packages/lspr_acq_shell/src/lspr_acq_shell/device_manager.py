@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from collections import deque
 from time import perf_counter
+from typing import Callable
 
 from lspr_acq_shell.amf_mswitch import AMFSwitchController, amf_tools_available, detect_amf_selector_devices
 from lspr_acq_shell.device_driver import DeviceDriver
@@ -116,6 +117,56 @@ _LEGACY_LABEL_MIGRATIONS: dict[str, _LabelMigration] = {
     # "switch_main" was an old label for the AMF selector (before "selector" type was established)
     "switch_main":  _LabelMigration("selector_1", "Main Selector",  "main_selector", "switch_main"),
 }
+
+
+# ── Driver connect-factory registry ──────────────────────────────────────────────
+#
+# Generalizes _connect_impl()'s construction step (2026-08-08, LSPRi acq Phase 2):
+# reglo_icc/amf-mswitch/valve-detect stay exactly as they were (three hardcoded
+# branches below, untouched), but a new driver key (e.g. a camera or
+# illumination-source driver in a different app built on this same service) can
+# now register itself here instead of needing a fourth hardcoded branch. This
+# mirrors the "register instead of hardcode a branch" idiom
+# device_lifecycle.register_device_family() already established for discovery -
+# this is the matching generalization for *connection construction*, which that
+# earlier pass did not cover (discovery and connect are different steps: a family
+# can be discoverable via register_device_family() and still have had no way to
+# actually connect, before this).
+
+DriverConnectFactory = Callable[[str], tuple[object, dict[str, str]]]
+
+_DRIVER_CONNECT_FACTORIES: dict[str, DriverConnectFactory] = {}
+
+
+def register_driver_connect_factory(driver_key: str, factory: DriverConnectFactory) -> None:
+    """Register how to construct-and-connect a connection object for a profile
+    whose ``driver`` field equals *driver_key*.
+
+    ``factory(endpoint)`` must construct the driver, call its own connect
+    method itself (this service never calls a second connect step), and
+    return ``(connection, identity)``:
+
+    - ``connection`` must expose ``._claim_owner`` (per-instance
+      ``f"{controller_type}:{id(self)}"`` - the invariant every existing
+      driver already follows, see
+      ``apps/sLSPR/acq/docs/device-layer/DEVICE_LAYER_AUDIT_2026.md``),
+      ``.is_connected()``, and ``.close()`` - the same surface
+      ``RegloICCClient``/``AMFSwitchController``/valve controllers already
+      implement and this service already calls generically via ``getattr()``
+      in ``disconnect()``/``status()``/``is_connected()``. Only
+      ``_connect_impl()``'s construction step was ever hardcoded to three
+      concrete classes - the rest of the lifecycle was already generic.
+    - ``identity`` is a flat ``dict[str, str]`` passed straight to
+      ``_make_status()`` (``model``/``serial_number``/... - whatever fields
+      the driver has; no fixed shape required beyond "string values").
+
+    Checked in ``_connect_impl()`` *before* the existing valve catch-all
+    branch (which matches on "any non-empty/non-auto/non-unknown driver
+    string" and would otherwise silently swallow a new driver key by routing
+    it into ``detect_valve_controller()``) - registering a driver key here
+    always takes priority over that catch-all.
+    """
+    _DRIVER_CONNECT_FACTORIES[driver_key] = factory
 
 
 class DeviceCommunicationService:
@@ -445,6 +496,17 @@ class DeviceCommunicationService:
                         "controller_type": probe.controller_type,
                     })
                 self._record_event(label=profile.label, endpoint=endpoint, owner=self._connection_owners[profile.label], action="connect", command=None, result="success", duration_ms=0.0, message=probe.model)
+                return status
+
+            factory = _DRIVER_CONNECT_FACTORIES.get(profile.driver)
+            if factory is not None:
+                connection, identity = factory(endpoint)
+                with self._state(f"connect_commit:{profile.label}"):
+                    self._connections[profile.label] = connection
+                    self._connection_owners[profile.label] = connection._claim_owner
+                    self._last_errors.pop(profile.label, None)
+                    status = self._make_status(profile.label, profile, True, None, identity)
+                self._record_event(label=profile.label, endpoint=endpoint, owner=connection._claim_owner, action="connect", command=None, result="success", duration_ms=0.0, message=identity.get("model", ""))
                 return status
 
             if profile.type in {"switch", "valve"} or profile.driver not in {"auto", "unknown", ""}:

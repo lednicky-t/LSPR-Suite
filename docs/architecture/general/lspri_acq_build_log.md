@@ -1031,3 +1031,149 @@ Left for the next session, alongside the real Basler/VariSpec drivers it's meant
 Also not done: nothing from today committed yet, pending the maintainer's go-ahead
 (new submodule content + umbrella `requirements.txt`/`targets.py` changes +
 `.gitmodules`/submodule-pointer addition).
+
+**Committed and pushed** *(2026-08-08, same day)*: maintainer reviewed and approved.
+Submodule commit `cd5c5ff` ("Scaffold LSPRimaging Acquisition (Phase 2)...") pushed to
+`lednicky-t/LSPRimaging-Acquisition`; umbrella commit `7abddf1` ("Add LSPRimaging
+Acquisition submodule; start Phase 2...") pushed to `lednicky-t/LSPR-Suite` `develop`.
+
+## 2026-08-08 (continued): CAMERA device family registered; real (unverified) Basler driver built
+
+Maintainer asked to continue. Picked up where the previous entry left off - registering
+`Camera`/`IlluminationSource` as device families (section 6.1).
+
+**Real gap found between the plan's assumption and the actual code, before writing
+anything**: section 6.1 says Camera/Illumination "plug into lifecycle management... for
+free" via `register_device_family()`. Traced `DeviceCommunicationService._connect_impl()`
+(`device_manager.py`) to confirm this holds, and it doesn't fully: the 2026-08-06 registry
+generalization (this file's own earlier entry) only generalized *discovery* dispatch in
+`device_lifecycle.py` - `_connect_impl()`'s *construction* step was never touched, and is
+still a hardcoded three-way branch (`profile.driver == "reglo_icc"` → `RegloICCClient`,
+`"amf-mswitch"` → `AMFSwitchController`, else-if-non-empty-driver → `detect_valve_controller`).
+A family registered via `register_device_family()` alone would discover fine and then fail
+the moment `connect()` tried to build a connection object for it. Also noted a real shape
+mismatch: `send_command()`/`DeviceCommand` is sized for small discrete commands (pump
+"stop", switch "move") with a string/dict response - a poor fit for `Camera.acquire_frame()`
+returning a full image; the existing selector post-connect hook already works around this
+for reads by fetching `service.connection(label)` directly rather than going through
+`send_command()`, which is the same escape hatch a Camera/IlluminationSource's real work
+(not just connect/disconnect) will use.
+
+**Presented two options to the maintainer rather than guessing**: (a) extend
+`DeviceCommunicationService` with a small additive driver-construction registry, matching
+the "register instead of hardcode a branch" idiom `register_device_family()` already
+established, so Camera/Illumination get full lifecycle management (BUSY state, labels,
+connect/disconnect) like pump/valve/selector; (b) give Camera/Illumination their own,
+separate lifecycle path entirely, touching `device_manager.py` not at all. Maintainer chose
+(a).
+
+**Implemented**: `register_driver_connect_factory(driver_key, factory)` in
+`device_manager.py` - `factory(endpoint)` constructs the driver, connects it itself, and
+returns `(connection, identity)`; `connection` must expose `._claim_owner`/`.is_connected()`/
+`.close()`, the same surface `RegloICCClient`/`AMFSwitchController`/valve controllers already
+implement and this service already calls generically via `getattr()` in
+`disconnect()`/`status()`/`is_connected()` - confirmed by reading those three methods first:
+only `_connect_impl()`'s construction step was ever hardcoded, the rest of the lifecycle
+(disconnect, status, command dispatch, is_connected) was already fully generic. The registry
+lookup is inserted in `_connect_impl()` **before** the existing valve catch-all branch
+(`profile.type in {"switch","valve"} or profile.driver not in {"auto","unknown",""}`) - that
+branch matches on "any non-empty/non-auto/non-unknown driver string," so a new driver key
+registered *after* it in source order would have been silently routed into
+`detect_valve_controller()` instead, a real landmine caught by reading the branch's actual
+condition rather than assuming append-only was safe. Registered nowhere near the fluidics
+branches themselves, which are byte-for-byte untouched. Exported from `lspr_acq_shell`'s
+`__init__.py`.
+
+**Verified**: 3 new unit tests
+(`tests/unit/test_device_manager_driver_registry.py`, testing the real owner, not a shim) -
+a registered driver key connects/disconnects/reports status generically; an unregistered
+driver key still falls through to the pre-existing "unresolved" error, proving the new
+check doesn't swallow a case it has no business handling. Full umbrella suite unaffected
+(880 passed alone this run - the usual pre-existing Windows temp-dir flake didn't trigger
+this particular run, consistent with it being intermittent per every prior entry
+mentioning it). `pyflakes` clean.
+
+**Camera device family registered** (`apps/LSPRi/acq/src/lspri_acq_app/device/registry.py`):
+`register_device_family(CAMERA, ...)` with a real `discover_and_connect_camera` callback
+(enumerates real Basler devices via `pypylon.pylon.TlFactory.EnumerateDevices()`, connects
+the first one found via the new driver-factory registry) and
+`register_driver_connect_factory(BASLER_DRIVER, ...)`. Calls the private
+`controller._connect_and_setup()`/`controller._service` directly, matching exactly how the
+three built-in families (`_pump_discover_and_connect` etc.) do it in `device_lifecycle.py` -
+deliberate, not an oversight: the public `request_connect()` adds a busy-guard meant for the
+manual on-demand "Connect" button path, which `run_full_cycle()`'s startup scan doesn't use
+for any other family either, so using it here would make Camera behave inconsistently under
+concurrent access compared to pump/switch/selector during their own full-cycle runs.
+**PUMP/SWITCH/SELECTOR reuse deliberately NOT wired in yet** - the plan flags this as an
+open question ("confirm this against your actual setup"), not a settled fact; guessing at it
+would misrepresent a real rig decision. **ILLUMINATION not registered yet** - no real driver
+exists for it.
+
+**Real test-isolation bug found and fixed while writing this module's own tests**:
+`register_device_family()` mutates process-global state in `lspr_acq_shell.device_lifecycle`
+(`_DEVICE_FAMILIES`/`_DEVICE_FAMILY_ORDER`) with no unregister mechanism. First attempt at
+`apps/LSPRi/acq/tests/test_device_registry.py` ran `python -m pytest tests/
+apps/LSPRi/acq/tests/` together to double-check nothing broke - `tests/unit/
+test_device_lifecycle.py`'s exact-3-built-in-families assertions failed, because importing
+`lspri_acq_app.device.registry` (a side effect of test collection) had registered a 4th
+family into the same global dict for the rest of that one Python process. Confirmed both
+suites pass cleanly run **separately** (`apps/LSPRi/acq/tests/` 23/23, `tests/unit/
+test_device_lifecycle.py` 37/37 alone, full `tests/` 865/865 alone) - this is not a bug in
+the registration mechanism itself (real apps are separate processes, so this never happens
+at runtime), only a test-suite combination hazard. Documented prominently in
+`registry.py`'s own module docstring and here: **`apps/LSPRi/acq/tests/` must be run as its
+own separate `pytest` invocation, never combined with the umbrella `tests/` suite** -
+matches the existing, established precedent of `apps/sLSPR/acq/tests/` also being a
+separate suite from the umbrella one, just newly load-bearing now that a second app
+registers into the same shared global registry.
+
+**Basler camera driver built** (`apps/LSPRi/acq/src/lspri_acq_app/device/basler_camera.py`)
+- software-triggered single-frame acquisition per the plan's v1 scope
+(`TriggerSelector=FrameStart`/`TriggerMode=On`/`TriggerSource=Software`, then
+`StartGrabbing`/`ExecuteSoftwareTrigger`/`RetrieveResult`/`StopGrabbing` per frame, not
+continuous streaming). Pixel-format/binning/exposure node calls
+(`PixelFormat.Symbolics`/`SetValue`, `BinningHorizontal`/`BinningVertical` with `Average`
+mode, `ExposureTime.Min`/`.Max` clamping) mirror
+`spikes/lspri_acq_phase0/benchmark_ui.py`'s `PylonBackend` exactly - the one part of this
+driver that IS real-hardware-verified (three real Basler-family cameras, Phase 0). Verified
+the installed `pypylon` API surface directly (`dir(pylon.TlFactory.GetInstance())`,
+`dir(pylon.DeviceInfo())`, `dir(pylon.InstantCamera)`) before writing any of this, rather
+than assuming method names from memory - confirmed `CreateDevice`/`DeviceInfo.
+SetSerialNumber`/`InstantCamera.Open`/`.GrabOne`/etc. all exist as documented.
+
+**Explicitly NOT verified against real hardware** - no Basler camera was attached in this
+environment (confirmed for real: `pylon.TlFactory.GetInstance().EnumerateDevices()` returned
+0 devices at the time of writing). What IS verified for real, without needing a camera
+physically present: `discover_basler_cameras()` genuinely returns `[]` right now (not
+mocked); constructing `BaslerCamera` with an unknown serial number and calling `open()`
+genuinely raises (confirmed manually first: `pylon.TlFactory.CreateDevice()` with a
+nonexistent serial number raises a real pylon `RuntimeException`, "No device is available or
+no device contains the provided device info properties" - `BaslerCamera.open()` wraps this
+in `CameraError` with the same message). The software-trigger node sequence and single-shot
+`GrabOne`-style acquisition are standard, well-documented GenICam patterns but have never
+been exercised against a physical camera - **verify open/configure/acquire_frame/close
+end-to-end against real hardware before relying on this for a real experiment**, matching
+every other "built but not yet hardware-verified" caveat already carried in this log (pump/
+valve/selector re-verification, 2026-08-06/08-08 entries).
+
+**Verified**: 5 new `BaslerCamera` unit tests + 1 `discover_basler_cameras()` test
+(`apps/LSPRi/acq/tests/test_basler_camera.py`) - all exercise real pypylon calls (no mocking
+of pypylon itself), just against the real "no camera attached" state rather than a real
+device. 2 new registry tests (`test_device_registry.py`) - deliberately avoid constructing a
+real `DeviceLifecycleController`/`DeviceCommunicationService` (would touch real settings
+files and, via `run_full_cycle()`'s PUMP/SWITCH/SELECTOR scan, real serial ports on this
+machine - out of scope and risky for a device-registration unit test), instead calling
+`_discover_and_connect_camera` directly, which is safe because the real "no camera found"
+path returns before ever touching the controller argument. App's own suite: 23/23
+(all of the above, run alone). Full umbrella suite: 864-865/865 across two runs (the one
+intermittent failure both times was the same pre-existing Windows temp-dir race, not a new
+one - confirmed by diffing which test failed against every prior entry mentioning it).
+`pyflakes` clean on every new/touched file (one real finding along the way: the deliberate
+side-effect import of `device/registry.py` in `app.py` needed the established `_ = (...)`
+idiom, not `# noqa: F401` - bare `pyflakes` doesn't honor `# noqa`, same as every prior
+entry that's hit this). App launched (`python apps/LSPRi/acq/src/main.py`, 10s), no
+tracebacks.
+
+**Not done**: `IlluminationSource`/VariSpec driver and family registration (next), Lori LED
+driver, `ImagingExperimentControlBackend`, the sweep pipeline, HDF5 schema extension, GUI
+panels - see section 12's checklist. Nothing from this entry committed yet.

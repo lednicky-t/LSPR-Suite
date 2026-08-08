@@ -20,7 +20,7 @@ from .device_lifecycle import (
     register_post_connect_hook,
     register_primary_detector_stage,
 )
-from .device_manager import DeviceCommunicationService
+from .device_manager import DeviceCommunicationService, register_driver_connect_factory
 from .device_types import PUMP, SELECTOR, SWITCH
 from .experiment_control_backend import (
     ExperimentControlBackend,
@@ -88,6 +88,7 @@ __all__ = [
     "register_post_connect_hook",
     "register_primary_detector_stage",
     "DeviceCommunicationService",
+    "register_driver_connect_factory",
     "PUMP",
     "SELECTOR",
     "SWITCH",
