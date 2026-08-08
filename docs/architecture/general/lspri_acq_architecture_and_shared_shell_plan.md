@@ -1079,8 +1079,19 @@ picking this up cold.
       fallback path (designed, not implemented).
       `SaveWriterThread.write_cube` is already the injection point this will plug
       into (`storage/image_writer.py` doesn't exist yet).
-- [ ] GUI: image view (latest-frame-only), ROI panel (manual placement only for v1),
-      minimal image-processing panel (crop/rotate/background-flatten) — §11.
+- [x] GUI: image view (latest-frame-only) + ROI panel (manual placement only for
+      v1) — §11. *(2026-08-08)* `gui/image_view_panel.py` (`pyqtgraph.ImageView`,
+      same display-orientation convention validated in the Phase 0 spike) +
+      `gui/roi_panel.py` (draggable/resizable `pg.CircleROI` per sample disk,
+      static reference-annulus overlay, add/delete/list, numeric reference-
+      diameter editing) - real screenshot-verified, wired into `main_window.py`
+      against a `SimulatedCamera` startup preview. A real GC-timing crash
+      ("Windows fatal exception: access violation" during garbage collection,
+      from unparented `RoiPanel` instances holding pyqtgraph scene-graph items)
+      was found and fixed in the test suite itself, not dismissed - see the
+      build-log entry. **Not yet built**: minimal image-processing panel (crop/
+      rotate/background-flatten), and no live sweep is wired to this view yet
+      (still shows one static startup preview frame, not a running acquisition).
 - [x] Unit tests for ROI/extinction/metric math (no Qt, no hardware) — §12.
       *(2026-08-08)* `processing/roi_extraction.py` (bounding-box-cropped
       `RoiMaskSet`/`RoiMaskCache` per the Phase 0 lesson - explicitly *not* a port of

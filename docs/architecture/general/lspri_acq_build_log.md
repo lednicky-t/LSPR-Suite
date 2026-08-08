@@ -1517,4 +1517,84 @@ view panel, ROI panel, a settings UI to actually drive `StorageSettings`, and a 
 of `SaveWriterThread.stats()`. `domain/roi_editor_tools.py` (AreaRoi-shaped geometry helpers)
 was built and tested in isolation but not yet wired into a panel. Recompression-after-
 acquisition (the uncompressed-live fallback) is designed but not implemented - no code reuses
-eva's batch exporter yet. Nothing from this entry committed yet.
+eva's batch exporter yet.
+
+**Committed and pushed** *(2026-08-08, same day)*: submodule commit `f96f4ee` ("Add TIFF and
+OME-Zarr image writers with live save-lag metrics") pushed to
+`lednicky-t/LSPRimaging-Acquisition`; umbrella commit `2c1cc89` ("Storage architecture: images
+separate from HDF5, TIFF/OME-Zarr benchmark") pushed to `lednicky-t/LSPR-Suite` `develop`.
+
+## 2026-08-08 (continued): image view + ROI panel built, screenshot-verified, one real crash found and fixed
+
+Continued into the GUI work this session was originally asked to start with -
+`domain/roi_editor_tools.py` (AreaRoi-shaped geometry helpers) was already built in the
+previous entry; picked up from there.
+
+**`gui/image_view_panel.py`**: wraps `pyqtgraph.ImageView`, hiding the line-profile ROI
+button and settings/export menu (not part of v1's scope - manual sample/reference ROI
+placement lives in `roi_panel.py` instead), matching the same hide-these-two pattern already
+validated in the Phase 0 spike. `show_frame(image)` calls `setImage(image.T, ...)` - the
+`.T` matters: pyqtgraph's native (x, y) plot axes are otherwise swapped relative to a numpy
+`(height, width)` array's natural row/column order, and `AreaRoi.center_x`/`center_y` (and
+`processing/roi_extraction.py`) already assume conventional image (column, row) coordinates -
+confirmed this was the exact reason the Phase 0 spike did the same transpose, not a new
+finding, but re-verified it actually holds here (screenshot below shows correctly-oriented,
+non-mirrored spots).
+
+**`gui/roi_panel.py`**: one draggable/resizable `pg.CircleROI` per `AreaRoi`'s sample disk
+(`sigRegionChangeFinished` synced back to the model via `move_roi()`/`roi_outer_radius_px()`
+from the previous entry - clamping uses the *outer* radius, i.e. the reference annulus's
+edge if configured, not just the sample disk, so a large reference ring can't be dragged
+half off-image while its small sample disk still looks "in bounds"), plus two static
+(non-interactive, `setAcceptedMouseButtons(NoButton)`) circles marking the reference
+annulus, repositioned to track the sample item automatically. A side list (add/select/
+delete, numeric reference-inner/outer-diameter spin boxes for the selected ROI, outer
+diameter clamped to never go below inner) - deliberately not a full drag-resizable reference
+ring for v1 (numeric editing is simpler and sufficient for "manual placement/editing only,"
+the plan's own v1 bar). Checked eva's `ImageInteractionController`/`OverlayManager` first
+rather than assuming a rewrite was needed - confirmed (per the existing, already-corrected
+section 10 note) they're genuinely Qt-coupled to eva's specific `MainWindow` with no
+reusable seam; this is a fresh, deliberately much smaller implementation, not a port.
+
+**Wired into `main_window.py`**: replaced the placeholder status label with a real
+`RoiPanel`, populated at startup with one frame from a `SimulatedCamera` (already-tested v1
+code path, not a shortcut around real device wiring) and two example ROIs - proves the
+image view + ROI overlay work end to end against real frame data, without yet needing the
+not-built sweep-pipeline-to-GUI wiring or experiment-control flow. Deliberately does not
+start a live sweep loop.
+
+**A real crash found and root-caused, not dismissed as a fluke**: the first test run of
+`test_roi_panel.py` hit `Windows fatal exception: access violation` during Python's cyclic
+garbage collection, at an unpredictable point a few tests into the file (not the same test
+each run). Investigated properly before assuming it was the known unrelated Qt/Windows COM
+quirk documented elsewhere in this log (2026-08-08, fluidics device-layer entry) - that one
+was confirmed via `git stash` to reproduce against *unmodified* code; this one only started
+happening once `RoiPanel` tests existed, so re-using that explanation without checking would
+have been exactly the kind of unverified assumption this project avoids. Root cause: each
+test's `setUp()` created an unparented `RoiPanel` (a `QWidget` holding `pg.CircleROI` items
+added directly to a `ViewBox`'s scene graph, not plain Qt child widgets) and never explicitly
+destroyed it - Python's GC would eventually collect several accumulated panels at once,
+whenever the cyclic collector happened to run, and pyqtgraph's ViewBox/GraphicsItem C++
+teardown order under that circumstance triggered the access violation. Fixed by adding
+explicit, deterministic cleanup (`widget.close()` + `deleteLater()` + `QApplication.
+processEvents()`) via `self.addCleanup(...)` in every test's `setUp()`, right after
+constructing the panel - confirmed the fix by running the full file 5 times in a row with no
+crash (it had reproduced on both of the first two attempts, at different tests each time,
+before the fix).
+
+**Verified**: 14 new Qt widget tests (`test_roi_panel.py`) - add/remove, next-id assignment,
+overlay item creation/removal, simulated drag-and-resize (moves the underlying `CircleROI`
+directly via `setPos`/`setSize` then invokes the same `sigRegionChangeFinished` handler a
+real drag triggers, rather than a full mouse-event harness) confirming model sync,
+edge-clamping, reference-overlay repositioning, the `on_rois_changed` callback, and
+reference-diameter editing with the outer-below-inner clamp. Real screenshot taken via
+`pywinauto` (same convention as the earlier scaffold screenshot) - two simulated Gaussian
+spots, correctly oriented, with orange sample-disk and blue dashed reference-annulus overlays
+positioned exactly on the spots, ROI list showing correct coordinates/radii. App's own suite
+run three times given the Qt/pyqtgraph object lifecycle work - 104/104 each time, no crashes,
+no flakes. `pyflakes` clean.
+
+**Not done**: image-processing panel (crop/rotate/background-flatten), a live sweep feeding
+this view (currently one static startup preview frame only), experiment-control panel reuse,
+`ILLUMINATION` device family registration, `ImagingExperimentControlBackend`. Nothing from
+this entry committed yet.
