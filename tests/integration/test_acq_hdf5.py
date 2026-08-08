@@ -21,7 +21,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_app.domain.models import ProcessingSettings, Spectrum
-from lspr_app.gui.experiment_control_import import build_experiment_plan_steps_from_hdf5_rows
+from lspr_acq_shell.experiment_control_import import build_experiment_plan_steps_from_hdf5_rows
 from lspr_app.gui.main_window_import_dialog import probe_measurement_hdf5
 from lspr_app.storage.app_config import load_processing_settings_from_hdf5
 from lspr_app.storage.hdf5_export import (

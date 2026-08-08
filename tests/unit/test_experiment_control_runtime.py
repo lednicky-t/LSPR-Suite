@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import unittest
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import ensure_repo_paths
 
 
 ensure_repo_paths()
 
-APP_SRC = REPO_ROOT / "apps" / "sLSPR" / "acq" / "src"
-import sys
-
-if str(APP_SRC) not in sys.path:
-    sys.path.insert(0, str(APP_SRC))
-
-from lspr_app.gui.experiment_control_runtime import (
+# Tests the real owner (lspr_acq_shell) directly, not the lspr_app shim -
+# matches the convention established across every Phase 1 extraction (see
+# docs/architecture/general/lspri_acq_build_log.md).
+from lspr_acq_shell.experiment_control_runtime import (
     experiment_runtime_label,
     experiment_runtime_payload_state,
     experiment_runtime_state_name,

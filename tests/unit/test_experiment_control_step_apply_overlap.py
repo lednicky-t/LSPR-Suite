@@ -22,7 +22,7 @@ _SRC = Path(__file__).resolve().parents[2] / "apps" / "sLSPR" / "acq" / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from lspr_app.gui.experiment_control_step_runner import _StepApplyResult
+from lspr_acq_shell.experiment_control_step_runner import _StepApplyResult
 from lspr_app.gui.experiment_control_window import ExperimentControlWindow
 
 

@@ -1014,8 +1014,30 @@ picking this up cold.
       including a real test-isolation finding (`register_device_family()` mutates
       process-global state - this app's tests must not run in the same pytest
       invocation as the umbrella `tests/` suite).
-- [ ] `ImagingExperimentControlBackend` implemented against the shared
-      `ExperimentControlBackend` Protocol (§6.2).
+- [ ] `LspriAcqExperimentControlBackend` (renamed from this item's original
+      `ImagingExperimentControlBackend` - "Imaging" was flagged by the maintainer
+      as an unclear adjective, 2026-08-09) implemented against the shared
+      `ExperimentControlBackend` Protocol (§6.2). **Confirmed with the maintainer**:
+      this app *does* drive the same pump/valve/selector fluidics system as sLSPR
+      acq, and should reuse the *same* experiment-control panel with full
+      functionality, not a separate/reduced one - this resolves §6.1's "confirm
+      this against your actual setup" open question. Given the panel is ~11,500
+      lines (`experiment_control_window.py` + 14 satellite files) with real
+      safety-critical logic (decides what commands actually go to the pump/valve/
+      selector), a real research pass (per-file window-coupling numbers, not
+      guesses) produced a 4-tier extraction/rewrite plan - see the 2026-08-09
+      build-log entry for the full breakdown and the maintainer's approval of the
+      sequencing. **Tier 0 (pure, zero window coupling, already tested) done
+      2026-08-09**: `pump_plan.py` (the `PumpPlanStep` domain model - a real
+      dependency all four Tier 0 GUI files share, not originally scoped as part
+      of "Tier 0" until traced) plus `experiment_control_runtime.py`/
+      `_export.py`/`_import.py`/`_step_runner.py` moved to `lspr_acq_shell`,
+      verbatim except one generalization (`to_core_experiment_plan()` no longer
+      imports `APP_VERSION` from `lspr_app.version` directly - see the build-log
+      entry). Tiers 1-3 (shared timeline/table widgets; the actual run/hold/
+      pause/stop state machine and step-command decision logic, which needs real
+      redesign, not just a move; the window-specific dialogs/editing, a rewrite
+      candidate) not started.
 - [x] Basler driver (`pypylon`) built *(2026-08-08)* - **not yet manually verified
       against real hardware** (no Basler camera was attached in the environment this
       was written in; confirmed 0 devices via real `pylon.TlFactory.EnumerateDevices()`

@@ -1671,4 +1671,121 @@ touched). App's own suite run three times - 114/114 each time, no flakes. Full u
 trigger). `pyflakes` clean.
 
 **Not done**: `ImagingExperimentControlBackend`, image-processing panel, live sweep wiring
-into the GUI, Lori LED driver. Nothing from this entry committed yet.
+into the GUI, Lori LED driver.
+
+**Committed and pushed** *(2026-08-08, same day)*: submodule commit `a189614` ("Register
+ILLUMINATION device family with a safe port-discovery strategy") pushed to
+`lednicky-t/LSPRimaging-Acquisition`; umbrella commit `1b10697` ("Bump LSPRi/acq submodule:
+ILLUMINATION device family registered") pushed to `lednicky-t/LSPR-Suite` `develop`.
+
+## 2026-08-09: `ImagingExperimentControlBackend` renamed and scoped; Tier 0 experiment-control extraction landed
+
+Maintainer asked what `ImagingExperimentControlBackend` actually was (explained: the
+concrete adapter LSPRi acq needs to write against `lspr_acq_shell`'s
+`ExperimentControlBackend` `Protocol`, mirroring sLSPR acq's own
+`AcquisitionExperimentControlBackend`), then gave two real answers that reframe this item:
+(1) **confirmed** this app does drive the same pump/valve/selector fluidics system as sLSPR
+acq (resolving §6.1's "confirm this against your actual setup" open question), and wants
+the *same* experiment-control panel with full functionality, reused rather than rebuilt;
+(2) flagged the name itself as unclear - "Imaging" doesn't say what the class does, and is
+now ambiguous anyway since both acquisition apps are "imaging" in the broad sense. Renamed
+to `LspriAcqExperimentControlBackend` (matches how the codebase already names things -
+`lspri_acq_app`, "LSPRi acq" throughout the docs) - not implemented yet, just renamed in
+the plan doc, since the maintainer's other point (reuse the *same* panel) reframes this
+from "write an adapter against an existing shared backend" to "the backend the panel needs
+doesn't fully exist as shared code yet either."
+
+**Real research before deciding extract-vs-rewrite, not a guess**: the experiment-control
+panel (`experiment_control_window.py` + 14 satellite files) is ~11,459 lines total,
+including real safety-critical logic (it decides what commands actually get sent to real
+pump/valve/selector hardware). Dispatched a thorough investigation - per-file line counts,
+grepped real `window.`/`self._window` reach-through counts (not descriptions, mirroring
+the plot_controller.py precedent from Phase 1's 1.3.4 entry), what's Qt-coupled-but-
+already-decoupled vs. genuinely window-entangled, existing test coverage, and V49's own
+proposed module split compared against what's actually built. Full findings: this session's
+conversation; summary in the plan doc's now-updated `LspriAcqExperimentControlBackend`
+checklist item.
+
+**4-tier plan presented and approved before touching any code**: Tier 0 (~1,218 lines, zero
+window coupling, already tested - plan import/export, run/hold/pause/stop state naming, the
+step-command hardware-dispatch mechanism) - move to `lspr_acq_shell` now, low risk. Tier 1
+(~1,077 lines, Qt-heavy but already self-contained widgets - the plan timeline and table
+views) - move next, still low risk. Tier 2 (~1,287 lines - `_plan_step_commands`, the
+actual safety-critical "what to send" logic, plus the run/hold/pause/stop timer loop) -
+needs real redesign (currently reads live widget values directly, e.g. a spinbox's
+`.value()`, instead of explicit parameters) before either app can share it - flagged as
+needing the maintainer's real-hardware sign-off before either app relies on a refactored
+version. Tier 3 (~2,417 lines - dialogs, cell-selection/drag-fill editing) - a rewrite
+candidate, not a port, matching this project's own established precedent with LSPRi eva's
+`OverlayManager`. Maintainer approved starting with Tier 0 this session.
+
+**Tier 0, executed**: found before moving anything that `pump_plan.py` (the `PumpPlanStep`
+domain model `experiment_control_import.py` and `_step_runner.py` both depend on) wasn't
+actually in `lspr_acq_shell` yet either - not originally named as part of "Tier 0," but a
+real, necessary dependency, traced rather than assumed. `pump_plan.py` itself was 249 lines
+with exactly one app-specific dependency: `to_core_experiment_plan()` imported
+`APP_VERSION` directly from `lspr_app.version` and stamped it into the returned plan's
+identity metadata - a backward dependency a shared package must not have (the same problem
+class already fixed once this project, for `device_lifecycle.py`'s spectrometer-stage
+import). Fixed by making `app_version` a required keyword argument on the shared version;
+sLSPR acq's own `domain/pump_plan.py` (now a shim) preserves the *exact* original call
+signature (`steps, *, app_name="LSPR Acquisition"`) by supplying `app_version=APP_VERSION`
+itself, so none of the 5 existing call sites in `experiment_control_window.py`/
+`flow_plan_model.py`/`main_window_state.py`/`storage/hdf5_export.py` needed to change -
+verified directly (constructed a plan through the shim, confirmed `app_version` came out
+as sLSPR acq's real `'0.4.0'`, not a placeholder). The two purely-internal
+`to_core_experiment_plan()` calls inside `pump_plan.py` itself
+(`recompute_plan_timing`/`steps_to_hdf5_rows`) use a placeholder `app_version="n/a"` -
+confirmed safe by tracing both call chains: neither ever reads the returned plan's
+`.identity`, only `.steps` or the row table built from them.
+
+**PyYAML was an implicit, undeclared dependency** - `experiment_control_import.py`/
+`_export.py` both import `yaml`, but `lspr_acq_shell`'s own `pyproject.toml` didn't list
+it; this only worked because sLSPR acq's `pyproject.toml` does, and both packages end up
+installed in the same environment. Fixed by adding `PyYAML` to `lspr_acq_shell`'s own
+declared dependencies - a shared package should be self-sufficient for what it exposes, not
+implicitly rely on a sibling app happening to have installed something.
+
+**Moved** (all four Tier 0 GUI files, verbatim except the one import-path change from
+`lspr_app.domain.pump_plan` to `lspr_acq_shell.pump_plan`): `experiment_control_runtime.py`
+(132 lines, confirmed zero coupling - moved with no changes at all),
+`experiment_control_export.py` (97 lines, zero coupling), `experiment_control_import.py`
+(847 lines - the CSV/TSV/native-YAML/HDF5 plan parsers, effectively zero coupling per the
+research pass), `experiment_control_step_runner.py` (142 lines - the actual hardware-command
+dispatch mechanism, zero coupling, already calling into `DeviceCommunicationService` which
+Phase 1 already shared). sLSPR acq's five originals (`pump_plan.py` +the four GUI files)
+are now thin re-export shims, following the exact convention established across every prior
+Phase 1 extraction.
+
+**Tests repointed to the real owner, not left on the shim** - matching the convention from
+every Phase 1 extraction: `tests/unit/test_experiment_control_runtime.py` (already at
+umbrella level, just repointed) and `apps/sLSPR/acq/tests/test_experiment_plan_import.py`
+(**moved** to `tests/unit/`, matching the 1.3.6 precedent of relocating a test file once its
+subject module leaves the app - not just repointed in place) both now import from
+`lspr_acq_shell` directly. Two more tests (`tests/integration/test_acq_hdf5.py`,
+`tests/unit/test_experiment_control_step_apply_overlap.py`) had exactly one import line each
+repointed - their actual subject is other code (`AsyncHDF5MeasurementWriter`,
+`ExperimentControlWindow`'s overlap-safety logic) that merely uses a moved class/function as
+a fixture, so only that one line needed fixing, not a full relocation.
+
+**Verified**: full umbrella suite 894/894 (868 baseline + 27 relocated
+`test_experiment_plan_import.py` tests - the one usual intermittent Windows temp-dir flake
+didn't trigger this run, consistent with every prior entry mentioning it as intermittent).
+sLSPR acq's own app-level suite: 14/22 passed *before* this change too (verified for real via
+`git stash` - the same 8 failures, byte-identical, reproduce against completely unmodified
+code; a pre-existing, unrelated issue in `apps/sLSPR/acq/tests/test_device_manager_locking.py`/
+`test_archive_backed_rolling_cache.py` patching a module-level name that no longer lives
+where they expect, the same class of stale-patch-target issue documented multiple times in
+this file for other files during Phase 1 - not something this change introduced or is
+responsible for fixing). `pyflakes` clean on every new/touched file. sLSPR acq launched
+twice (Simulation profile, `LSPR_FORCE_SIMULATOR=1`) - once headless (no tracebacks in the
+log) and once screenshotted via `pywinauto` - startup splash reached 100%/"Ready." with the
+correct real version (`ver. 0.4.0`, confirming the `APP_VERSION` shim chain resolved
+correctly at actual app startup, not just in isolated tests).
+
+**Not done**: Tiers 1-3 of the experiment-control extraction/rewrite plan (shared timeline/
+table widgets; the safety-critical step-command-decision redesign; the dialogs/editing
+rewrite), `LspriAcqExperimentControlBackend` itself (still blocked on Tier 2's redesign - the
+Protocol's `device_states()` needs real device-family keys the window's state machine
+produces, which isn't reusable yet), image-processing panel, live sweep wiring into the GUI,
+Lori LED driver. Nothing from this entry committed yet.
