@@ -1298,3 +1298,101 @@ scan needs the same kind of port-safety heuristics pump/valve discovery already 
 different role) - guessing at a simplified version of that risked sending VariSpec-specific
 probe commands (`V ?`) to a port that's actually the pump or selector. Left for a dedicated
 pass rather than rushed.
+
+**Committed and pushed** *(2026-08-08, same day)*: submodule commit `b0e7966` ("Add VariSpec
+LCTF driver, built from the real protocol manual") pushed to
+`lednicky-t/LSPRimaging-Acquisition`; umbrella commit `e1c46ff` ("Bump LSPRi/acq submodule:
+VariSpec LCTF driver") pushed to `lednicky-t/LSPR-Suite` `develop`.
+
+## 2026-08-08 (continued): ROI extraction, extinction math, and the three-thread sweep pipeline
+
+Maintainer chose to continue into the sweep pipeline + domain math (over finishing
+ILLUMINATION's device-family registration, or `ImagingExperimentControlBackend`) - the
+load-bearing piece everything else (GUI, HDF5 writer) hangs off of, and fully testable
+against the existing `SimulatedCamera`/`SimulatedIllumination` with no hardware or open
+design questions blocking it.
+
+**`processing/roi_extraction.py`**: bounding-box-cropped `RoiMaskSet`/`build_roi_mask_set`/
+`extract_roi_means`/`RoiMaskCache`, following the exact performance pattern Phase 0 measured
+and fixed (`spikes/lspri_acq_phase0/benchmark_ui.py`'s `RoiMasks`/`extract_roi_means` -
+~60x faster than a full-image mask). Checked LSPRimaging Evaluation's own
+`processing/roi.py` first, expecting to port it (per the architecture plan's general framing
+of ROI code as portable) - found it still uses `np.indices()` over the *full image shape*
+for every ROI, the exact O(image-size) bug Phase 0 found and fixed, and it extracts against
+`RoiDefinition` (a different type entirely - generic rectangle/ellipse with a padding+width
+background ring), not `AreaRoi`'s sample-disk + reference-annulus geometry already ported
+into this app. Built fresh instead of porting: `AreaRoi`-shaped (disk + annulus) masks, with
+the bounding-box-cropped approach.
+
+**`domain/extinction.py`**: `absorbance_from_means` (`-log10(sample/reference)`, NaN where
+either mean isn't positive) deliberately mirrors singleLSPR Acquisition's own
+`compute_absorbance()` (`apps/sLSPR/acq/src/lspr_app/domain/session.py`) formula and
+validity-gate convention for cross-app consistency - checked that function first rather than
+inventing a different one, even though the *geometry* it applies to is different (sLSPR
+divides a sequential sample spectrum by a separately-acquired reference spectrum; this app
+divides two regions of the *same* frame at each swept wavelength). Documented as a
+deliberate v1 simplification, not an oversight: no camera dark-current/bias subtraction step
+- the architecture plan's own section 8 pipeline goes straight from cube to per-ROI means to
+absorbance, with no dark-frame concept for imaging acquisition. `peak_absorbance` (simple
+argmax over finite points) and `centroid_wavelength` (intensity-weighted centroid, baseline-
+referenced) are a deliberately simpler reimplementation of the *idea* behind sLSPR acq's
+`centroid_from_curve()` (`domain/processing.py`) - not a port - since that function's fuller
+parameter set (`threshold_fraction`, a legacy no-threshold mode) is real complexity this app
+doesn't need yet. No Gaussian/polynomial curve-fit metric built - the plan's own pseudocode
+lists "centroid / peak / fit" as options, not all three required day one; left for a later,
+explicitly-scoped pass rather than adding fitting complexity that wasn't asked for.
+
+**`processing/cube_processing.py`**: `process_cube_for_rois(cube, rois, mask_cache,
+on_result=...)` - the section 8 per-cube loop ("for each ROI: extract → build absorbance
+spectrum → compute a metric"), ties the two modules above together. Reports results via a
+callback instead of owning a sensorgram data structure itself - no sensorgram GUI panel
+exists yet (section 10), so this module has no business deciding what
+`sensorgram.append_point` means; a future panel supplies the callback.
+
+**`acquisition/sweep_pipeline.py`**: `SweepController` (drives one wavelength sweep at a
+time: `illumination.set_wavelength()` → settle → `camera.acquire_frame()` → repeat, building
+a `SpectralCube`, then fans it out to a lossless save queue and a latest-only processing
+queue), `SaveWriterThread` (dedicated, drains the lossless queue, `write_cube` is the
+injection point a future HDF5 writer plugs into), `ProcessingThread` (drains the latest-only
+queue, `process_cube` is the injection point - `process_cube_for_rois` typically), and
+`build_sweep_pipeline()` (wires all three together with the right queue shapes). `queue.Queue`
++ `threading.Thread` throughout, not `multiprocessing.Queue` - per the plan's own section 8
+reasoning (image-sized payloads make repeated pickling through `mp.Queue` expensive, unlike
+sLSPR acq's spectrum-sized live-acquisition worker). `_queue_put_latest` (the
+"replace-pending-item, don't enqueue behind it" idiom) is adapted from sLSPR acq's
+`gui/workers.py::_queue_put_latest` - identical `put_nowait`/`get_nowait`/`Full`/`Empty` logic,
+just retargeted from `multiprocessing.Queue` to `queue.Queue` (same API shape, no behavior
+change).
+
+**A real bug found and fixed before this was ever exercised under a real failure**: the first
+draft's error path (`_run_one_sweep()` returns `None` on any exception, `_run()`'s loop just
+calls it again immediately) would have spun into a tight retry loop against a persistently
+failing camera - no delay between attempts, hammering the hardware and flooding logs
+indefinitely. Fixed with a `_SWEEP_ERROR_BACKOFF_S = 0.5` backoff using
+`self._stop_event.wait(...)` (not `time.sleep()`, so `stop()` still interrupts it promptly
+rather than waiting out a full backoff period) - caught by writing the failure-path test
+deliberately, not by inspection alone; the test asserts both that a persistently-failing
+camera produces only 1-2 errors over ~0.6s (not dozens, proving the backoff exists) and that
+`stop()` returns in under 0.5s during an active backoff (proving `stop()` still interrupts
+it).
+
+**Verified**: 32 new unit tests (`test_roi_extraction.py`, `test_extinction.py`) - masks are
+genuinely bounding-box-sized not full-image-sized (asserted directly, not just "the code
+looks right"), reference-annulus and no-annulus cases, cache identity/invalidation on
+geometry change, absorbance validity gate, peak/centroid edge cases (all-NaN, flat curve,
+too few points). 5 more (`test_sweep_pipeline.py`) targeting the pipeline mechanics directly
+(latest-only queue replacement, the error-backoff regression above, and a test proving the
+processing queue genuinely never exceeds 1 item even when deliberately never drained). 1
+golden-path smoke test (`test_sweep_pipeline_smoke.py`, section 11/12's explicit requirement)
+- 2 ROIs against `SimulatedCamera`/`SimulatedIllumination`, exercising save + processing
+concurrently (the exact concurrency shape that would have caught a Lori-SW-style bug), both
+ROIs produce a finite (non-NaN) sensorgram point, multiple cubes saved losslessly. App's own
+suite run **three times in a row** given the threading involved (not just once) - 61/61 each
+time, no flakes. Full umbrella suite (run separately, per the established convention) -
+865/865, no regression. `pyflakes` clean. App launched (`python
+apps/LSPRi/acq/src/main.py`, 10s) - unaffected by this entry (no GUI/app.py changes), no
+tracebacks.
+
+**Not done**: `storage/image_writer.py` (the real HDF5-backed `write_cube` - section 9/10),
+GUI panels (image view, ROI panel), `ImagingExperimentControlBackend`, `ILLUMINATION` device
+family registration (previous entry). Nothing from this entry committed yet.

@@ -1000,15 +1000,42 @@ picking this up cold.
       from this item's own "§9" typo - §9 is the HDF5 schema section, §7 is Domain
       model). *(2026-08-08)* Built to the exact shapes in §7; `AreaRoi`/`AreaRoiGroup`
       ported field-for-field, current names only.
-- [ ] Sweep controller + three-thread pipeline (§8) built and tested against
+- [x] Sweep controller + three-thread pipeline (§8) built and tested against
       simulated devices — same-process `threading.Thread`/`queue.Queue`, not
-      `multiprocessing.Queue`, unless Phase 0's results say otherwise.
+      `multiprocessing.Queue`. *(2026-08-08)* `SweepController`/`SaveWriterThread`/
+      `ProcessingThread` (`acquisition/sweep_pipeline.py`) - lossless save queue is
+      unbounded, processing queue is `maxsize=1` (latest-only, via a ported
+      `_queue_put_latest`, sLSPR acq's own drop-oldest idiom adapted from
+      `multiprocessing.Queue` to `queue.Queue`). One real fix found before this was
+      ever run: a persistently-failing camera would have spun `_run_one_sweep()` in
+      a tight retry loop with no delay, hammering the hardware and flooding logs -
+      added a `stop_event.wait()`-based backoff (interruptible by `stop()`, not a
+      plain `time.sleep()`), with a dedicated regression test proving both the
+      backoff *and* that `stop()` doesn't have to wait one out.
+      `processing/cube_processing.py` ties ROI extraction + extinction math together
+      per cube, reporting results via a callback rather than owning a sensorgram
+      data structure (no sensorgram GUI panel exists yet, §10).
 - [ ] HDF5 schema extension in `lspr_io` (§10) — minor version bump, changelog entry.
+      `SaveWriterThread.write_cube` is already the injection point this will plug
+      into (`storage/image_writer.py` doesn't exist yet).
 - [ ] GUI: image view (latest-frame-only), ROI panel (manual placement only for v1),
       minimal image-processing panel (crop/rotate/background-flatten) — §11.
-- [ ] Unit tests for ROI/extinction/metric math (no Qt, no hardware) — §12.
-- [ ] End-to-end smoke test with simulated devices: sweep → cube → extinction →
-      sensorgram point.
+- [x] Unit tests for ROI/extinction/metric math (no Qt, no hardware) — §12.
+      *(2026-08-08)* `processing/roi_extraction.py` (bounding-box-cropped
+      `RoiMaskSet`/`RoiMaskCache` per the Phase 0 lesson - explicitly *not* a port of
+      LSPRimaging Evaluation's own `processing/roi.py`, which still has the
+      O(image-size) masking bug Phase 0 found and fixed, and extracts against a
+      different ROI type entirely) and `domain/extinction.py`
+      (`absorbance_from_means`, `peak_absorbance`, `centroid_wavelength` - the
+      latter reimplemented simply from singleLSPR Acquisition's
+      `centroid_from_curve()` concept, not that function's fuller
+      threshold/legacy-mode parameter set, which this app doesn't need yet).
+      32 unit tests total.
+- [x] End-to-end smoke test with simulated devices: sweep → cube → extinction →
+      sensorgram point. *(2026-08-08)* 2 ROIs, exercises save + processing
+      concurrently against `SimulatedCamera`/`SimulatedIllumination` - asserts both
+      ROIs produce a finite (non-NaN) sensorgram point and multiple cubes are saved
+      losslessly.
 - [ ] Launcher: `lspri_acq` target in `targets.py` flipped to `enabled=True`.
 - [ ] Real-hardware end-to-end run; sensorgram cross-checked against the Lori SW's
       own output for the same sample if available, since it's a working reference.
