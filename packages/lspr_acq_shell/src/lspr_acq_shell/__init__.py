@@ -10,6 +10,12 @@ moved in - do not add speculative re-exports ahead of the real extraction.
 from __future__ import annotations
 
 from .async_writer import AsyncTaggedWriter, WriterProtocol
+from .experiment_control_backend import (
+    ExperimentControlBackend,
+    ExperimentControlDeviceState,
+    NullExperimentControlBackend,
+)
+from .experiment_control_capabilities import ExperimentControlCapabilities
 from .plot_view_cache import (
     MetricCompressionBlock,
     MetricDisplayCache,
@@ -57,6 +63,10 @@ __all__ = [
     "version_string",
     "AsyncTaggedWriter",
     "WriterProtocol",
+    "ExperimentControlBackend",
+    "ExperimentControlCapabilities",
+    "ExperimentControlDeviceState",
+    "NullExperimentControlBackend",
     "MetricCompressionBlock",
     "MetricDisplayCache",
     "PlotViewCache",

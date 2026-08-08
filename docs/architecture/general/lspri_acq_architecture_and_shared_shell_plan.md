@@ -367,33 +367,41 @@ Simulation profiles), and confirm nothing regressed before moving to the next it
    actually extracted cleanly was `gui/plot_view_cache.py` - not originally named here -
    a multi-resolution downsampling/caching engine, 28 of 30 functions pure numpy with
    zero window coupling. See the 2026-08-08 build-log entry for the full investigation.
-5. **Finish V49 (experiment-control)** — per §4.1, this is largely already scoped:
-   - Move `experiment_control_capabilities.py` and `experiment_control_backend.py`
-     (the `Protocol` + `NullExperimentControlBackend`) as-is — `lspr_acq_shell`'s owned
-     seam. `AcquisitionExperimentControlBackend` stays behind in sLSPR acq (it's the
-     concrete sLSPR-specific implementation); LSPRi acq will write its own concrete
-     class against the same Protocol (§7).
-   - Split the remaining satellite files per V49's own proposed destinations
-     (`experiment_control_panel.py`/`_view.py`/`_controller.py`/`_io.py`) — the plan
-     table, timeline, step editor, import/export controls, layout state, and theme
-     application. From the current file set, `_controller.py`, `_editing.py`,
-     `_step_runner.py`, `_runtime.py`, `_timeline.py`, `_table.py`, `_plan_view.py`,
-     `_widgets.py`, `_dialogs.py`, `_builders.py`, `_export.py`, `_import.py` are the
-     source material — none of them, on inspection, hold spectrometer-specific state;
-     this subsystem is genuinely about pump/valve plan execution, not measurement data.
-   - `experiment_control_window.py` becomes, per V49's own recommendation, "a thin
-     app-specific composition layer" in each app — sLSPR acq keeps a thin wrapper;
-     LSPRi acq gets its own thin wrapper instantiating the same shared panel with its
-     own backend and capability set.
-   - **Flag and resolve, don't silently carry forward**: `AcquisitionExperimentControlBackend
-     .device_states()` iterates literal keys `("pump", "valve", "mswitch")`, but
-     `device_types.py`'s canonical constants (post-V51 numbered-label migration) are
-     `PUMP="pump"`, `SWITCH="switch"`, `SELECTOR="selector"` — `"valve"`/`"mswitch"`
-     don't match `SWITCH`/`SELECTOR` directly. Check whether `_normalize_device_type()`'s
-     legacy-alias handling actually covers this (the audit's migration-alias pattern
-     suggests it might) before assuming it's fine; resolve one way or the other as part
-     of this extraction rather than moving an unverified inconsistency into the shared
-     package.
+5. **Finish V49 (experiment-control)** — **corrected 2026-08-08**: this was NOT
+   "largely already scoped." Only `experiment_control_capabilities.py`
+   (`ExperimentControlCapabilities`) and the `ExperimentControlBackend` Protocol +
+   `NullExperimentControlBackend` in `experiment_control_backend.py` (~150 lines
+   total) were genuinely ready and moved as-is to `lspr_acq_shell`.
+   `AcquisitionExperimentControlBackend` stays behind in sLSPR acq (concrete
+   sLSPR-specific implementation); LSPRi acq will write its own concrete class
+   against the same Protocol (§7) once it has a panel to drive.
+
+   Everything else V49 describes - splitting `experiment_control_window.py`
+   (6,165 lines) and its eleven satellite files (`_editing.py`, `_timeline.py`,
+   `_import.py`, `_dialogs.py`, `_widgets.py`, `_table.py`, `_plan_view.py`,
+   `_step_runner.py`, `_runtime.py`, `_builders.py`, `_export.py` - ~11,000 lines
+   combined) into a real shared visualization panel + decoupled controller + IO
+   module, driven by capability flags instead of window reach-through - is
+   **un-implemented planning**, not a near-done extraction, confirmed by reading
+   V49's own doc (which explicitly says "do not treat as an implementation
+   patch") and by inspection (`experiment_control_controller.py` still calls
+   `window._toggle_experiment_control_run_hold()` etc. directly - not the
+   "small public API... should not depend on the main window" V49 calls for).
+   This is a multi-session project in its own right and is being tracked
+   separately rather than folded into this Phase 1 checklist item.
+
+   **Resolved, not carried forward**: `AcquisitionExperimentControlBackend
+   .device_states()` iterated literal keys `("pump", "valve", "mswitch")`, but
+   `device_label_for()` (`device_lifecycle.py`) looks device families up by exact
+   key with no legacy-alias normalization of its own (`_normalize_device_type()`,
+   which does have that aliasing, is a different function used for a different
+   purpose in `device_manager.py`) - so `"valve"`/`"mswitch"` silently missed the
+   registered `SWITCH`/`SELECTOR` families and fell back to a fabricated,
+   never-matching label. Fixed to iterate the canonical `PUMP`/`SWITCH`/`SELECTOR`
+   constants. Confirmed `device_states()` has zero live callers today (anticipatory
+   V49 infrastructure, not yet wired to any UI) - a latent bug, not a currently
+   visible one, but worth fixing while already touching this exact function
+   rather than moving an unverified inconsistency into the shared package.
 6. **Fluidics device framework** — verbatim move per §4.2, rule 1. Verify against real
    pump/valve/selector hardware before proceeding to §4.5.
 
@@ -868,11 +876,23 @@ picking this up cold.
       `MetricDisplayCache`, compression-block building, peak-preserving
       decimation) are pure numpy and moved as-is. See the 2026-08-08
       build-log entry.
-- [ ] **1.3.5 — Finish V49** (experiment-control split into `lspr_acq_shell`,
-      per §4.3): move `experiment_control_backend.py`/`_capabilities.py` as-is;
-      split the remaining satellite files per V49's destinations; resolve the
-      `("pump","valve","mswitch")` vs. canonical device-type-key mismatch flagged
-      in §4.3 rather than carrying it forward unresolved.
+- [x] **1.3.5 — partial**: moved only what was genuinely ready
+      (`experiment_control_capabilities.py`'s `ExperimentControlCapabilities`,
+      `experiment_control_backend.py`'s `ExperimentControlBackend` Protocol +
+      `NullExperimentControlBackend` - ~150 lines total, zero window coupling).
+      **Corrected scope, confirmed with the maintainer**: the "finish V49" framing
+      was wrong by an order of magnitude - the real migration this implies is
+      ~11,000 lines across 15 files (`experiment_control_window.py` alone is 6,165
+      lines), none of it split yet despite the plan's "largely already scoped"
+      description. That's un-implemented planning (V49's own doc says so
+      explicitly), not a near-done extraction, and is not something to fold into
+      a single Phase 1 checklist item - tracked as its own future project instead.
+      `AcquisitionExperimentControlBackend` and `experiment_control_controller.py`
+      (still window-reach-through, not yet the decoupled controller V49 describes)
+      stay in sLSPR acq. The `("pump","valve","mswitch")` vs. canonical
+      device-type-key mismatch **was** resolved (fixed to iterate
+      `PUMP`/`SWITCH`/`SELECTOR`) - confirmed it had zero live callers today, so
+      this was a latent bug, not a visible one. See the 2026-08-08 build-log entry.
 - [ ] **1.3.6 — Fluidics device framework moved verbatim** (`device_manager.py`,
       `device_lifecycle.py`, `communication_models.py`, `serial_controllers.py`,
       `connection_registry.py`, `port_assignments.py`) into `lspr_acq_shell`,

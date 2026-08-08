@@ -703,3 +703,95 @@ memory afterward (checked given the earlier incident this session).
 GUI-panel rewrite this item's original scope implied (sensorgram plotting/secondary-axis
 UI, session-management UI) is explicitly deferred to Phase 2, per the ROI-panel precedent
 in §10 - not tracked as an open Phase 1 item, since it was never really one.
+
+## 2026-08-08 (continued): Phase 1 item 1.3.5 — V49's real scope found, only the ready piece moved
+
+Picked up 1.3.5 next. This one was wrong in the same direction as the very first version
+of item 1.3.5's own text overclaimed ("largely already scoped") - by roughly an order of
+magnitude.
+
+**Scale check, not assumed**: `find` + `wc -l` across every `experiment_control_*.py` file
+in `apps/sLSPR/acq/src/lspr_app/gui/`: **11,510 lines across 15 files**.
+`experiment_control_window.py` alone is 6,165 lines - bigger than everything moved in
+1.3.1-1.3.4 combined. Read V49's own planning doc
+(`apps/sLSPR/acq/docs/experiment-control/CODEX_EXPERIMENT_CONTROL_REUSE_SPLIT_V49.md`,
+191 lines) in full: it opens with "This is a planning and documentation file only. Do not
+treat it as an implementation patch," and lays out a 9-task migration (shared visualization
+panel, a real window-decoupled controller with its own state machine, an IO module,
+capability-flag-driven visibility replacing "private main-window reach-through") with its
+own acceptance criteria. This is a design document for future work, not a record of what's
+already built.
+
+**What's actually ready today**, matching what §4.1 called "already in progress":
+- `experiment_control_capabilities.py` (38 lines) - `ExperimentControlCapabilities`, a
+  plain frozen dataclass with `.acquisition()`/`.evaluation()` presets. Zero coupling.
+- `experiment_control_backend.py` (114 lines) - `ExperimentControlBackend` (a
+  `runtime_checkable` `Protocol`), `NullExperimentControlBackend`, and
+  `ExperimentControlDeviceState`. Also zero coupling. `AcquisitionExperimentControlBackend`,
+  in the same file, is the concrete sLSPR implementation (wraps an `ExperimentControlWindow`,
+  calls several of its private methods) - explicitly the thing that does NOT move, per the
+  plan's own instruction.
+
+**What's not ready**: `experiment_control_controller.py` (58 lines) is a thin `QObject`
+whose methods (`toggle_run_hold`, `stop`, `move_relative`, ...) mostly just forward to
+`window._toggle_experiment_control_run_hold()` / `window._stop_experiment_control()` /
+`window._move_to_relative_experiment_control_step()` etc. - real window reach-through,
+not the "small public API... should not depend on the main window" V49 specifies. Moving
+it as-is today would only be "shared" in name - a second app's window would need to
+implement these exact private method names for it to do anything. Left in sLSPR acq.
+The remaining ~11,300 lines (`_editing.py`, `_timeline.py`, `_import.py`, `_dialogs.py`,
+`_widgets.py`, `_table.py`, `_plan_view.py`, `_step_runner.py`, `_runtime.py`,
+`_builders.py`, `_export.py`, and `experiment_control_window.py` itself) are the actual
+panel/state-machine/IO split - none of it exists in split form yet.
+
+**Confirmed with the maintainer before implementing**: presented the real scale, explained
+this isn't a "one design decision, then execute" item like 1.3.3/1.3.4 - the true V49
+migration is a multi-session project on its own. Agreed scope: extract only the ~150 lines
+that are genuinely ready now; track the rest as its own future effort rather than force it
+into this checklist item.
+
+**Bug found and fixed while touching this code, not left unexamined**: the plan doc's own
+§4.3 item 5 had already flagged a specific concern -
+`AcquisitionExperimentControlBackend.device_states()` iterates literal keys `("pump",
+"valve", "mswitch")`, but the canonical device-family keys (post-V51 registry
+generalization, 2026-08-06 entry above) are `PUMP`/`SWITCH`/`SELECTOR`. Traced the actual
+call chain to confirm rather than guess: `device_states()` → `self._window
+._service_device_connected(key)`/`_device_label_for(key)` →
+`device_lifecycle.device_label_for(device_key)` → `_device_family(device_key)` →
+`_DEVICE_FAMILIES.get(device_key)` - a **direct dict lookup with no alias normalization**.
+`_normalize_device_type()` (the function that *does* map `"valve"→"switch"`,
+`"mswitch"→"selector"`) lives in `device_manager.py` and is used for a completely
+different purpose (device-profile type strings), never called anywhere in this path. So
+`device_label_for("valve")` finds no registered family under that literal key and falls
+back to a fabricated `f"{key}_main"` label (e.g. `"valve_main"`) that no real device is
+ever registered under - the device-status lookup for the switch/selector would silently
+report "not connected" regardless of actual hardware state. **Checked blast radius before
+fixing**: grepped every call site of `.device_states()` - `experiment_control_controller.py`
+forwards to `self.backend.device_states()`, but nothing anywhere in the app calls
+`controller.device_states()` itself. This is unwired V49-anticipatory infrastructure, not
+something the running app currently exercises - a latent bug, not a live one. Fixed anyway
+(iterate `PUMP`/`SWITCH`/`SELECTOR` from `device_types.py`, matching every other call site
+in `experiment_control_window.py`) since resolving it was explicitly asked for and the fix
+is a one-line change with a clear before/after.
+
+**Mechanics**: `lspr_acq_shell.experiment_control_capabilities` and
+`.experiment_control_backend` get the two ready pieces verbatim (the backend module imports
+the capabilities module from within `lspr_acq_shell`, mirroring the original cross-file
+import). sLSPR acq's two files become shims - `experiment_control_capabilities.py` a pure
+re-export; `experiment_control_backend.py` re-exports the Protocol/Null-backend/device-state
+dataclass and keeps `AcquisitionExperimentControlBackend` defined locally (with the
+`PUMP`/`SWITCH`/`SELECTOR` fix). No call site elsewhere in the app
+(`experiment_control_controller.py`, `experiment_control_window.py`) needed any change
+beyond what already existed.
+
+**Verified**: full umbrella suite, 861/862 (same pre-existing Windows temp-dir flake,
+reconfirmed in isolation), pyflakes clean on all 5 touched files (caught and fixed one
+real mistake first - an edit accidentally dropped the `states: list[...] = []`
+initializer line, pyflakes flagged `undefined name 'states'` immediately, fixed before
+re-running), sLSPR acq launched (Simulation profile, 10s) with no startup errors, no
+orphaned processes, 16.1GB free memory afterward.
+
+**Not done**: nothing from today committed yet, pending the maintainer's go-ahead. The
+real V49 migration (shared panel/controller/IO split across ~11,300 remaining lines) is
+explicitly NOT started and NOT tracked as a remaining Phase 1 sub-item - it needs its own
+dedicated scoping as a future project, the same way the sensorgram/ROI panel rewrites do.
