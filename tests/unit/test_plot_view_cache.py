@@ -1,3 +1,10 @@
+"""PlotViewCache/quantize_view_target_points/sample_absolute_metric_series_for_view
+are the pure multi-resolution cache engine, moved to lspr_acq_shell (Phase 1
+shell extraction, 2026-08-07) and imported from there directly below - that's
+the real owner now. build_active_trace_series_token/build_metric_series_token
+stayed behind in apps/sLSPR/acq (app-specific window-attribute glue), so
+those two still come from lspr_app.gui.plot_view_cache.
+"""
 from __future__ import annotations
 
 import unittest
@@ -15,12 +22,14 @@ APP_SRC = REPO_ROOT / "apps" / "sLSPR" / "acq" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_app.gui.plot_view_cache import (
+from lspr_acq_shell.plot_view_cache import (
     PlotViewCache,
-    build_active_trace_series_token,
-    build_metric_series_token,
     quantize_view_target_points,
     sample_absolute_metric_series_for_view,
+)
+from lspr_app.gui.plot_view_cache import (
+    build_active_trace_series_token,
+    build_metric_series_token,
 )
 
 

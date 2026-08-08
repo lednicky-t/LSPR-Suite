@@ -359,12 +359,14 @@ Simulation profiles), and confirm nothing regressed before moving to the next it
    against later (§8/§9's "new tags dispatched the same way append/metrics already are").
    `AsyncHDF5MeasurementWriter` is now a thin subclass with its exact original dispatch
    logic moved into those hooks; public API unchanged.
-4. **Sensorgram plotting + session/run management** — `gui/plot_controller.py`'s
-   sensorgram half, `gui/sensorgram_secondary_axis.py`, and the run/session bookkeeping.
-   Already curve-data-shaped (time + metric value), not spectrum-shaped, so this should
-   be a relatively clean lift, and doing it before experiment-control means the shell
-   already has a plotting surface to wire the experiment-control's `set_runtime_state`
-   events into.
+4. **Sensorgram plotting engine** — **corrected 2026-08-08**: `gui/plot_controller.py`
+   and `gui/sensorgram_secondary_axis.py` turned out NOT to be a clean lift (37/54 and
+   effectively all of their functions are window-coupled Qt orchestration, not
+   curve-data-shaped logic) - genuine rewrite territory for Phase 2, like the ROI panel
+   (§10). "Session/run bookkeeping" didn't name a real generic module either. What
+   actually extracted cleanly was `gui/plot_view_cache.py` - not originally named here -
+   a multi-resolution downsampling/caching engine, 28 of 30 functions pure numpy with
+   zero window coupling. See the 2026-08-08 build-log entry for the full investigation.
 5. **Finish V49 (experiment-control)** — per §4.1, this is largely already scoped:
    - Move `experiment_control_capabilities.py` and `experiment_control_backend.py`
      (the `Protocol` + `NullExperimentControlBackend`) as-is — `lspr_acq_shell`'s owned
@@ -738,8 +740,13 @@ are.
   vectorized functions from LSPRi eva's `processing/preprocess.py` (`apply_preprocessing`,
   `flatten_background`) as a starting point — these are already numpy/scipy-vectorized,
   no Qt dependency, safe to port.
-- **Sensorgram + spectrum panels**: reused directly from `lspr_acq_shell` (Phase 1 §4
-  item 6) — no new code, this is the payoff of doing the extraction first.
+- **Sensorgram + spectrum panels**: corrected 2026-08-08 (§4.3 item 4) — only the
+  multi-resolution cache/downsampling *engine* (`lspr_acq_shell.PlotViewCache`) is
+  reused directly; the actual Qt plotting/panel code (`plot_controller.py`,
+  `sensorgram_secondary_axis.py`) turned out to be deeply main-window-coupled with no
+  clean seam, same as the ROI panel below — LSPRi acq needs its own sensorgram panel
+  built fresh, feeding data through the shared cache engine rather than porting the
+  panel code itself.
 - **Experiment control panel**: reused directly from `lspr_acq_shell` — pump/valve plan
   editing and execution UI, unchanged.
 
@@ -844,9 +851,23 @@ picking this up cold.
       the maintainer before implementing, since this defines the seam
       LSPRi acq's future cube writer builds against (§8/§9). See the
       2026-08-07/08 build-log entry.
-- [ ] **1.3.4 — Sensorgram + session/run management** extracted
-      (`plot_controller.py`'s sensorgram half, `sensorgram_secondary_axis.py`, run/
-      session bookkeeping).
+- [x] **1.3.4 — Sensorgram plotting engine** extracted — done, but scope
+      corrected significantly from this item's original description. Investigated
+      first: `plot_controller.py` (37/54 functions window-coupled) and
+      `sensorgram_secondary_axis.py` (Qt widget/menu building) are GUI-panel
+      code with no clean seam, same situation as the ROI panel precedent in
+      §10 ("needs a genuine rewrite, not a port") - confirmed with the
+      maintainer, left both entirely in sLSPR acq. "Session/run bookkeeping"
+      didn't name a real generic module either (`domain/session.py`'s
+      `MeasurementSession` is dark/reference/absorbance-spectrum math,
+      correctly sLSPR-specific; the session GUI files are window-coupled
+      action handlers) - nothing extracted there. What *did* extract cleanly:
+      `gui/plot_view_cache.py` (not named in this item originally) - a
+      1600-line multi-resolution downsampling/caching engine where only 2 of
+      30 functions touched the window; the other 28 (`PlotViewCache`,
+      `MetricDisplayCache`, compression-block building, peak-preserving
+      decimation) are pure numpy and moved as-is. See the 2026-08-08
+      build-log entry.
 - [ ] **1.3.5 — Finish V49** (experiment-control split into `lspr_acq_shell`,
       per §4.3): move `experiment_control_backend.py`/`_capabilities.py` as-is;
       split the remaining satellite files per V49's destinations; resolve the

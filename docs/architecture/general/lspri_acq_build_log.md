@@ -628,3 +628,78 @@ isolation. `pyflakes` clean on all 3 touched files
 process behind either time (checked explicitly this time, given the incident above).
 
 **Not done**: nothing from today committed yet, pending the maintainer's go-ahead.
+
+## 2026-08-08: Phase 1 item 1.3.4 — sensorgram plotting investigated, scope corrected again
+
+Picked up 1.3.4 next. This item's framing was wrong in the *opposite* direction from
+1.3.2/1.3.3: those undersold the coupling in the file they named; this one named three
+things, none of which turned out to be extractable, while a real extraction candidate sat
+in a file the plan never mentioned.
+
+**What the plan named, and why none of it moved**:
+- `gui/plot_controller.py` (1759 lines): grepped for real `def name(window` signatures
+  (not just any occurrence of the substring "window", which is noisy here - `window_min`/
+  `window_max`/`window_start_x` are common *non-GUI* parameter names in this codebase,
+  e.g. `clip_series_to_window(x, y, *, window_min, window_max)`). 37 of 54 top-level
+  functions take the main-window object directly and reach into its private attributes
+  (spectrum stats, cursor labels, deferred-refresh timers, scheduler state). This is Qt
+  orchestration code intermixing spectrum-plot and sensorgram-plot handling in one file,
+  not "curve-data-shaped" logic as described.
+- `gui/sensorgram_secondary_axis.py` (1157 lines): same story - pyqtgraph `ViewBox`/menu/
+  axis-color widget building, all window-coupled.
+- "Session/run bookkeeping" didn't name a real generic module once investigated.
+  `domain/session.py`'s `MeasurementSession` (162 lines, Qt-free) turned out to be
+  dark/reference/absorbance-spectrum math (`compute_absorbance`, wavelength-axis
+  resampling) - correctly sLSPR-specific per `spectral_processing_pipeline_architecture.md`,
+  must stay. `gui/main_window_new_session.py`/`main_window_session_copy.py` are
+  window-coupled GUI action handlers (New Session dialog, save-a-copy action), same
+  pattern as the two files above.
+
+**What actually extracted cleanly, in a file this item never named**: `gui/plot_view_cache.py`
+(1601 lines). Grepped the same way - only 2 of 30 top-level functions
+(`build_active_trace_series_token`, `build_metric_series_token`) take `window`; the other
+28, plus the `MetricDisplayCache`/`MetricCompressionBlock` dataclasses and the
+`PlotViewCache` class, are pure numpy with zero Qt/window imports anywhere in the file
+(confirmed by grep, not just by not noticing any). This is a genuine multi-resolution
+downsampling/caching engine: `MetricCompressionBlock` summarizes (min/max/mean/first/last)
+a run of raw points; `PlotViewCache` builds a pyramid of these at increasing block sizes
+and picks whichever level keeps the on-screen point count near a target regardless of how
+many points have actually accumulated in a long-running session - genuinely reusable by
+any app plotting a long time series, not spectrum- or sensorgram-specific despite living
+in a file with "plot" in the name. Already used for both the sensorgram *and* spectrum
+plots in sLSPR acq, matching the "already curve-data-shaped (time + metric value)"
+description this item originally gave to the wrong file.
+
+**Confirmed with the maintainer before implementing** (per the pattern established for
+1.3.3): presented the finding, recommended extracting only `plot_view_cache.py`'s engine
+and leaving the GUI-panel files for a genuine Phase 2 rewrite - approved.
+
+**Mechanics**: `lspr_acq_shell.plot_view_cache` gets everything except the two
+window-coupled token functions, moved verbatim (no logic changes - this file had zero
+app-specific assumptions to generalize away, unlike 1.3.1/1.3.3). sLSPR acq's
+`gui/plot_view_cache.py` becomes a shim re-exporting the engine plus keeping
+`build_active_trace_series_token`/`build_metric_series_token` defined locally (they only
+need `pathlib.Path` and `getattr(window, ...)` - no dependency on the rest of the
+original file beyond having previously been colocated in it). None of the app's call
+sites (`main_window.py`, `plot_controller.py`, `main_window_sensorgram.py`,
+`main_window_sensorgram_archive.py`, `runtime_diagnostics.py`, `runtime_probe.py`,
+`acquisition_controller.py` - the last several call methods on an already-constructed
+`window._plot_view_cache` *instance*, so they're unaffected by the module split
+regardless) needed any change.
+
+`tests/unit/test_plot_view_cache.py` split its imports rather than moving wholesale: the
+engine tests (`PlotViewCache`, `quantize_view_target_points`,
+`sample_absolute_metric_series_for_view`) now import from `lspr_acq_shell.plot_view_cache`
+directly (the real owner); the one test exercising the two token functions
+(`test_token_helpers_track_live_absolute_state`) still imports those from
+`lspr_app.gui.plot_view_cache`, since that's where they actually live now.
+
+**Verified**: full umbrella suite, 861/862 (same pre-existing Windows temp-dir flake,
+reconfirmed in isolation), pyflakes clean on all 4 touched files, sLSPR acq launched
+(Simulation profile, 10s) with no startup errors, no orphaned processes and 14.6GB free
+memory afterward (checked given the earlier incident this session).
+
+**Not done**: nothing from today committed yet, pending the maintainer's go-ahead. The
+GUI-panel rewrite this item's original scope implied (sensorgram plotting/secondary-axis
+UI, session-management UI) is explicitly deferred to Phase 2, per the ROI-panel precedent
+in §10 - not tracked as an open Phase 1 item, since it was never really one.

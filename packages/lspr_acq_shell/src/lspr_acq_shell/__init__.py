@@ -10,6 +10,15 @@ moved in - do not add speculative re-exports ahead of the real extraction.
 from __future__ import annotations
 
 from .async_writer import AsyncTaggedWriter, WriterProtocol
+from .plot_view_cache import (
+    MetricCompressionBlock,
+    MetricDisplayCache,
+    PlotViewCache,
+    downsample_metric_series_for_view,
+    level_raw_weight,
+    quantize_view_target_points,
+    sample_absolute_metric_series_for_view,
+)
 from .diagnostics import (
     DiagnosticsConfig,
     DiagnosticsProfile,
@@ -48,6 +57,13 @@ __all__ = [
     "version_string",
     "AsyncTaggedWriter",
     "WriterProtocol",
+    "MetricCompressionBlock",
+    "MetricDisplayCache",
+    "PlotViewCache",
+    "downsample_metric_series_for_view",
+    "level_raw_weight",
+    "quantize_view_target_points",
+    "sample_absolute_metric_series_for_view",
     "DiagnosticsConfig",
     "DiagnosticsProfile",
     "apply_diagnostic_info_filter",
