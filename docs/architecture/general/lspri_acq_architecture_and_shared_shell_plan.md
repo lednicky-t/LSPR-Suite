@@ -1034,10 +1034,23 @@ picking this up cold.
       `_export.py`/`_import.py`/`_step_runner.py` moved to `lspr_acq_shell`,
       verbatim except one generalization (`to_core_experiment_plan()` no longer
       imports `APP_VERSION` from `lspr_app.version` directly - see the build-log
-      entry). Tiers 1-3 (shared timeline/table widgets; the actual run/hold/
-      pause/stop state machine and step-command decision logic, which needs real
-      redesign, not just a move; the window-specific dialogs/editing, a rewrite
-      candidate) not started.
+      entry). **Tier 1 (Qt-heavy but window-decoupled widgets) done 2026-08-09**:
+      `experiment_control_timeline.py` (792 lines, `PumpPlanTimelineWidget` -
+      custom-painted zoom/pan/drag-reorder timeline) and
+      `experiment_control_widgets.py` (287 lines, `ExperimentControlTableView`/
+      `PlanColorDelegate`/`TubeDiameterComboBox`/etc.) moved to `lspr_acq_shell`
+      verbatim except import repointing (both already depended only on
+      `pump_plan.py` and, for the timeline, `device_lifecycle.py`/
+      `device_types.py` - all three already in `lspr_acq_shell` from Tier 0 -
+      confirmed by tracing real usage, not by trusting the file's own docstring
+      claim of self-containedness). sLSPR acq keeps thin re-export shims at the
+      old paths; screenshot-verified sLSPR acq still renders the table and
+      timeline correctly post-move (this tier moved actual custom-painting
+      code, so a visual check mattered, not just passing tests). Tiers 2-3 (the
+      actual run/hold/pause/stop state machine and step-command decision logic,
+      which needs real redesign, not just a move; the window-specific dialogs/
+      editing, a rewrite candidate) not started - Tier 2 needs the maintainer's
+      real-hardware sign-off before either app relies on a refactored version.
 - [x] Basler driver (`pypylon`) built *(2026-08-08)* - **not yet manually verified
       against real hardware** (no Basler camera was attached in the environment this
       was written in; confirmed 0 devices via real `pylon.TlFactory.EnumerateDevices()`

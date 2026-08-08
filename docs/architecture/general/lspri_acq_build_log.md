@@ -1789,3 +1789,62 @@ rewrite), `LspriAcqExperimentControlBackend` itself (still blocked on Tier 2's r
 Protocol's `device_states()` needs real device-family keys the window's state machine
 produces, which isn't reusable yet), image-processing panel, live sweep wiring into the GUI,
 Lori LED driver. Nothing from this entry committed yet.
+
+## 2026-08-09: Tier 1 experiment-control extraction landed (shared timeline/table widgets)
+
+Continued the 4-tier plan approved the same day (see the entry above) into Tier 1: the plan
+timeline and table-view widgets, estimated at ~1,077 lines and flagged as "Qt-heavy but
+already self-contained."
+
+**Traced real coupling before moving anything**, the same discipline used for Tier 0's
+`pump_plan.py` finding: `experiment_control_timeline.py` (792 lines, `PumpPlanTimelineWidget`
+- a custom-painted zoom/pan/drag-reorder timeline) turned out to depend only on
+`PumpPlanStep`/`recompute_plan_timing` (`pump_plan.py`, already in `lspr_acq_shell` since
+Tier 0) and `DeviceLifecycleController`/`SELECTOR` (`device_lifecycle.py`/`device_types.py`,
+already shared since Phase 1) - no live reference to `ExperimentControlWindow` anywhere in
+the file. `experiment_control_widgets.py` (287 lines - `ExperimentControlTableView`,
+`PlanColorDelegate`, `TubeDiameterComboBox`, `_NoFocusItemDelegate`,
+`_make_frameless_icon_button`) depends only on `pump_plan.py` constants
+(`DEFAULT_TUBE_MM`/`TUBE_DIAMETER_OPTIONS`/`nearest_tube_diameter_option`). Both files'
+docstrings already claimed self-containedness; confirmed it for real via grep on
+`window.`/`self._window` reach-through rather than trusting the claim, same as every prior
+tier.
+
+**Moved** both files verbatim to `lspr_acq_shell`, with only the import path changed from
+`lspr_app.domain.pump_plan`/`lspr_app.device.device_lifecycle`/`device_types` to their
+`lspr_acq_shell` equivalents (plus two docstring references in `experiment_control_timeline.py`
+that named the old module path in prose, not just imports). sLSPR acq's two originals are now
+thin re-export shims, following the same convention as every prior extraction.
+
+**Tests repointed to the real owner**: `tests/unit/test_experiment_control_step_overlay_label_mode.py`
+imports `PumpPlanTimelineWidget` directly (to exercise `_step_label_text` against a bare
+`SimpleNamespace` stand-in) - repointed to `lspr_acq_shell.experiment_control_timeline`.
+Confirmed via grep this is the only test importing either moved module directly;
+`test_experiment_control_timeline_font.py` imports `PumpPlanTimelineWidget` indirectly
+through `experiment_control_window.py`'s own re-import chain and needed no change.
+
+**Umbrella `pyflakes` pre-commit hook caught a real pre-existing dead-code line** that the
+submodule's own git history had been carrying silently: `experiment_control_timeline.py`
+line 380 computed a local `progress_s` inside an already-documented-unreachable branch (the
+parent never sets `_plan_active_row`) and never read it again - marked `# noqa: F841` in the
+original, but the umbrella's hook runs bare `python -m pyflakes` (not `ruff`), which doesn't
+honor `noqa` at all, so it only ever went unnoticed because this file lived solely in the
+submodule before Tier 1. Confirmed the assignment was truly dead (nothing downstream in the
+branch reads it) and deleted the line - zero behavior change, since nothing consumed the
+value; the branch itself is still unreachable and still intentionally kept, per the adjacent
+comment.
+
+**Verified**: full umbrella suite 895/895 (894 baseline + the one newly-added driver-registry
+test from earlier this session), `pyflakes` clean on both new files and both shims after the
+dead-code fix above. sLSPR acq's own app-level suite: same 14/22
+with the same 8 pre-existing, unrelated failures as the Tier 0 entry documented, no new
+failures. Because this tier moved actual custom-painting/rendering code (not just data
+plumbing), a visual check mattered beyond passing tests: launched sLSPR acq
+(`LSPR_FORCE_SIMULATOR=1`) and screenshotted the running window - the Experiment Control
+table (`ExperimentControlTableView`/`PlanColorDelegate`) and the timeline bar both render
+correctly, no visual glitches or missing widgets.
+
+**Not done**: Tiers 2-3 of the extraction/rewrite plan (the safety-critical step-command-
+decision redesign and run/hold/pause/stop state machine; the dialogs/editing rewrite),
+`LspriAcqExperimentControlBackend` itself (still blocked on Tier 2), image-processing panel,
+live sweep wiring into the GUI, Lori LED driver.
