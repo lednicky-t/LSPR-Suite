@@ -1001,9 +1001,9 @@ picking this up cold.
       abstract (no default), unlike `lspr_acq_shell.Spectrometer`'s precedent - see the
       build-log entry for why a default doesn't transfer safely to these two. 9 unit
       tests, no Qt/no hardware.
-- [x] `Camera` registered as a new family into the generalized registry from
-      `lspr_acq_shell` (§6.1) - **`IlluminationSource` still pending**, alongside a real
-      driver for it. *(2026-08-08)* Found and fixed a real gap first: the plan assumed
+- [x] `Camera` and `IlluminationSource` both registered as device families into the
+      generalized registry from `lspr_acq_shell` (§6.1). *(2026-08-08)* Found and
+      fixed a real gap first: the plan assumed
       `DeviceCommunicationService.connect()` was already generic (only *discovery* was,
       from the earlier registry generalization - construction was still a hardcoded
       three-way `reglo_icc`/`amf-mswitch`/valve-detect dispatch). Confirmed with the
@@ -1034,13 +1034,23 @@ picking this up cold.
       the manual's generic "50-150ms" figure (that figure covers the whole product
       family, not this unit - see the build-log entry for why the two aren't the
       same claim). 13 unit tests against a fake serial port modeling the real echo
-      framing. **Not yet registered as a device family** - needs a safe port-discovery
-      strategy first (a serial LCTF looks like any other "USB Serial Device," unlike
-      Basler's vendor-SDK enumeration; blindly probing candidate COM ports risks
-      disturbing already-assigned pump/valve/selector hardware) - deferred, not
-      guessed at. Manual (`1794348.pdf`) copied into `apps/LSPRi/acq/docs/manuals/`
-      *(2026-08-08, done - relocated from `spikes/lspri_acq_phase0/` per this item's
-      own note)*.
+      framing. **Registered as the ILLUMINATION device family** *(2026-08-08,
+      continued)* - needed a safe port-discovery strategy first (a serial LCTF looks
+      like any other "USB Serial Device," unlike Basler's vendor-SDK enumeration).
+      Built one rather than guessing: `_candidate_illumination_ports()`
+      (`device/registry.py`) excludes ports manually assigned to another role
+      (`get_port_assignment(port) != "auto"`) and ports currently claimed by a live
+      connection (`port_owners(port)`) - deliberately *not*
+      `should_probe_port_for_role()`, which was traced and found to silently return
+      `True` (no restriction) for any role outside its hardcoded `{"pump","switch"}`
+      pair, so it would have looked like a safety check while providing none for
+      "illumination". `discover_varispec_port()` (`variSpec_lctf.py`) then opens each
+      safe candidate and only accepts one whose `V ?` reply actually parses as a
+      plausible VariSpec identity (`wavelength_range() is not None`), not just "the
+      open() call didn't raise" - `open()` alone doesn't validate a foreign device's
+      reply, by design (matches every other driver's connect-time leniency). Manual
+      (`1794348.pdf`) copied into `apps/LSPRi/acq/docs/manuals/` *(2026-08-08, done -
+      relocated from `spikes/lspri_acq_phase0/` per this item's own note)*.
 - [ ] Lori-protocol LED driver (reference implementation) — confirm `CONF_STEP`
       semantics and software-triggered single-pulse capability against real
       hardware before trusting it; this is explicitly a reference, not necessarily

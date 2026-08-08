@@ -1596,5 +1596,79 @@ no flakes. `pyflakes` clean.
 
 **Not done**: image-processing panel (crop/rotate/background-flatten), a live sweep feeding
 this view (currently one static startup preview frame only), experiment-control panel reuse,
-`ILLUMINATION` device family registration, `ImagingExperimentControlBackend`. Nothing from
-this entry committed yet.
+`ILLUMINATION` device family registration, `ImagingExperimentControlBackend`.
+
+**Committed and pushed** *(2026-08-08, same day)*: submodule commit `b2dee0c` ("Add image view
++ ROI panel, wired into the main window") pushed to `lednicky-t/LSPRimaging-Acquisition`;
+umbrella commit `dcffef3` ("Bump LSPRi/acq submodule: image view + ROI panel") pushed to
+`lednicky-t/LSPR-Suite` `develop`. Maintainer asked to defer further image-panel work (image
+processing panel, live sweep wiring) and continue with `ILLUMINATION` device family
+registration instead.
+
+## 2026-08-08 (continued): ILLUMINATION device family registered, with a real safe-discovery mechanism
+
+Picked up the item deferred twice already (§6.1's first pass, and again when the VariSpec
+driver itself was built) - registering `IlluminationSource`/VariSpec as a device family
+needed a safe port-discovery strategy, not a guess.
+
+**Checked the obvious existing safety mechanism before reusing it - and it doesn't do what
+its name suggests for a new caller.** `should_probe_port_for_role(port, role)`
+(`lspr_acq_shell.port_assignments`) looks exactly like the function to call here. Traced its
+actual body: `if role_name not in {"pump", "switch"}: return True` - for any role name
+outside that hardcoded pair, including `"illumination"`, it unconditionally returns `True`.
+That's a silent no-op, not "no restriction needed" - calling it with `role="illumination"`
+would have *looked* like a safety check while providing none: a port the user manually
+pinned to `"pump"` in Preferences would still get probed with VariSpec-specific ASCII
+commands. This is the third instance this session of the same underlying pattern (discovery
+dispatch, then connection construction, now port-assignment safety) - something in
+`lspr_acq_shell` generalized for pump/switch/selector specifically, not generically, in a way
+that silently doesn't protect a new caller unless actually read first.
+
+**Built a narrower, correct check instead of extending the shared function** - deliberately
+*not* a `lspr_acq_shell` change this time (unlike the driver-connect-factory addition, this
+doesn't need to be shared/generic - it's specific to "which ports may this app's illumination
+discovery safely try"). `_candidate_illumination_ports()` (`device/registry.py`) checks
+`get_port_assignment(port) != "auto"` directly (any manual assignment at all means "not this
+one" - there's no "illumination" assignment for a user to set today, so any assignment
+present must be pump/switch) plus `port_owners(port)` (`lspr_acq_shell.connection_registry` -
+confirmed genuinely generic, no hardcoded role names, unlike `should_probe_port_for_role`) to
+also skip anything currently claimed by a live connection, even if never manually pinned.
+
+**`discover_varispec_port()` (`variSpec_lctf.py`) - discovery needs stricter validation than
+`open()` alone provides.** Checked `open()`'s own behavior first: a garbled/foreign reply
+during its `V ?` handshake doesn't raise - `_read_info()` just leaves `wavelength_range()` as
+`None`, matching every other driver's "don't be overly strict on connect" philosophy (correct
+for a user-initiated connect to a port they already chose, wrong for discovery scanning an
+unknown port). So `discover_varispec_port()` opens each candidate and only accepts one where
+`wavelength_range() is not None` afterward - "didn't raise" alone isn't enough, since an
+unrelated device on some other candidate port could open a serial connection successfully
+without being a VariSpec at all. Opens and closes a throwaway driver instance per candidate;
+the real, final connection happens separately via the driver connect factory once a port is
+chosen - discovery and connection stay two distinct steps, matching the CAMERA family's own
+shape (`discover_basler_cameras()` doesn't hold an open camera handle either).
+
+**Registered** (`device/registry.py`): `_illumination_driver_connect_factory` (constructs +
+opens a real `VariSpecLctf`, reports `model`/`wavelength_range_nm` identity) via
+`register_driver_connect_factory(VARISPEC_DRIVER, ...)`; `_discover_and_connect_illumination`
+(filters candidates, calls `discover_varispec_port()`, then `ensure_device_profile()` +
+`controller._connect_and_setup()` - same pattern as `_discover_and_connect_camera`, same
+reasoning for using the private method over `request_connect()`) via
+`register_device_family(ILLUMINATION, ...)`. Canonical label `illumination_1`, matching the
+fixed-label convention every other family uses (never resolved by fingerprint search - see
+incident #31 in `DEVICE_LAYER_AUDIT_2026.md`, the precedent this rule exists to prevent a
+recurrence of).
+
+**Verified**: 4 new tests in `test_variSpec_lctf.py` (`discover_varispec_port()` - no
+candidates, a real nonexistent-port rejection, and, against the fake serial port since no
+physical VariSpec exists in this environment, both "finds a port with a valid identity" and
+"rejects a port with no plausible identity"); 8 tests in `test_device_registry.py` (family
+registration, missing-candidates and no-VariSpec-found paths, and three
+`_candidate_illumination_ports()` filtering tests - manually-assigned ports excluded,
+actively-claimed ports excluded, unassigned/unclaimed ports included - each with fake
+`comports()`/`get_port_assignment`/`port_owners` so no real hardware or settings file is
+touched). App's own suite run three times - 114/114 each time, no flakes. Full umbrella suite
+- 868/868 (no regression, and this run's usual intermittent Windows temp-dir flake didn't
+trigger). `pyflakes` clean.
+
+**Not done**: `ImagingExperimentControlBackend`, image-processing panel, live sweep wiring
+into the GUI, Lori LED driver. Nothing from this entry committed yet.
