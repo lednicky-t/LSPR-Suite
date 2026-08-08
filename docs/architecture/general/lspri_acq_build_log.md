@@ -1177,3 +1177,124 @@ tracebacks.
 **Not done**: `IlluminationSource`/VariSpec driver and family registration (next), Lori LED
 driver, `ImagingExperimentControlBackend`, the sweep pipeline, HDF5 schema extension, GUI
 panels - see section 12's checklist. Nothing from this entry committed yet.
+
+**Committed and pushed** *(2026-08-08, same day)*: submodule commit `10a6435` ("Add Basler
+camera driver and register the CAMERA device family") pushed to
+`lednicky-t/LSPRimaging-Acquisition`; umbrella commit `1420a74` ("Generalize
+DeviceCommunicationService connect() for new driver types; bump LSPRi/acq") pushed to
+`lednicky-t/LSPR-Suite` `develop`.
+
+## 2026-08-08 (continued): VariSpec LCTF driver built, from the real manual
+
+Continued into `IlluminationSource`/VariSpec, the next item. Read the actual manual
+(`apps/LSPRi/acq/docs/manuals/cri-varispec-lctf-manual.pdf`, now in the repo) directly -
+Chapter 3, "Controlling VariSpec Filters with Direct Serial Commands" - rather than relying
+on the architecture plan's own paraphrase of it (§6.2), since a driver built from a
+paraphrase risks re-introducing exactly the kind of subtle protocol mistake a primary
+source would catch.
+
+**Two things the plan's paraphrase got wrong or oversimplified, found by reading the
+primary source**:
+1. §6.2 cites "50ms VIS-range... 150ms NIR-range, per the manual's operating specifications
+   table" - no such VIS/NIR-specific table exists in the manual. The real text (Appendix,
+   glossary "Response Time" entry) is a single generic sentence: "Typically, this time is 50
+   ms to 150 ms" - a broad range covering the whole VariSpec product family, not a
+   per-model table. The Phase 0 spike's own empirical measurement against the real connected
+   VIS unit (792 optically-measured transitions, direction-aware:
+   `settle_time_analysis.md`) is both more specific to this actual hardware and captures a
+   real effect (direction matters more than step size) the manual's generic figure says
+   nothing about - used that as `settle_time_ms()`'s real basis instead (~40ms ascending,
+   ~80ms descending/first-move-unknown).
+2. The manual's "Command Nomenclature" section states plainly: "[normal/brief mode] only
+   reply to queries" - a plain SET command (e.g. `W 550.000<c/r>`, not `W ?<c/r>`) produces
+   **no reply at all**, only the echo every command gets (confirmed separately in the
+   "Sleep" section: "Characters are echoed, even if asleep"). This directly matters for
+   framing: a naive read-until-terminator-twice pattern for every command would hang for a
+   full timeout on every single `set_wavelength()` call (called once per sweep step),
+   waiting for a second terminator that will never arrive for a plain set.
+
+**Real prior art used rather than re-derived**: the auto-memory note on this exact device
+(`lspri-lctf-settle-time-measurement`, from the session that built the Phase 0 spike)
+documents a real bug found against the real hardware: a fire-and-forget `W <nm>` write left
+its echo unread in the RX buffer, which desynced the *next* command's echo/reply split
+(`get_wavelength()` returned the literal text `"W ?"` instead of a number - the stale
+unread echo, not a real reply). `illumination_probe.py`'s `VariSpecClient` (the spike code
+that measured settle times against the real unit) already encodes the fix and the real
+serial parameters (baudrate 115200, 8N1, `time.sleep(0.2)` + `reset_input_buffer()` after
+opening "to let the virtual COM port settle before first write") - read that code directly
+and adapted its framing logic rather than inventing a new one, since it's the one part of
+this whole area that's actually been run against the physical unit.
+
+**Design decision made while adapting, not copied verbatim**: the spike's `fire_wavelength()`/
+`drain_echo()` split exists only because that code needed to stamp a timing measurement's
+t=0 as precisely as possible (draining the echo costs ~15-20ms, the same FTDI
+virtual-COM-port latency-timer floor documented for busy-check polling) - a real production
+driver's `set_wavelength()` doesn't have that same hyper-precise-timing requirement (it's
+followed by a 40-80ms settle sleep regardless), so `VariSpecLctf.set_wavelength()` drains
+its own echo synchronously in one call, simpler than the spike's split, without
+reintroducing the bug the split was built to work around (every command here always reads
+its own echo before returning, never leaving one unread for a future call to trip over).
+
+**A second correctness issue found by reading the manual carefully, not just skimmed**: the
+manual states an error code "is stored until the error is cleared using the 'R' command, or
+until another error occurs" - and explicitly recommends "first retrieving the Error Code and
+then clearing the error condition before proceeding." An earlier draft of this driver read
+`R ?` after every `set_wavelength()` to detect a rejected wavelength but never cleared it -
+which would have made every subsequent *successful* step's `R ?` check see the same stale
+error code and incorrectly raise again. Fixed before this was ever run: `_read_and_clear_error()`
+clears (`R 1`) immediately after reading a nonzero code. Caught by a dedicated regression
+test, not just by re-reading the manual a second time (see Verified, below) - also confirmed
+the manual's own documented recovery behavior for an out-of-range `W`: the filter "stays at
+the last legal wavelength" rather than moving, plus the `"*"` sentinel `W ?` can return
+(Table 5's footnote, and a real bug the Phase 0 spike hit for real per its own
+`get_wavelength()` docstring) - both handled: on error, `set_wavelength()` queries `W ?` for
+the real current value (parsing `"*"` as "unknown," not crashing) rather than assuming the
+rejected request took effect.
+
+**Built** (`apps/LSPRi/acq/src/lspri_acq_app/device/variSpec_lctf.py`): `VariSpecLctf`
+against the `IlluminationSource` ABC - `open()` sets Brief format (`B 1`, "cuts per-command
+overhead," per the manual - matches the plan's own recommendation), reads firmware
+revision/wavelength range/serial number via `V ?`, and only forces re-initialization (`I 1`)
+if `I ?` reports not-initialized, rather than unconditionally re-initializing on every
+open() (the manual notes older units can take 30s+ for this). `set_wavelength()` tracks
+move direction (comparing against the previous wavelength) to pick `settle_time_ms()`'s
+margin; the very first move (no previous wavelength yet) conservatively uses the
+worst-case (descending) margin.
+
+**Verified**: 13 unit tests
+(`apps/LSPRi/acq/tests/test_variSpec_lctf.py`) against a fake serial port modeling the
+real echo-then-reply framing (adapted from the existing `_FakeSerial` pattern already used
+for `RegloICCClient` testing - `tests/unit/test_reglo_icc_calibration.py` - extended with
+the query-vs-set echo distinction VariSpec's protocol has and Reglo's doesn't). One real bug
+in the *test double itself* caught and fixed before any test passed: the first draft
+attached a queued reply to whatever `write()` happened next regardless of whether it was a
+query, so a reply meant for the `R ?` check after `set_wavelength()`'s `W` write got
+consumed by that `W` write's own echo instead - fixed by only attaching a queued reply when
+the written command contains `"?"`, matching the real device's actual behavior. Tests cover:
+open()/close() against a real (nonexistent) COM port (genuinely raises/no-ops, not mocked);
+successful and rejected `set_wavelength()` calls including the exact "error must be cleared
+or it leaks into the next step" regression; direction-aware settle-time selection (first
+move, ascending, descending); brief-mode `V ?` parsing. App's own suite: 36/36 (all of the
+above plus everything from the prior two entries, run alone). Full umbrella suite: 864-865
+across runs (same intermittent pre-existing flake as every prior entry, not a new one).
+`pyflakes` clean.
+
+**Not done, deliberately deferred rather than guessed at**: registering `ILLUMINATION` as a
+device family. Traced `DeviceCommunicationService.refresh_device_ports()` before attempting
+this and found a third instance of the same "only generalized for discovery, not fully"
+pattern already hit twice this session (device family registration, 2026-08-06; connection
+construction, earlier this entry's session): `ports_by_family` is still hardcoded to exactly
+`PUMP`/`SWITCH`/`SELECTOR` (`RegloICCClient.list_ports()`/`SerialController.list_ports()`/
+`detect_amf_selector_devices()`), so `ports.ports_for("illumination")` would always return
+`[]` regardless of what's actually attached. CAMERA's `discover_and_connect` callback
+already sidesteps this by ignoring `candidates` and doing its own `pypylon` enumeration
+directly - the same approach works for ILLUMINATION (ignore `candidates`, scan serial ports
+directly) without needing another `device_manager.py` change. What's genuinely unresolved,
+and different from CAMERA's case: pypylon's `EnumerateDevices()` is a vendor-SDK call that
+can only ever find real Basler cameras, so it's safe to call unconditionally; a serial LCTF
+looks identical to *any other* "USB Serial Device" at the OS level, so a safe discovery
+scan needs the same kind of port-safety heuristics pump/valve discovery already has
+(`get_port_assignment`/`should_probe_port_for_role`, avoiding ports already assigned to a
+different role) - guessing at a simplified version of that risked sending VariSpec-specific
+probe commands (`V ?`) to a port that's actually the pump or selector. Left for a dedicated
+pass rather than rushed.

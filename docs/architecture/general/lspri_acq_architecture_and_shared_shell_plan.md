@@ -973,9 +973,24 @@ picking this up cold.
       handling mirrors the Phase 0 spike's real-hardware-verified `PylonBackend`;
       software-trigger sequencing and single-shot `GrabOne`-style acquisition are new
       and unverified. Verify end-to-end against physical hardware before relying on it.
-- [ ] VariSpec driver, manually verified against real hardware. Manual (`1794348.pdf`)
-      copied into `apps/LSPRi/acq/docs/manuals/` *(2026-08-08, done - relocated from
-      `spikes/lspri_acq_phase0/` per this item's own note)*.
+- [x] VariSpec driver built *(2026-08-08)* - **not yet manually verified against real
+      hardware** (no VariSpec unit was attached in the environment this was written
+      in). Protocol read directly from the manual (not just this plan's paraphrase) -
+      found the manual's echo-then-reply framing and the error-persists-until-cleared
+      rule were more subtle than a naive read of §6.2 suggested; both are hardware-
+      verified via the Phase 0 spike's real bug history (see the build-log entry) even
+      though this specific driver class hasn't itself run against the unit yet.
+      settle_time_ms() uses the Phase 0 empirical, direction-aware measurement, not
+      the manual's generic "50-150ms" figure (that figure covers the whole product
+      family, not this unit - see the build-log entry for why the two aren't the
+      same claim). 13 unit tests against a fake serial port modeling the real echo
+      framing. **Not yet registered as a device family** - needs a safe port-discovery
+      strategy first (a serial LCTF looks like any other "USB Serial Device," unlike
+      Basler's vendor-SDK enumeration; blindly probing candidate COM ports risks
+      disturbing already-assigned pump/valve/selector hardware) - deferred, not
+      guessed at. Manual (`1794348.pdf`) copied into `apps/LSPRi/acq/docs/manuals/`
+      *(2026-08-08, done - relocated from `spikes/lspri_acq_phase0/` per this item's
+      own note)*.
 - [ ] Lori-protocol LED driver (reference implementation) — confirm `CONF_STEP`
       semantics and software-triggered single-pulse capability against real
       hardware before trusting it; this is explicitly a reference, not necessarily
