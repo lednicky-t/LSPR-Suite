@@ -111,7 +111,7 @@ class HardwareInventoryTests(unittest.TestCase):
             # Force every port to "auto" so this test doesn't depend on the
             # real machine's saved manual port assignments (get_port_assignment
             # and should_probe_port_for_role both read through this cache).
-            patch("lspr_app.device.port_assignments.load_app_setting", return_value={}),
+            patch("lspr_acq_shell.port_assignments.load_app_setting", return_value={}),
         ):
             inventory = scan_connected_serial_devices()
 

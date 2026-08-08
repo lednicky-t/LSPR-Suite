@@ -404,6 +404,16 @@ Simulation profiles), and confirm nothing regressed before moving to the next it
    rather than moving an unverified inconsistency into the shared package.
 6. **Fluidics device framework** — verbatim move per §4.2, rule 1. Verify against real
    pump/valve/selector hardware before proceeding to §4.5.
+   **Done 2026-08-08**: moved, with the real file set turning out to be 12 files, not
+   the 6 named above (the transitive dependency closure - concrete drivers,
+   `device_types.py`, `device_driver.py`, `connection_registry.py`,
+   `probe_diagnostics.py` - all had to move together for `device_manager.py` to even
+   import). The spectrometer-stage coupling in `device_lifecycle.py` (not mentioned in
+   this section, found during implementation) was generalized into
+   `register_primary_detector_stage()` - approved by the maintainer first, since it's a
+   real design decision, not a mechanical relocation. Test-suite-verified equivalent to
+   before (862/862); **real hardware verification against pump/valve/selector is still
+   the maintainer's to do**, same as §4.5's registry generalization already noted.
 
 ### 4.4 Simulated devices — a different decision for imaging than for fluidics
 
@@ -893,15 +903,40 @@ picking this up cold.
       device-type-key mismatch **was** resolved (fixed to iterate
       `PUMP`/`SWITCH`/`SELECTOR`) - confirmed it had zero live callers today, so
       this was a latent bug, not a visible one. See the 2026-08-08 build-log entry.
-- [ ] **1.3.6 — Fluidics device framework moved verbatim** (`device_manager.py`,
-      `device_lifecycle.py`, `communication_models.py`, `serial_controllers.py`,
-      `connection_registry.py`, `port_assignments.py`) into `lspr_acq_shell`,
-      same logic, same locking discipline — verified against real pump/valve/
-      selector hardware afterward, not rewritten along the way (§4.2).
-- [ ] After every 1.3.x item: `python -m pytest tests/` green, sLSPR acq launches
+- [x] **1.3.6 — Fluidics device framework moved** into `lspr_acq_shell` — done,
+      scope grew from the plan's 6 named files to **12** once the real dependency
+      closure was traced (`device_manager.py` transitively requires the concrete
+      pump/selector/valve drivers - `amf_mswitch.py`, `reglo_icc.py`,
+      `valve_controllers.py` - plus `device_types.py`, `device_driver.py`,
+      `connection_registry.py`, `probe_diagnostics.py` - to even import). Same
+      two-lock discipline, same `device_io_pool()`-adjacent comments, same
+      per-instance `_claim_owner` pattern, same `ensure_device_profile()`-based
+      canonical-label resolution — preserved exactly, not restructured. One real
+      generalization, approved by the maintainer before implementing:
+      `device_lifecycle.py`'s hardcoded spectrometer stage (which directly
+      imported `OceanSpectrometer`, a backwards dependency for a shared package)
+      became `register_primary_detector_stage(key, run_stage)`, the same
+      registration idiom as `register_device_family()`; sLSPR acq registers its
+      spectrometer stage at import time in its own shim, behavior unchanged.
+      `ACTIVE_PUMP_CHANNELS`/`VALID_ROLLER_COUNTS`/`DEFAULT_ROLLER_COUNT` moved
+      from `domain/pump_plan.py` to `reglo_icc.py` alongside this (pump-hardware
+      facts, not plan-execution facts). Also resolved the `("pump","valve",
+      "mswitch")` device-type-key mismatch already fixed in 1.3.5. See the
+      2026-08-08 build-log entry for the full investigation, the one bug found
+      and fixed while moving (a `DeviceLifecycleReport.spectrometer=` constructor
+      kwarg break, caught by the test suite and fixed at its one call site), and
+      the false-alarm "Windows fatal exception" traced to a pre-existing Qt/
+      Windows quirk unrelated to this change (confirmed by reproducing it against
+      the unmodified code via `git stash`).
+- [x] After every 1.3.x item: `python -m pytest tests/` green, sLSPR acq launches
       (Full and Simulation profiles) with no regression, before moving to the next.
+      Phase 1 (1.3.1-1.3.6) complete on this basis.
 - [ ] After Phase 1 completes: sLSPR acq confirmed **functionally identical** to
-      before (the acceptance criterion for this whole phase, §4.3).
+      before (the acceptance criterion for this whole phase, §4.3). Test-suite-level
+      equivalence confirmed (862/862, same pre-existing flake); **real pump/valve/
+      selector hardware re-verification is still outstanding** - not possible from
+      this environment, needed before relying on this for a real experiment. Same
+      caveat the 2026-08-06 registry generalization already carried forward.
 
 ### Phase 2 — New app scaffold: `apps/LSPRi/acq`
 

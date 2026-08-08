@@ -1,10 +1,21 @@
-"""Unit tests for lspr_app.device.device_lifecycle.
+"""Unit tests for lspr_acq_shell.device_lifecycle.
 
 No QApplication and no real hardware required: DeviceLifecycleController is
 pure Python, and the DeviceCommunicationService it talks to is replaced by a
 small fake that records calls and returns configurable canned responses.
 RegloICCClient.probe_port (a classmethod called directly, not through the
 service) is patched where it's imported into device_lifecycle's namespace.
+
+Moved here from apps/sLSPR/acq/tests (Phase 1 shell extraction, 2026-08-08) -
+lspr_acq_shell.device_lifecycle is the real owner of the module state these
+tests patch.object() on (get_port_assignment, load_enabled_devices, etc.);
+apps/sLSPR/acq/src/lspr_app/device/device_lifecycle.py is a thin re-export
+shim with no state of its own to test. The shim is still imported below
+(for its side effect only - it registers sLSPR acq's spectrometer as this
+process's primary-detector stage, generalized out of this module itself as
+part of the same move - see lspr_acq_shell.device_lifecycle's module
+docstring) since several tests below still expect a "spectrometer" event to
+appear first in run_full_cycle()'s output, exactly as before the move.
 """
 from __future__ import annotations
 
@@ -25,8 +36,11 @@ from lspr_app.device.communication_models import DeviceCommandResult, DeviceStat
 from lspr_app.device.device_types import PUMP, SELECTOR, SWITCH
 from lspr_app.device.reglo_icc import PumpProbe
 from lspr_app.device.serial_controllers import ControllerPort, ControllerProbe
-from lspr_app.device import device_lifecycle as dl
-from lspr_app.storage.user_profile import GLOBAL_CONFIG_PATH
+from lspr_acq_shell import device_lifecycle as dl
+from lspr_acq_shell.user_profile import GLOBAL_CONFIG_PATH
+import lspr_app.device.device_lifecycle as _slspr_device_lifecycle_shim
+
+_ = _slspr_device_lifecycle_shim  # import-for-side-effect: registers the spectrometer primary-detector stage
 
 
 # ── fakes ─────────────────────────────────────────────────────────────────────
@@ -418,29 +432,29 @@ class ShutdownAllTests(unittest.TestCase):
 
 class EnabledDevicesPersistenceTests(unittest.TestCase):
     def test_load_defaults_missing_key_to_all_enabled(self) -> None:
-        with patch("lspr_app.storage.app_config.load_app_setting", return_value={}):
+        with patch("lspr_acq_shell.settings_store.load_app_setting", return_value={}):
             enabled = dl.load_enabled_devices()
         self.assertEqual(enabled, {PUMP: True, SWITCH: True, SELECTOR: True})
 
     def test_load_defaults_missing_subkey_to_enabled_but_keeps_explicit_false(self) -> None:
-        with patch("lspr_app.storage.app_config.load_app_setting", return_value={SELECTOR: False}):
+        with patch("lspr_acq_shell.settings_store.load_app_setting", return_value={SELECTOR: False}):
             enabled = dl.load_enabled_devices()
         self.assertEqual(enabled, {PUMP: True, SWITCH: True, SELECTOR: False})
 
     def test_load_ignores_non_dict_payload(self) -> None:
-        with patch("lspr_app.storage.app_config.load_app_setting", return_value="garbage"):
+        with patch("lspr_acq_shell.settings_store.load_app_setting", return_value="garbage"):
             enabled = dl.load_enabled_devices()
         self.assertEqual(enabled, {PUMP: True, SWITCH: True, SELECTOR: True})
 
     def test_save_writes_all_three_keys_coerced_to_bool(self) -> None:
-        with patch("lspr_app.storage.app_config.save_app_setting") as mock_save:
+        with patch("lspr_acq_shell.settings_store.save_app_setting") as mock_save:
             dl.save_enabled_devices({PUMP: False, SWITCH: 1, SELECTOR: 0})
         mock_save.assert_called_once_with(
             "enabled_devices", {PUMP: False, SWITCH: True, SELECTOR: False}, path=GLOBAL_CONFIG_PATH
         )
 
     def test_save_defaults_missing_device_key_to_enabled(self) -> None:
-        with patch("lspr_app.storage.app_config.save_app_setting") as mock_save:
+        with patch("lspr_acq_shell.settings_store.save_app_setting") as mock_save:
             dl.save_enabled_devices({SELECTOR: False})
         mock_save.assert_called_once_with(
             "enabled_devices", {PUMP: True, SWITCH: True, SELECTOR: False}, path=GLOBAL_CONFIG_PATH
@@ -449,11 +463,11 @@ class EnabledDevicesPersistenceTests(unittest.TestCase):
     def test_save_and_load_always_use_the_global_path_not_the_active_user(self) -> None:
         # enabled_devices describes the physical rig, not a person's
         # preference - it must never move when the active user changes.
-        with patch("lspr_app.storage.app_config.save_app_setting") as mock_save:
+        with patch("lspr_acq_shell.settings_store.save_app_setting") as mock_save:
             dl.save_enabled_devices({PUMP: True, SWITCH: True, SELECTOR: True})
         self.assertEqual(mock_save.call_args.kwargs.get("path"), GLOBAL_CONFIG_PATH)
 
-        with patch("lspr_app.storage.app_config.load_app_setting", return_value={}) as mock_load:
+        with patch("lspr_acq_shell.settings_store.load_app_setting", return_value={}) as mock_load:
             dl.load_enabled_devices()
         self.assertEqual(mock_load.call_args.kwargs.get("path"), GLOBAL_CONFIG_PATH)
 

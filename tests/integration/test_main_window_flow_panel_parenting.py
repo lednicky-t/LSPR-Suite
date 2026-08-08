@@ -202,7 +202,7 @@ class MainWindowFlowPanelParentingTest(unittest.TestCase):
         def _fake_sync(win) -> None:
             calls.append(("sync", bool(win._hardware_init_ready_emitted)))
 
-        report = DeviceLifecycleReport(events=[], by_device={}, spectrometer=None)
+        report = DeviceLifecycleReport(events=[], by_device={}, primary_instrument=None)
 
         with (
             patch("lspr_app.gui.main_window_lifecycle.finish_hardware_initialization_for", _fake_finish),

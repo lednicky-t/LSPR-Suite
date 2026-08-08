@@ -704,6 +704,139 @@ GUI-panel rewrite this item's original scope implied (sensorgram plotting/second
 UI, session-management UI) is explicitly deferred to Phase 2, per the ROI-panel precedent
 in §10 - not tracked as an open Phase 1 item, since it was never really one.
 
+## 2026-08-08 (continued): Phase 1 item 1.3.6 — fluidics device framework moved, Phase 1 complete
+
+The last Phase 1 item, and the plan's own explicitly-flagged highest-risk one - real
+concurrency-sensitive hardware I/O with a ~30-bug incident history
+(`DEVICE_LAYER_AUDIT_2026.md`). Followed §4.2's rule strictly: as close to a byte-for-byte
+relocation as possible, no restructuring beyond the one pre-approved generalization.
+
+**Scope grew from 6 to 12 files, traced not assumed**: the plan named `device_manager.py`,
+`device_lifecycle.py`, `communication_models.py`, `serial_controllers.py`,
+`connection_registry.py`, `port_assignments.py`. Grepped every file's own
+`from lspr_app.device.X import` lines before writing anything, which surfaced a real gap:
+`device_manager.py` directly imports `amf_mswitch.py` (AMF selector driver),
+`reglo_icc.py` (pump driver), and `valve_controllers.py` (switch/valve drivers) - none in
+the plan's list - plus `device_driver.py` (base ABC) and `device_types.py` (canonical
+constants) that several of the six *and* the three drivers need. `device_lifecycle.py`
+additionally needed `probe_diagnostics.py`. None of this is optional - `device_manager.py`
+literally cannot be imported without the three concrete drivers. Final set: `device_types.py`,
+`device_driver.py`, `connection_registry.py`, `probe_diagnostics.py`, `communication_models.py`,
+`port_assignments.py`, `serial_controllers.py`, `amf_mswitch.py`, `valve_controllers.py`,
+`reglo_icc.py`, `device_manager.py`, `device_lifecycle.py` - ~3,580 lines total (up from
+the plan's implied ~2,400).
+
+**The one real design decision, confirmed with the maintainer before writing code**:
+`device_lifecycle.py`'s module docstring already said "single owner of the device
+(spectrometer/pump/valve/selector) lifecycle" - not fluidics-only as the plan's item title
+implied. `run_spectrometer_stage()` directly did `from lspr_app.device.ocean import
+OceanSpectrometer` and constructed it inline, called unconditionally first in
+`run_full_cycle()` (before port refresh, ungated by `enabled_devices`, its live instance
+surfaced via `DeviceLifecycleReport.spectrometer`). Moving this verbatim would have made
+`lspr_acq_shell` depend on sLSPR acq's spectrometer driver - backwards, and useless to
+LSPRi acq (no spectrometer; its Camera/IlluminationSource use the standard
+`register_device_family()` path instead, per the plan's own §6.1).
+
+Presented the finding and two options (generalize into a pluggable hook vs. leave
+`device_lifecycle.py` behind entirely); maintainer chose generalization. Implemented by
+extending the exact registration idiom `register_device_family()` already established
+(2026-08-06 entry above): a new `register_primary_detector_stage(key, run_stage)`, backed
+by module-level `_PRIMARY_DETECTOR_KEY`/`_PRIMARY_DETECTOR_STAGE`, called once from
+`DeviceLifecycleController.run_primary_detector_stage()` at the same point in
+`run_full_cycle()` the spectrometer call used to be - optional (an app that registers
+nothing skips the stage entirely, exactly LSPRi acq's case). sLSPR acq's own
+`device_lifecycle.py` shim registers `_run_spectrometer_stage` (byte-identical logic to
+the original method, just now a module function receiving `(controller, emit)`) at import
+time - the same pattern `register_device_family(PUMP, ...)` already used at the bottom of
+the pre-move module. `DeviceLifecycleReport.spectrometer` (the field real callers still
+read) kept as a backward-compatible read-only property over a new generic
+`primary_instrument` field, mirroring `PortRefreshData.pump_ports`'s existing
+property-over-generic-field pattern from the 2026-08-06 registry work.
+
+**`ACTIVE_PUMP_CHANNELS`/`VALID_ROLLER_COUNTS`/`DEFAULT_ROLLER_COUNT`** moved from
+`domain/pump_plan.py` to `reglo_icc.py` alongside this (same treatment as 1.3.1's
+`DEFAULT_SETTINGS_FILENAME` reasoning) - these are Reglo ICC pump-hardware facts (the
+manual's own roller-count/channel-count specs), not plan-execution facts, and
+`reglo_icc.py` needed them internally once it moved. `pump_plan.py` now imports them back
+(many GUI files still import these three names from `pump_plan`, not `reglo_icc`, so that
+had to keep working) - `ACTIVE_PUMP_CHANNELS` is used inside `pump_plan.py` itself, the
+other two are pure re-exports for other modules (pyflakes correctly flagged this; silenced
+with a one-line `_ = (...)` reference, the same idiom used elsewhere in this codebase for
+deliberately-unused parameters, since bare `pyflakes` - unlike `ruff` - doesn't honor
+`# noqa` comments).
+
+**A real bug caught by the test suite, not by inspection**: `DeviceLifecycleReport`'s
+rename (`spectrometer` field -> `primary_instrument` field + `spectrometer` property)
+broke the one place that constructs the dataclass directly with a `spectrometer=` keyword
+argument (`tests/integration/test_main_window_flow_panel_parenting.py` - a synthetic
+report for a `main_window` hardware-init-finished handler test). Properties aren't
+constructor parameters, so this raised `TypeError: unexpected keyword argument
+'spectrometer'` the moment the full suite ran. Grepped every `DeviceLifecycleReport(`
+call site first (exactly one, this test) before deciding: fixed the test to use
+`primary_instrument=None` rather than reverting the field rename, since the whole point of
+generalizing this shared dataclass's naming was for it to stop being spectrometer-specific,
+and only one call site needed updating.
+
+**Five test files needed patch-target fixes, all the same root cause as 1.3.1/1.3.5**:
+running the full suite (not assuming shims are transparent to `unittest.mock.patch`)
+surfaced that `test_device_lifecycle.py` (37 tests), `test_port_assignments.py`,
+`test_amf_mswitch.py`, and `test_hardware_inventory.py` all patch module-level names
+(`get_port_assignment`, `is_probable_reglo_port`, `RegloICCClient.probe_port`,
+`load_enabled_devices`, `amfTools`, `load_app_setting`/`save_app_setting`, and
+`test_port_assignments.py`'s direct access to the private `_assignment_cache` global) that
+now live in `lspr_acq_shell`'s modules, not the sLSPR acq shims that merely re-export
+them - patching the shim's copy doesn't affect the real module's internal calls to its own
+name. Fixed by repointing `test_device_lifecycle.py` and `test_port_assignments.py` at
+`lspr_acq_shell.device_lifecycle`/`lspr_acq_shell.port_assignments` directly (moved from
+`apps/sLSPR/acq/tests` colocation to `tests/unit`, matching the "test the real owner"
+convention from every prior 1.3.x item), and updating the four `patch("lspr_app.device.X...")`
+string targets in the other three files to their `lspr_acq_shell.X` equivalents.
+`test_device_lifecycle.py` additionally needed a deliberate side-effect import of the sLSPR
+acq shim (`import lspr_app.device.device_lifecycle as _slspr_device_lifecycle_shim`) so the
+spectrometer-stage registration actually runs before tests that expect a "spectrometer"
+event in `run_full_cycle()`'s output - without it, nothing in the test file's own import
+chain would trigger that registration, since `lspr_acq_shell.device_lifecycle` alone
+(the real owner, now `dl` in this test) doesn't know about spectrometers at all.
+`patch("lspr_app.device.ocean.OceanSpectrometer", ...)` (3 occurrences) needed no change -
+the registered stage function still does a fresh local import from `lspr_app.device.ocean`
+on every call, exactly like the original method did, so patching that path still works.
+
+**A scary-looking but unrelated false alarm, investigated rather than dismissed**: the
+first full-suite run after this change printed `Windows fatal exception: code
+0x8001010d` (`RPC_E_CANTCALLOUT_ININPUTSYNCCALL`) partway through, with a full C-stack
+dump, right before `test_titlebar_double_click_maximize.py`'s second test - alarming
+given this item's real hardware-I/O/COM-adjacent surface (pyserial's Windows port
+enumeration uses WMI/COM; `amf_mswitch.py`'s `_suppress_console_output` does raw
+`os.dup2` fd manipulation). Investigated properly rather than assuming it was
+unrelated: `git stash`-ed every uncommitted submodule change (reverting the device/ tree
+to its pre-extraction original) and reran the exact same test in isolation - it printed
+the identical fatal-exception message at the identical point, with the same 3-passed
+result, against completely unmodified original code. Confirms this is a pre-existing
+Qt/Windows environment quirk (most likely triggered by `mapToGlobal()`'s native window
+calls interacting with COM state during `QApplication.processEvents()`, unrelated to
+anything in this device-layer move) rather than a regression - popped the stash back
+immediately after confirming.
+
+**Verified**: full umbrella suite, 862/862 (every test green this run, including the
+usually-separately-reconfirmed Windows temp-dir flake - didn't trigger this time).
+`pyflakes` clean on all 12 new `lspr_acq_shell` files, all 12 sLSPR acq shims, and every
+touched test file (one pre-existing `# noqa`-annotated line in the untouched
+`hardware_inventory.py` doesn't count - bare pyflakes doesn't honor `# noqa`, not a
+regression). sLSPR acq launched twice - Simulation profile (10s) and, since this is
+specifically hardware-discovery code, **Full profile** too (20s, real
+`run_full_cycle()` executing the spectrometer stage + pump/switch/selector port
+scanning against a machine with none of that hardware attached) - both clean, no
+errors, no orphaned processes, 16GB+ free memory after each.
+
+**Phase 1 (1.3.1-1.3.6) is now complete** on the test-suite-equivalence basis stated in
+§4.3's acceptance criterion. **Not done, and explicitly the maintainer's to do, not
+something achievable from this environment**: real pump/valve/selector hardware
+re-verification - connect/disconnect, port scanning, the selector's homing post-connect
+hook, actual command dispatch - against physical devices, before relying on any of this
+for a real experiment. This caveat has now been carried forward, unresolved, across three
+separate build-log entries (2026-08-06 registry generalization, and now this one) -
+worth prioritizing before the next real experiment, not just noting again.
+
 ## 2026-08-08 (continued): Phase 1 item 1.3.5 — V49's real scope found, only the ready piece moved
 
 Picked up 1.3.5 next. This one was wrong in the same direction as the very first version

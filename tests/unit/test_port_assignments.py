@@ -1,21 +1,21 @@
+"""Moved here from apps/sLSPR/acq/tests (Phase 1 shell extraction,
+2026-08-08) - lspr_acq_shell.port_assignments is the real owner of the
+module state (_assignment_cache) and settings-store calls this test patches;
+apps/sLSPR/acq/src/lspr_app/device/port_assignments.py is a thin re-export
+shim with no state of its own to test.
+"""
 from __future__ import annotations
 
 import unittest
 from unittest.mock import patch
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import ensure_repo_paths
 
 
 ensure_repo_paths()
 
-APP_SRC = REPO_ROOT / "apps" / "sLSPR" / "acq" / "src"
-import sys
-
-if str(APP_SRC) not in sys.path:
-    sys.path.insert(0, str(APP_SRC))
-
-import lspr_app.device.port_assignments as port_assignments
-from lspr_app.device.port_assignments import (
+import lspr_acq_shell.port_assignments as port_assignments
+from lspr_acq_shell.port_assignments import (
     clear_port_assignment,
     device_assignment_label,
     get_port_assignment,
@@ -41,8 +41,8 @@ class PortAssignmentTests(unittest.TestCase):
         saved_payloads: list[dict[str, str]] = []
 
         with (
-            patch("lspr_app.device.port_assignments.load_app_setting", return_value={}),
-            patch("lspr_app.device.port_assignments.save_app_setting", side_effect=lambda key, value: saved_payloads.append(value)),
+            patch("lspr_acq_shell.port_assignments.load_app_setting", return_value={}),
+            patch("lspr_acq_shell.port_assignments.save_app_setting", side_effect=lambda key, value: saved_payloads.append(value)),
         ):
             self.assertEqual(get_port_assignment("COM6"), "auto")
             self.assertEqual(set_port_assignment("COM6", "valve"), "switch")

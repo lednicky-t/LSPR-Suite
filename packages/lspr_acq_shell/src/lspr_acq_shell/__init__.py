@@ -10,6 +10,18 @@ moved in - do not add speculative re-exports ahead of the real extraction.
 from __future__ import annotations
 
 from .async_writer import AsyncTaggedWriter, WriterProtocol
+from .communication_models import DeviceCommand, DeviceStatus, PortRefreshData
+from .device_driver import DeviceDriver, DeviceError, DeviceTimeoutError
+from .device_lifecycle import (
+    DeviceLifecycleController,
+    DeviceLifecycleEvent,
+    DeviceLifecycleReport,
+    register_device_family,
+    register_post_connect_hook,
+    register_primary_detector_stage,
+)
+from .device_manager import DeviceCommunicationService
+from .device_types import PUMP, SELECTOR, SWITCH
 from .experiment_control_backend import (
     ExperimentControlBackend,
     ExperimentControlDeviceState,
@@ -63,6 +75,22 @@ __all__ = [
     "version_string",
     "AsyncTaggedWriter",
     "WriterProtocol",
+    "DeviceCommand",
+    "DeviceStatus",
+    "PortRefreshData",
+    "DeviceDriver",
+    "DeviceError",
+    "DeviceTimeoutError",
+    "DeviceLifecycleController",
+    "DeviceLifecycleEvent",
+    "DeviceLifecycleReport",
+    "register_device_family",
+    "register_post_connect_hook",
+    "register_primary_detector_stage",
+    "DeviceCommunicationService",
+    "PUMP",
+    "SELECTOR",
+    "SWITCH",
     "ExperimentControlBackend",
     "ExperimentControlCapabilities",
     "ExperimentControlDeviceState",

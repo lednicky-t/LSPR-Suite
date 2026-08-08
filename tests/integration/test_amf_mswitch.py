@@ -42,7 +42,7 @@ class AmfMswitchTests(unittest.TestCase):
 
         stdout_buffer = io.StringIO()
         stderr_buffer = io.StringIO()
-        with patch("lspr_app.device.amf_mswitch.amfTools", fake_amf_tools):
+        with patch("lspr_acq_shell.amf_mswitch.amfTools", fake_amf_tools):
             with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
                 devices = detect_amf_mswitch_devices()
 
