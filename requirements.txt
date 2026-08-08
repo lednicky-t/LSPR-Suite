@@ -5,6 +5,7 @@
 -e apps/suite_launcher
 -e apps/sLSPR/acq
 -e apps/sLSPR/eva
+-e apps/LSPRi/acq
 -e apps/LSPRi/eva
 # Optional for AMF M-Switch hardware:
 # python -m pip install AMFTools

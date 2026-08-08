@@ -928,3 +928,106 @@ orphaned processes, 16.1GB free memory afterward.
 real V49 migration (shared panel/controller/IO split across ~11,300 remaining lines) is
 explicitly NOT started and NOT tracked as a remaining Phase 1 sub-item - it needs its own
 dedicated scoping as a future project, the same way the sensorgram/ROI panel rewrites do.
+
+## 2026-08-08 (continued): Phase 2 started - `apps/LSPRi/acq` scaffold, device ABCs, domain model
+
+Phase 1 confirmed complete (test-suite basis), maintainer asked to start Phase 2.
+
+**Repo/submodule setup**: unlike every other app in this suite, `apps/LSPRi/acq` didn't
+exist as a repo yet. `gh` CLI isn't installed in this environment, so couldn't create the
+GitHub repo directly - asked the maintainer to create an empty
+`lednicky-t/LSPRimaging-Acquisition` repo (matching the naming pattern of the other three:
+`SingleSpotLSPR-Acquisition`, `SingleSpotLSPR-Evaluation`, `LSPRimaging-Evaluation`).
+Maintainer created it; added as a git submodule at `apps/LSPRi/acq`
+(`git submodule add https://github.com/lednicky-t/LSPRimaging-Acquisition.git apps/LSPRi/acq`).
+
+**Scaffold built** (plan section 5's package layout): `pyproject.toml` (name
+`lspri-acquisition`, entry point `lspri-acquisition = "lspri_acq_app.app:main"`, depends on
+`lspr-core`/`lspr-io`/`lspr-ui`/`lspr-acq-shell` plus `pypylon` as a real dependency - Basler
+is the primary camera per the Phase 0 conclusion, not optional like `AMFTools`/`pyueye`),
+`run.py` (mirrors `apps/sLSPR/acq/run.py`, adds `packages/lspr_acq_shell/src` to
+`bootstrap_app_environment`'s `extra_src_dirs` since the shared bootstrap helper's own
+`SHARED_SRC_DIRS` only covers `lspr_ui`/`lspr_core`/`lspr_io`), `src/main.py`, and the
+`lspri_acq_app` package (`__init__.py`/`_version.py`/`version.py` following the exact
+`APP_NAME`/`APP_VERSION` + derived-`__version__` split `lspr_app` uses).
+
+**Camera/IlluminationSource ABCs** (`device/camera_base.py`, `device/illumination_base.py`)
+built to the plan's section 6 shapes. One deliberate deviation from the plan's own snippet:
+`Camera.capabilities()` and `IlluminationSource.settle_time_ms()` are `@abstractmethod` here,
+not given a default the way `lspr_acq_shell.Spectrometer.capabilities()` has one - checked
+the precedent before copying it and it doesn't transfer: `SpectrometerCapabilities()`'s
+all-flags-off default is a genuinely meaningful "no optional features" answer, but a
+default `CameraCapabilities(0, 0)` would silently misrepresent real sensor dimensions, and a
+default `settle_time_ms()` (e.g. 0) would let a real sweep grab a frame before the LCTF/LEDs
+had actually settled - silently corrupting real data rather than just being uninformative.
+Every concrete backend must state its own real number for these two.
+
+**SimulatedCamera / SimulatedIllumination** (`device/simulated_camera.py`,
+`device/simulated_illumination.py`) built per section 11 - mirror `SimulatedSpectrometer`'s
+role. `SimulatedCamera` renders a configurable set of Gaussian spots plus Gaussian noise onto
+a fixed-size sensor; `SimulatedIllumination` is instant-tune, zero settle time, and validates
+against a configured `wavelength_range_nm`. 9 unit tests
+(`apps/LSPRi/acq/tests/test_devices.py`) cover open-before-use guards, frame shape/metadata,
+spot placement, capability reporting, range validation, and settle time.
+
+**Domain model** (`domain/models.py`) built to section 7's exact shapes: `Frame`,
+`SpectralCube`, `ImagingAcquisitionSettings`, `AbsorbanceSpectrumResult`. `Frame.metadata`
+given a `default_factory=dict` (the plan's snippet doesn't specify a default; every real
+construction site wants an empty dict, and slots-dataclass fields don't share mutable
+defaults across instances - confirmed by a unit test).  `Frame.wavelength_nm` initialized to
+`float("nan")` by `SimulatedCamera.acquire_frame()` and documented as "filled in by the
+sweep controller after the fact" - the camera itself has no way to know what wavelength the
+illumination source was set to; that's the sweep loop's job once the real one exists
+(section 8, not built yet).
+
+**ROI types ported** (`domain/roi.py`) - `AreaRoi`/`AreaRoiGroup` copied field-for-field from
+`apps/LSPRi/eva/src/lspr_imaging_app/domain/models.py`, current names only (no
+`DetectedSpot`/`SpotGroup` aliases), per the plan's explicit instruction. Kept the
+auto-detection-scoring fields (`score`, `support_*`, `quality_score`, `inferred`) even
+though v1 doesn't do auto-detection (manual placement only) - the plan says "ported
+verbatim," and dropping fields now would just have to be reconciled again if/when
+auto-detection is ever added here.
+
+**Minimal main window** (`gui/main_window.py`, `gui/app.py`) - deliberately just a title/
+version/status label, not a feature. Exists to prove the app boots and wires
+`lspr_core`/`lspr_io`/`lspr_ui` correctly (via `apply_base_app_theme`/`app_icon`), not to be
+feature-complete - the real GUI panels (image view, ROI panel, experiment control) are
+separate, later milestones. No splash screen / lock file / launch-profile plumbing yet
+(unlike `lspr_app.app`) - those are real design decisions that need an actual hardware
+discovery flow to hang off of, which doesn't exist yet; adding them now would be
+speculative complexity ahead of a real need.
+
+**Launcher wiring corrected, not yet enabled**: `apps/suite_launcher/.../targets.py`'s
+`lspri_acq` `AppTarget` had placeholder values that didn't match reality (`address`/`script`
+pointed at a nonexistent `app.py` at the app root, `extra_paths` was missing `lspr_ui` and
+`lspr_acq_shell`, no `github_repo`/`version_file`). Fixed to match the pattern
+`slspr_acq` uses (`src/main.py` entry point, `python_candidates` from the suite venv, all
+four shared packages' `src/` dirs, `github_repo="lednicky-t/LSPRimaging-Acquisition"`,
+`version_file="src/lspri_acq_app/version.py"`). **Left `enabled=False`** - the plan's own
+section 5 says flip it once the app has a working entry point, but "working" here should
+mean something a user would actually want to open, not just an importable module; revisit
+once the GUI has real acquisition content.
+
+**Verified**: `pip install -e apps/LSPRi/acq` succeeds cleanly (all four shared packages
+resolve as already-installed editable deps). `apps/LSPRi/acq/tests/` - 15/15 passed
+(9 device tests, 6 domain-model tests). Full umbrella suite - 861/862, the one failure the
+same pre-existing Windows temp-dir-cleanup race documented in every prior entry
+(`test_async_writer_reports_failure_via_on_error_callback`), unrelated to this change -
+confirms today's targets.py/requirements.txt edits didn't regress anything else. `pyflakes`
+clean on every new file. App launched via `python apps/LSPRi/acq/src/main.py` and
+screenshotted (`pywinauto`, real window capture, not just "process didn't crash") - dark
+suite theme applied correctly, title/version/status text rendered as expected, no
+tracebacks in process output.
+
+**Not done, deliberately deferred rather than half-built**: registering `CAMERA`/
+`ILLUMINATION` as new device families into `lspr_acq_shell`'s generalized registry
+(section 6.1, the next milestone in section 12's checklist) needs a real
+`discover_and_connect` callback design decision (what does "discover" even mean before a
+real Basler/VariSpec driver exists - always synthesize a simulated device? gate on an env
+var?) - judged that wiring this now, ahead of any real driver, risked exactly the kind of
+speculative/guessed design this project has repeatedly avoided elsewhere (e.g. section 8's
+"don't build the more complex version speculatively" for the queue-transport choice).
+Left for the next session, alongside the real Basler/VariSpec drivers it's meant to serve.
+Also not done: nothing from today committed yet, pending the maintainer's go-ahead
+(new submodule content + umbrella `requirements.txt`/`targets.py` changes +
+`.gitmodules`/submodule-pointer addition).

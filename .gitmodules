@@ -7,3 +7,6 @@
 [submodule "apps/sLSPR/eva"]
 	path = apps/sLSPR/eva
 	url = https://github.com/lednicky-t/SingleSpotLSPR-Evaluation.git
+[submodule "apps/LSPRi/acq"]
+	path = apps/LSPRi/acq
+	url = https://github.com/lednicky-t/LSPRimaging-Acquisition.git

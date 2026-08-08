@@ -940,12 +940,21 @@ picking this up cold.
 
 ### Phase 2 — New app scaffold: `apps/LSPRi/acq`
 
-- [ ] App scaffold created (`pyproject.toml`, `src/main.py`, package layout per §5),
-      depends on `lspr_core`/`lspr_io`/`lspr_ui`/`lspr_acq_shell`.
-- [ ] `Camera`/`IlluminationSource` ABCs + `SimulatedCamera`/`SimulatedIllumination`
-      + unit tests (§4.4, §6).
+- [x] App scaffold created (`pyproject.toml`, `src/main.py`, package layout per §5),
+      depends on `lspr_core`/`lspr_io`/`lspr_ui`/`lspr_acq_shell`. *(2026-08-08)* New
+      GitHub repo (`lednicky-t/LSPRimaging-Acquisition`) created and wired in as a
+      submodule at `apps/LSPRi/acq`, matching the other three apps. Minimal main
+      window boots and renders correctly (screenshot-verified) but has no real
+      acquisition content yet - see the 2026-08-08 build-log entry.
+- [x] `Camera`/`IlluminationSource` ABCs + `SimulatedCamera`/`SimulatedIllumination`
+      + unit tests (§4.4, §6). *(2026-08-08)* `capabilities()`/`settle_time_ms()` made
+      abstract (no default), unlike `lspr_acq_shell.Spectrometer`'s precedent - see the
+      build-log entry for why a default doesn't transfer safely to these two. 9 unit
+      tests, no Qt/no hardware.
 - [ ] `Camera`/`IlluminationSource` registered as new families into the generalized
-      registry from `lspr_acq_shell` (§6.1).
+      registry from `lspr_acq_shell` (§6.1). **Deliberately deferred** *(2026-08-08)* -
+      needs a real `discover_and_connect` design decision that shouldn't be guessed at
+      ahead of an actual Basler/VariSpec driver; see the build-log entry.
 - [ ] `ImagingExperimentControlBackend` implemented against the shared
       `ExperimentControlBackend` Protocol (§6.2).
 - [ ] Basler driver (`pypylon`), manually verified against real hardware.
@@ -955,8 +964,11 @@ picking this up cold.
       semantics and software-triggered single-pulse capability against real
       hardware before trusting it; this is explicitly a reference, not necessarily
       the production driver for whatever LED hardware ends up paired with this app.
-- [ ] Domain model (`Frame`, `SpectralCube`, `AreaRoi`/`AreaRoiGroup` ported from
-      LSPRi eva, `AbsorbanceSpectrumResult`, `ImagingAcquisitionSettings`) — §9.
+- [x] Domain model (`Frame`, `SpectralCube`, `AreaRoi`/`AreaRoiGroup` ported from
+      LSPRi eva, `AbsorbanceSpectrumResult`, `ImagingAcquisitionSettings`) — §7 (fixed
+      from this item's own "§9" typo - §9 is the HDF5 schema section, §7 is Domain
+      model). *(2026-08-08)* Built to the exact shapes in §7; `AreaRoi`/`AreaRoiGroup`
+      ported field-for-field, current names only.
 - [ ] Sweep controller + three-thread pipeline (§8) built and tested against
       simulated devices — same-process `threading.Thread`/`queue.Queue`, not
       `multiprocessing.Queue`, unless Phase 0's results say otherwise.
