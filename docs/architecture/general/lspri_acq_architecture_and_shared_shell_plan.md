@@ -716,30 +716,69 @@ spectra.
 
 ---
 
-## 9. Storage: HDF5 schema extension
+## 9. Storage
 
-Extend `lspr_io`'s schema (the mature, versioned one already used by sLSPR acq —
-`LSPR_MEASUREMENT_SCHEMA_VERSION` — not LSPRi eva's separate JSON-integer convention).
-New groups, additive (minor version bump per the suite's HDF5 contract in
-`docs/schemas/hdf_standard.md`):
+**Revised 2026-08-08 — images are NOT stored in HDF5.** The original version of
+this section put raw frames in an HDF5 `/raw/cubes/{cube_index}/frames` dataset,
+matching sLSPR acq's all-in-one-file convention. Maintainer's explicit call:
+split storage by kind, not by file-format convenience —
 
-- `/raw/cubes/{cube_index}/frames` — dataset shaped `(n_wavelengths, height, width)`,
-  `maxshape=(None, height, width)` is wrong here since each cube is one append unit —
-  append along a cube axis instead: overall dataset `(None, n_wavelengths, height, width)`,
-  chunked per-cube for compressed sequential writes.
-- `/raw/cubes/{cube_index}/wavelengths_nm` — the actual wavelength for each frame in
-  that cube (should match `wavelengths_nm` in settings, but record what was actually
-  achieved, not just requested — if a `set_wavelength` call errors mid-sweep, this is
-  where that's visible later).
-- `/processed/roi_definitions` — `AreaRoi`/`AreaRoiGroup` snapshot at experiment start.
-- `/processed/absorbance_spectra/{roi_id}` — `(None, n_wavelengths)`, appended once per
-  completed cube.
-- `/processed/sensorgram/{roi_id}` — `(None, 2)` (timestamp, metric value), same shape
-  family as sLSPR acq's existing sensorgram storage.
-
-Write via the extracted async-writer plumbing from Phase 1 §4 item 3 — new tags
-(`"cube"`, `"roi_definitions"`) dispatched the same way `"append"`/`"metrics"` already
-are.
+- **HDF5** (via `lspr_io`, the same mature, versioned schema sLSPR acq uses —
+  `LSPR_MEASUREMENT_SCHEMA_VERSION`, not LSPRi eva's separate JSON-integer
+  convention) holds **experimental data only**: device status/inventory,
+  spectra-shaped values, sensorgram points, ROI definitions — the same kinds of
+  things sLSPR acq already stores there. Additive schema groups, minor version
+  bump per `docs/schemas/hdf_standard.md`:
+  - `/processed/roi_definitions` — `AreaRoi`/`AreaRoiGroup` snapshot at
+    experiment start.
+  - `/processed/absorbance_spectra/{roi_id}` — `(None, n_wavelengths)`, appended
+    once per completed cube.
+  - `/processed/sensorgram/{roi_id}` — `(None, 2)` (timestamp, metric value),
+    same shape family as sLSPR acq's existing sensorgram storage.
+  - Device inventory / status — reuse `lspr_io`'s existing device-inventory
+    writer path, same as sLSPR acq.
+  - Not yet built (§12's remaining checklist item) — the async-writer plumbing
+    from Phase 1 §4 item 3 is the intended seam (`AsyncTaggedWriter` subclass,
+    new tags dispatched the same way `"append"`/`"metrics"` already are).
+- **Image frames** go to a **separate, user-selectable** image store — either a
+  TIFF stack or an OME-Zarr dataset, both real options, not one hardcoded
+  default (this is an experimental app; customization matters more than a
+  single "right" answer here). **Built 2026-08-08** —
+  `storage/image_writer.py`'s `TiffCubeWriter`/`OmeZarrCubeWriter`, both
+  implementing a common `ImageCubeWriter.write_cube(cube) -> int` (bytes
+  written) protocol that plugs directly into `SaveWriterThread` (§8). See the
+  2026-08-08 build-log entry and
+  [`spikes/lspri_acq_storage_benchmark/storage_format_benchmark_findings.md`](../../../spikes/lspri_acq_storage_benchmark/storage_format_benchmark_findings.md)
+  for the real write-throughput/compression measurements behind the defaults:
+  - `TiffCubeWriter` — one file per frame, named `WL<wavelength>Frame<cube_index>.tif`,
+    the *exact* filename convention LSPRimaging Evaluation's reader already
+    parses (`IMAGE_PATTERN` in `apps/LSPRi/eva/src/lspr_imaging_app/io/dataset.py`)
+    — no eva-side change needed to read this app's output.
+  - `OmeZarrCubeWriter` — grows a real zarr v3 array one cube at a time (zarr's
+    own API for array/metadata structure; the same hand-rolled shard/index/
+    CRC32C byte format eva's batch exporter uses for the pixel data itself,
+    bypassing zarr's slow async per-chunk write path). Also writes the same
+    `lspr` attrs group eva's exporter does, updated after every cube, so a
+    dataset from an interrupted experiment stays readable for whatever cubes
+    did complete, and eva's own fast-read path works against it. **Proven
+    compatible with eva's actual reader**, not just "valid zarr" — see
+    `tests/integration/test_lspri_acq_zarr_compat.py` (umbrella-level, since
+    it's specifically about the integration point between the two apps):
+    `lspr_imaging_app.io.dataset.load_ome_zarr_dataset()` +
+    `load_image_array()`, unmodified, correctly read back pixel-perfect data
+    written by this app's writer, for both shard modes and with/without
+    compression.
+  - `StorageSettings` (format/compression/compression_level/shard_mode/
+    chunk_size_px) is the full user-choosable surface — no settings UI built
+    yet (a later GUI item), but every field is wired through
+    `build_image_writer()` already.
+  - `SaveWriterThread` (§8) now tracks live save-lag metrics (queue depth,
+    write latency, bytes written — `SaveWriterThread.stats()`), the same
+    pattern already validated in the Phase 0 spike's own `SaveWriterThread` —
+    so a user can see, on their own hardware, whether their chosen
+    format/compression/resolution is actually keeping up, rather than trusting
+    a number measured on a different machine. No GUI display of this yet
+    (also a later item).
 
 ---
 
@@ -749,11 +788,22 @@ are.
   processing/save threads). A `pyqtgraph.ImageView`-based widget is a reasonable
   starting point for a fast-updating grayscale image at this frame size — verify
   redraw cost against Phase 0's numbers before committing.
-- **ROI panel**: manual placement/editing only for v1 (no auto-detection). The pure
-  geometry helpers in LSPRi eva's `domain/roi_editor_tools.py` (clamp-to-image,
-  move/resize) are reusable as-is; the interaction/overlay code around them
-  (`ImageInteractionController`, `OverlayManager`) is Qt-coupled to that app's specific
-  `MainWindow` and needs a genuine rewrite for this app's panel, not a port.
+- **ROI panel**: manual placement/editing only for v1 (no auto-detection).
+  **Corrected 2026-08-08**: eva's `domain/roi_editor_tools.py` is NOT "reusable
+  as-is" as this item originally claimed — checked before assuming so, and every
+  clamp/move/clone function there is built around `RoiDefinition` (rectangle/
+  ellipse, `size_x`/`size_y`), a different type from this app's `AreaRoi`
+  (sample disk + reference annulus, `sample_radius_px`) — not directly
+  reusable. Only `build_grid_positions()` there is genuinely generic (no
+  `RoiDefinition` dependency), and it isn't needed for v1's manual-placement-
+  only scope. Built a fresh, `AreaRoi`-shaped equivalent instead:
+  `apps/LSPRi/acq/src/lspri_acq_app/domain/roi_editor_tools.py`
+  (`clamp_center_to_image`, `move_roi`, `next_area_roi_id`, `roi_outer_radius_px`
+  — the last one because clamping must account for the reference annulus's
+  outer edge, not just the sample disk). The interaction/overlay code around it
+  (`ImageInteractionController`, `OverlayManager`) is still Qt-coupled to eva's
+  specific `MainWindow` and still needs a genuine rewrite for this app's panel,
+  not a port — that part of the original claim held up.
 - **Image processing panel**: crop/rotate/background-flatten only for v1, using the
   vectorized functions from LSPRi eva's `processing/preprocess.py` (`apply_preprocessing`,
   `flatten_background`) as a starting point — these are already numpy/scipy-vectorized,
@@ -1015,7 +1065,18 @@ picking this up cold.
       `processing/cube_processing.py` ties ROI extraction + extinction math together
       per cube, reporting results via a callback rather than owning a sensorgram
       data structure (no sensorgram GUI panel exists yet, §10).
-- [ ] HDF5 schema extension in `lspr_io` (§10) — minor version bump, changelog entry.
+- [ ] HDF5 schema extension in `lspr_io` (§9) — experimental data only (device
+      status, spectra, sensorgram, ROI definitions), minor version bump, changelog
+      entry. Not built yet.
+- [x] Image storage: TIFF stack and OME-Zarr writers (§9). *(2026-08-08)* Both
+      built, both real user-selectable options (`StorageSettings`), real-measured
+      (not guessed) against a live-write-shaped benchmark - see the build-log
+      entry and `spikes/lspri_acq_storage_benchmark/`. Proven compatible with
+      LSPRimaging Evaluation's actual reader (umbrella-level cross-app test), not
+      just "valid zarr." `SaveWriterThread` now tracks live save-lag metrics.
+      **Not yet built**: a settings UI to actually choose format/compression, a
+      live display of the save-lag metrics, and the recompress-after-acquisition
+      fallback path (designed, not implemented).
       `SaveWriterThread.write_cube` is already the injection point this will plug
       into (`storage/image_writer.py` doesn't exist yet).
 - [ ] GUI: image view (latest-frame-only), ROI panel (manual placement only for v1),

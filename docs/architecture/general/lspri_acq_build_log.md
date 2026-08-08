@@ -1396,3 +1396,125 @@ tracebacks.
 **Not done**: `storage/image_writer.py` (the real HDF5-backed `write_cube` - section 9/10),
 GUI panels (image view, ROI panel), `ImagingExperimentControlBackend`, `ILLUMINATION` device
 family registration (previous entry). Nothing from this entry committed yet.
+
+## 2026-08-08 (continued): storage architecture decided - images are NOT in HDF5; both TIFF and OME-Zarr built, real-measured
+
+Maintainer asked to go GUI-first next, but opened with a real architecture correction first:
+images do not belong in HDF5 the way the original plan's section 9 described (matching sLSPR
+acq's all-in-one-file convention) - HDF5 holds experimental data only (device status, spectra,
+sensorgram, ROI definitions), images go to a **separate, user-selectable** TIFF-stack or
+OME-Zarr store. Explicit design philosophy stated alongside this: "we are doing an
+experimental app, so customization and flexibility is one of the main points, not setting
+everything constant or hidden from user" - every storage knob (format, compression, shard
+mode) must be user-choosable, not picked once by the app.
+
+**Real benchmark run before any decision, not a guess**: maintainer asked two concrete
+questions - relative write speed and space savings, specifically for OME-Zarr's ability to
+keep up with a *live* camera stream (not eva's already-measured *batch* export case), plus
+whether the camera's real 10-bit sensor resolution changes anything (TIFF only supports
+16-bit; does pre-packing to 10 bits help). Built
+`spikes/lspri_acq_storage_benchmark/benchmark_storage.py`, replicating eva's own hand-rolled
+zarr v3 shard-write format (`_zarr_export_worker.py`'s `write_shard()` byte layout) but
+**single-threaded** - matching how a live `SaveWriterThread` actually runs, not eva's
+`ProcessPoolExecutor`-parallel batch exporter, which is a different claim than "119 MB/s" at
+the same chunk size. Synthetic frames (Gaussian spots + Poisson-like shot noise, not random
+bytes) at both Phase 0 configurations (full-res 3840x2160, 2x2-binned 1920x1080), both 10-bit
+and 12-bit content ranges.
+
+**Real findings, not assumptions** (full numbers in
+`spikes/lspri_acq_storage_benchmark/storage_format_benchmark_findings.md`):
+- eva's own lz4+bitshuffle setting is **borderline at full resolution on a single save
+  thread** - per-cube write time (~495ms for 4 wavelengths) is close to *exceeding* the
+  sweep's own per-cube pace (~440ms, from Phase 0's settle-time numbers) - the save queue
+  would slowly grow over a long experiment. At 2x2 binning every compressed option
+  comfortably keeps up - a second, independent reason (beyond Phase 0's capture-throughput
+  finding) favoring binning as the default.
+- Compression ratio depends entirely on codec/level, not "zarr vs. TIFF" as a category:
+  lz4+bitshuffle (fast) only reached ~1.1-1.3x for this content, *worse* than TIFF's plain
+  zlib (~2.0-2.4x); zstd-5 matched TIFF's ratio but was 4-5x too slow to write live at any
+  tested resolution.
+- Bit-packing to real 10-bit before compression doesn't meaningfully help throughput (the
+  packing step's own CPU cost eats the savings) and isn't standard zarr-chunked layout -
+  not worth pursuing; store as `uint16`, let the codec handle it.
+
+Presented these findings and asked how to handle the full-res/lz4 tradeoff.
+**Maintainer's answer reframed the ask**: keep *all* options (TIFF and OME-Zarr both, every
+compression/shard setting), and instead of picking one, build the mechanism to *measure* how
+each performs live, on the user's actual machine/camera/setup, since that varies rig to rig -
+"these analyses are giving us some good default values and starting points," not fixed
+policy. Also asked for setup guidance: exclude the save folder from antivirus scanning, and
+set the correct shard grouping.
+
+**Built** (`apps/LSPRi/acq/src/lspri_acq_app/storage/image_writer.py`):
+- `StorageSettings` - the full user-choosable surface (format/compression/
+  compression_level/shard_mode/chunk_size_px), defaults set from the benchmark's findings
+  as starting points, not hard policy.
+- `TiffCubeWriter` - one file per frame, named `WL<wavelength>Frame<cube_index>.tif` - the
+  *exact* filename convention eva's reader (`IMAGE_PATTERN` regex,
+  `apps/LSPRi/eva/src/lspr_imaging_app/io/dataset.py`) already parses. Verified for real:
+  wrote frames, read them back with `tifffile.imread`, confirmed pixel-perfect (uncompressed
+  and zlib).
+- `OmeZarrCubeWriter` - grows a real zarr v3 array one cube at a time. Array/metadata
+  structure (shape, chunks, shards, compressor declaration) goes through zarr's own
+  `create_array`/`.resize()` API, so the result is a standard, valid zarr v3 dataset any
+  zarr-v3-compliant reader can open; the actual per-cube pixel bytes are written with the
+  same hand-rolled shard/index/CRC32C format the benchmark validated (bypassing zarr's slow
+  async chunk-write path). Also writes the same `lspr` attrs group
+  (`spectral_cube_indices`/`wavelengths_nm`/`chunk_size_px`/`shard_mode`/`compression`/
+  `dtype`) eva's batch exporter writes, updated after *every* cube (not just at the end) -
+  deliberate, so a dataset from an interrupted/crashed experiment stays readable for
+  whatever cubes did complete, and eva's fast-read path
+  (`_ome_zarr_fast_read_metadata`) works against it. `shard_mode="per_spectral_cube"` is the
+  default (one file per cube) rather than eva's own `"per_image"` default (one file per
+  wavelength per cube) - deliberately different, chosen for live writing specifically
+  (fewer files as an open-ended experiment runs); `"per_image"` is still a supported option.
+  Both `TiffCubeWriter`/`OmeZarrCubeWriter` implement a shared `ImageCubeWriter` protocol
+  (`write_cube(cube) -> int` bytes written, `close()`), and `build_image_writer(settings,
+  destination, ...)` is the factory a future settings UI will drive.
+
+**Real cross-app compatibility proof, not just "valid zarr"** - the actual bar, since eva's
+reader is what a scientist will use to analyze this app's output:
+`tests/integration/test_lspri_acq_zarr_compat.py` (umbrella-level, not either app's own
+suite, since it's specifically about the integration point between two otherwise decoupled
+apps) imports `lspr_imaging_app.io.dataset.load_ome_zarr_dataset()` and `load_image_array()`
+**unmodified** and confirms they correctly read back pixel-perfect data written by the new
+writer, for both shard modes and with/without compression. 3/3 passed.
+
+**`SaveWriterThread` (acquisition/sweep_pipeline.py) now tracks live save-lag metrics** -
+queue depth (current + max seen), write latency (rolling 200-sample window, avg/max), bytes
+written, cubes written - the exact pattern already validated in the Phase 0 spike's own
+`SaveWriterThread` (`benchmark_ui.py`), generalized from per-frame to per-cube. This directly
+answers the maintainer's "implement the metrics" ask: a running experiment can now show,
+live, whether the chosen format/compression/resolution is actually keeping up on *this*
+machine - the exact scenario the benchmark found borderline for lz4 at full resolution.
+`SaveWriterThread`'s constructor now takes a `writer: ImageCubeWriter` object (not a bare
+`write_cube` callable) so it can also call `.close()` on stop and read back bytes-written per
+cube for the metrics - a small, contained interface change; updated the one existing test
+that used the old callable form.
+
+**Setup guidance written** (`apps/LSPRi/acq/docs/storage_setup.md`): antivirus exclusion for
+the save destination folder (eva's own `TODO.md` already documents this exact problem class
+for naive zarr chunking on Windows - real precedent, not a hypothetical), why
+`shard_mode="per_spectral_cube"` is the live-write default vs. eva's `"per_image"` batch
+default, and the uncompressed-live-then-recompress-after fallback (reusing eva's already-
+parallelized batch exporter) if live compression doesn't keep up on a given machine.
+
+**Verified**: 18 new writer unit tests (round-trip read-back for both formats, both shard
+modes, with/without compression, error paths) + 3 new cross-app compatibility tests +
+existing pipeline tests updated for the writer-object interface change. App's own suite run
+three times given the threading involved - 90/90 each time, no flakes. Full umbrella suite -
+868/868 (865 + 3 new), no regression. `pyflakes` clean.
+
+**Plan doc corrected in two places while writing this up** (section 9 rewritten for the
+real storage split; section 10's ROI-panel item's claim that eva's `roi_editor_tools.py` is
+"reusable as-is" corrected - checked before assuming, found it's built entirely around a
+different ROI type (`RoiDefinition`, not this app's `AreaRoi`), fresh `AreaRoi`-shaped
+helpers built instead - `domain/roi_editor_tools.py`, not wired into a panel yet since that's
+the next, deferred piece of work).
+
+**Not done**: the GUI work this entry's session was originally asked to start with - image
+view panel, ROI panel, a settings UI to actually drive `StorageSettings`, and a live display
+of `SaveWriterThread.stats()`. `domain/roi_editor_tools.py` (AreaRoi-shaped geometry helpers)
+was built and tested in isolation but not yet wired into a panel. Recompression-after-
+acquisition (the uncompressed-live fallback) is designed but not implemented - no code reuses
+eva's batch exporter yet. Nothing from this entry committed yet.
