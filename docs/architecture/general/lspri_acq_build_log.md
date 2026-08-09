@@ -1904,3 +1904,55 @@ the tests catch real regressions, not just passing trivially.
 **Not done**: the actual `PlanRunHost` Protocol design and `_plan_step_commands`/state-
 machine extraction into `lspr_acq_shell` - next step, with this test file as the safety net.
 Nothing from this entry committed yet.
+
+## 2026-08-09: Tier 2, step 1 - `_plan_step_commands` extracted as a pure, shared function
+
+With the characterization-test safety net in place, started the actual extraction. Did the
+narrow, already-fully-scoped half first (the decision function that determines what hardware
+commands a step transition requires), saving the harder state-machine-sharing half for next.
+
+**One more real dependency found while extracting** (same discipline as every prior tier -
+trace, don't assume): `_plan_step_commands` also called `normalized_pump_direction` from
+`lspr_app.gui.flow_plan_model` - a small, genuinely pure function (`"CCW" if ... else "CW"`)
+but living in an app module the shared package can't import from. Moved it, plus its two
+natural siblings (`normalized_valve_state`, `clamped_switch_position` - the same "one raw
+step-field value -> validated field" family, per `flow_plan_model.py`'s own docstring), into
+`lspr_acq_shell.pump_plan`. `flow_plan_model.py` now re-exports all three under their
+original names, so its own 2 other call sites and `experiment_control_window.py`'s 2 other
+call sites needed no changes.
+
+**New module**: `lspr_acq_shell/experiment_control_step_decision.py` - `plan_step_commands()`,
+a pure function (no Qt, no `self`, no device I/O) taking the step, the previous step, and a
+new `StepCommandContext` dataclass bundling every real dependency traced out of the original
+(device-connection flags, device labels, tube diameter per channel, pump backsteps/roller-
+count settings, the pump-display-enabled flag, `wait_for_mswitch_first`) - moved verbatim
+otherwise, including its exact command-ordering logic and the OFF-direction-with-nonzero-
+flow fix's comment. Kept the original's single combined log line exactly byte-for-byte
+(had to route `_service_connection_detail(SWITCH)` - window-specific, since it queries the
+live device connection object - through two new context fields,
+`switch_controller_type`/`switch_port`, rather than logging it separately in the window
+wrapper, after a first draft accidentally split it into two log lines).
+
+**`experiment_control_window.py`'s `_plan_step_commands` is now a thin wrapper**: gathers
+the explicit inputs (including `[spin.value() for spin in self.manual_tube_spins]` - the one
+live widget read) into a `StepCommandContext` and delegates. sLSPR acq gets a new shim,
+`gui/experiment_control_step_decision.py`, following the established convention.
+
+**Verified**: full umbrella suite 963/963 (948 baseline + 15 new direct unit tests for the
+pure function in `tests/unit/test_experiment_control_step_decision.py` - valve/switch command
+generation, disconnected-device status messages, `wait_for_mswitch_first` ordering, the
+pump-display command, tube-diameter passthrough, and the OFF-direction-with-nonzero-flow
+regression re-proven directly against the pure function, not just through the window). The
+one flaky test this run (`test_async_writer_reports_failure_via_on_error_callback` - unrelated
+file, an async-writer error-callback timing test) failed once in the full-suite run and passed
+both in isolation and on a full-suite re-run - confirmed intermittent, not a regression, per
+the pattern documented in prior entries. `tests/integration/test_experiment_control_pump_dispatch.py`
+(a real `ExperimentControlWindow`, unchanged, exercising `_plan_step_commands` through the new
+shim) still passes unchanged - direct proof the wrapper preserves behavior. sLSPR acq's own
+suite: same 14/22 with the same 8 pre-existing unrelated failures. `pyflakes` clean on every
+touched/new file. Launched sLSPR acq headless in simulation mode - no errors/tracebacks in the
+log.
+
+**Not done**: the state-machine half of Tier 2 (run/hold/pause/stop, the auto-advance timer
+loop) - the harder, riskier half, still to come, with the 53-test characterization suite as
+its safety net.

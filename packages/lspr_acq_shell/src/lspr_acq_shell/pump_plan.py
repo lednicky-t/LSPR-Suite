@@ -118,6 +118,33 @@ class PumpPlanStep:
     )
 
 
+def normalized_pump_direction(value: object) -> str:
+    """Coerce a raw channel-direction value to "CW" or "CCW".
+
+    Extracted from singleLSPR Acquisition's `gui/flow_plan_model.py` (Phase 2,
+    LSPRi acq experiment-control reuse - Tier 2 extraction, 2026-08-09)
+    verbatim, alongside `normalized_valve_state`/`clamped_switch_position` -
+    the single source of truth for how a raw step-field value becomes a
+    valid `PumpPlanStep` field, needed by the shared step-command decision
+    function so it doesn't have to import from an app package.
+    """
+    return "CCW" if str(value or "").upper() == "CCW" else "CW"
+
+
+def normalized_valve_state(value: object) -> str:
+    return "Close" if str(value or "").strip().lower() == "close" else "Open"
+
+
+def clamped_switch_position(value: object) -> int:
+    """Coerce *value* to a valid switch/selector position (1-12), defaulting to 1
+    if it can't be parsed as an int - both existing callers already wanted that
+    same fallback, so it's baked in here rather than left to each call site."""
+    try:
+        return max(min(int(value), 12), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 def to_core_experiment_step(step: PumpPlanStep) -> CoreExperimentPlanStep:
     return CoreExperimentPlanStep(
         id=int(step.step),
