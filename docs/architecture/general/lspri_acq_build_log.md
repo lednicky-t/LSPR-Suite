@@ -2241,3 +2241,55 @@ Color/Comment, including the uniform/per-channel toggle and switch-solution comb
 `flow_plan_model.ExperimentPlanTableModel` + delegates (still using the lean
 `PlanTableModel`), the Tier-3 dialog layer, real import/export file I/O. Next session's slice,
 per the staged plan.
+
+## 2026-08-09: Manual single-step editor row - second slice of visual-parity effort
+
+Continued the staged visual-parity effort with the manual single-step editor row (Duration/
+Valve/Color/Switch/Comment plus per-channel Flow/Direction) - the fields that actually
+compose a `PumpPlanStep`. Traced sLSPR acq's real field mapping first (`_current_editor_step`/
+`_add_experiment_control_step_from_editor`), not guessed: confirmed tube diameter is
+correctly *not* part of this row's data model at all (`PumpPlanStep`/`PumpChannelStep` have
+no `tube_mm` field) - it only looks like part of the same row in sLSPR acq for layout
+compactness, so LSPRi acq's existing separate `tube_diameter_spins` row was already
+architecturally correct and needed no change.
+
+**New shared constant**: `lspr_acq_shell.pump_plan.PLAN_COLOR_OPTIONS` - the default 8-color
+step palette, moved from sLSPR acq's `ExperimentControlWindow.PLAN_COLOR_OPTIONS` (a pure
+class-level list, zero coupling). sLSPR acq's own attribute is now
+`list(_SHARED_PLAN_COLOR_OPTIONS)` - kept as a list (not the shared tuple) since call sites
+expect list semantics.
+
+**Built**: `step_duration_spin`, per-channel `manual_flow_spins`/`manual_direction_buttons`
+(using the shared `create_direction_button`/`set_direction_button`, with click-to-toggle
+wiring added per button - `create_direction_button` itself only sets initial state, sLSPR
+acq wires each call site's `.clicked` separately, easy to miss and initially was: caught by
+a real test failure, `test_direction_button_toggles_between_cw_and_ccw`, not by inspection),
+`step_valve_button` (using shared `set_step_valve_button_state_for_button`), `step_color_combo`
+(populated from `PLAN_COLOR_OPTIONS`), `step_switch_spin`, `step_comment_edit`, plus four
+inert settings-gear buttons (valve/color/switch/comment) with icons matching sLSPR acq's but
+tooltips stating "Not yet wired in this app" - they need the not-yet-built dialog layer.
+`_current_editor_step()`/`_add_experiment_control_step_from_editor()` port sLSPR acq's exact
+logic (compose a `PumpPlanStep` from the row's live values, insert after the selected row);
+`add_step_button` (the toolbar icon) now calls this instead of inserting a bare default step
+- sLSPR acq only has one "add" mechanism, not two, so no separate button was added for this.
+
+**`PlanTableModel` gained `insert_step(row, step)`** (a real step, not just `insert_step_after`'s
+hardcoded default) - `insert_step_after` is now a thin wrapper calling it with a default step,
+avoiding the awkward "insert a placeholder then overwrite it" approach an earlier draft used.
+
+**Verified**: 7 new tests in `ManualEditorRowTests` (27 total in `test_experiment_control_window.py`,
+up from 20) - editor values reach the composed step (duration/comment/switch/flow/valve),
+the selected color's hex value is used, direction-button toggling works (caught the missing
+click-wiring bug above), valve toggling, and the color combo is populated from the shared
+palette. Plus one more in `StepEditingTests` confirming insert position (after the selected
+row, not always at the end). LSPRi acq's own full suite: 141/141. Full umbrella suite: 957/957
+(same known-flaky file excluded), this run took 70s - back to the healthy baseline now that
+no stray background processes were left running. sLSPR acq's own suite: same 14/22 baseline,
+no new failures. `pyflakes` clean. Screenshot-confirmed the row renders correctly and closely
+matches sLSPR acq's real layout (Duration/Valve+gear/Color+gear/Switch+gear/Comment+gear
+header row, CH1-4 flow/direction columns).
+
+**Not done**: the real `flow_plan_model.ExperimentPlanTableModel` + its 8 delegates (still
+the lean `PlanTableModel`), the Tier-3 dialog layer (what the four gear buttons will
+eventually open), real import/export file I/O, the time-unit toggle, the "CHs" uniform/
+per-channel direction toggle, the switch-solution combo.

@@ -36,6 +36,21 @@ _ = (DEFAULT_ROLLER_COUNT, VALID_ROLLER_COUNTS)  # re-exported for other modules
 HDF5_PUMP_CHANNELS = 6
 DEFAULT_TUBE_MM = 0.25
 
+# Default step-color palette, moved from sLSPR acq's ExperimentControlWindow.PLAN_COLOR_OPTIONS
+# (Phase 2, LSPRi acq experiment-control reuse - visual-parity effort, 2026-08-09) - a pure
+# constant, no window coupling, used as the starting point for the step-color dropdown before
+# any user customization (sLSPR acq layers user-saved palette entries on top of this default).
+PLAN_COLOR_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Blue", "#4E79A7"),
+    ("Green", "#59A14F"),
+    ("Red", "#E15759"),
+    ("Orange", "#F28E2B"),
+    ("Purple", "#B07AA1"),
+    ("Teal", "#76B7B2"),
+    ("Gold", "#EDC948"),
+    ("Gray", "#9C9DA1"),
+)
+
 
 @dataclass(slots=True, frozen=True)
 class TubeDiameterOption:
