@@ -2447,3 +2447,69 @@ real `flow_plan_model.ExperimentPlanTableModel` + its 8 delegates, replacing the
 `PlanTableModel` still in place. That one was flagged from the start as comparable in size
 to Tier 2's entire state machine and is the next, and last, piece of this visual-parity
 effort.
+
+## 2026-08-09: Real per-cell table delegates - last item of the visual-parity effort
+
+Traced sLSPR acq's `flow_plan_model.py` before deciding how to close this out, same
+discipline as every prior slice - and the finding reshaped the plan. The *model* class
+(`ExperimentPlanTableModel`) takes no `window` reference at all; it's configured entirely
+via plain setters (`set_theme_palette`/`set_valve_state_colors`/etc.), so it's genuinely
+portable on its own. The complexity sits entirely in the 8 delegate classes, which each take
+`window` and call back into it for theme colors, combo population, and editor-lifecycle
+hooks (`installEventFilter`, wheel-scroll suppression, auto-opening popups on cell click,
+exact popup-width calculations from font metrics).
+
+**Decided against swapping in the real model**: this app's own `PlanTableModel` already has
+58+ tests built around its own column layout (`Step, Duration, Valve, Switch, CH1-4 Flow,
+CH1-4 Direction, Color, Comment` - different grouping from sLSPR acq's
+`flow/direction/tube-per-channel` blocks). Swapping in the real model would have meant
+reworking column indices and delegate wiring across already-working, tested code, for
+benefit that's mostly cosmetic (the real model's `data()`/`flags()` logic is more elaborate
+but not functionally different for what this app needs). Kept the existing model.
+
+**Built 3 lean, real delegates instead of porting 8**: `ValveDelegate`, `SwitchSolutionDelegate`,
+`DirectionDelegate` (new, in `gui/plan_table_model.py`) - real `QComboBox` editors plus a
+`displayText()` override (the standard Qt mechanism for "show something different from the
+raw stored value without changing what's stored") so cells render the window's custom valve
+labels / switch-solution names / direction glyphs, while the model keeps storing the plain
+"Open"/"Close", integer position, and "CW"/"CCW" values it always did. Built from pieces
+already in this window from earlier slices today - `_valve_state_label`, `_switch_display_text`,
+the shared `direction_glyph` - not new machinery. No custom popup-width calculation,
+wheel-scroll suppression, or auto-opening popups (sLSPR acq's `_BaseFlowDelegate` has all
+three); a plain combo editor is the simplification here. `PlanColorDelegate` (already shared
+since Tier 1) was already wired to the color column - only the wiring call site changed
+(a new `_install_plan_table_delegates` helper, applied to both `plan_table` and
+`pause_template_table` since they share the same model/column layout).
+
+**Small cleanup alongside**: renamed the model's column-index constants from `_COLUMN_*`
+(module-private) to `COLUMN_*` (public), since the window now needs to import them for
+delegate placement - previously the window recomputed `COLOR_COLUMN` by hand
+(`4 + 2 * ACTIVE_PUMP_CHANNELS`), duplicating knowledge the model already had.
+
+**Verified**: 12 new tests - 9 in a new `test_plan_table_model.py` (real editor
+create/setEditorData/setModelData round-trips for all three delegates, plus a few
+`PlanTableModel` basics that had no dedicated test file before) and 3 in
+`test_experiment_control_window.py` confirming the *real* window's *real* tables (not a
+bare model+delegate pair) actually got these delegates installed, including that editing a
+valve label through the real dialog changes what the real installed delegate's
+`displayText()` returns. LSPRi acq's own full suite: 184/184. Full umbrella suite: 956/956
+(yet another different pre-existing flaky test this run -
+`test_real_debounce_coalesces_a_burst_into_one_entry`, a timing-sensitive debounce test in
+sLSPR acq unrelated to anything touched today, confirmed passing cleanly in isolation - the
+fourth distinct flaky-test identity observed today, reinforcing that these are genuinely
+environmental/order-dependent, not one specific broken test). sLSPR acq's own suite:
+unchanged, same 14/22 baseline. `pyflakes` clean. Screenshot verification attempted once
+more this round and hit the same window-capture tooling problem as the previous two
+entries (confirmed reproducible, not a one-off) - stopped retrying per this project's GUI-
+testing scope boundary and relied on a headless launch (ran cleanly, no exception) plus the
+delegate-level test suite, which is strong, direct evidence (real Qt editor objects, real
+round-trips) on its own.
+
+**This closes the entire "do all one by one" punch list from this session**: theme, icon
+toolbar, manual editor row, all four settings dialogs, real settings persistence, real
+import/export, and now real table delegates. What's left for the experiment-control panel
+specifically is genuinely cosmetic at this point (sLSPR acq's exact popup-width/wheel-
+scroll/auto-open editor behavior) rather than functional. Bigger, separately-scoped work
+still ahead for LSPRi acq as a whole: session-recording/HDF5 integration, the sweep-pipeline
+sync between the pump plan and camera/illumination acquisition, the image-processing panel,
+and the Lori LED reference driver.
