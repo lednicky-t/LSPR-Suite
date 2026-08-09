@@ -2513,3 +2513,205 @@ scroll/auto-open editor behavior) rather than functional. Bigger, separately-sco
 still ahead for LSPRi acq as a whole: session-recording/HDF5 integration, the sweep-pipeline
 sync between the pump plan and camera/illumination acquisition, the image-processing panel,
 and the Lori LED reference driver.
+
+---
+
+## 2026-08-09: Session-recording / HDF5 design discussion — scope and schema decided before any code
+
+Maintainer corrected the earlier screenshot-tooling failures (see the last several entries'
+"stopped retrying" notes): the capture tool was pointed at an external monitor, not the
+primary one, unrelated to the app itself — screenshot verification going forward should
+launch/capture on the primary monitor.
+
+Maintainer then asked to talk through the session-recording workflow before any
+implementation, rather than jumping straight to code — matching `CLAUDE.md`'s "check in
+first" rule for HDF5 schema changes. Described the intended user workflow in detail: start
+app → load HW (now or later) → set up illumination parameters (wavelength list, per-
+wavelength spectra — measured or from a default pre-measured file, settle times, maybe LED
+current) → set up camera parameters (per-wavelength exposure, gain, binning, saving mode,
+resolution, crop/ROI) → place sample + concentric-ring reference ROIs on the image, same
+convention as LSPRimaging Evaluation → run. All of illumination/camera/ROI setup should be
+recorded in HDF5 (camera *images* only once a measurement is actually started, not during
+setup/preview) and should also be saveable/restorable as a session, ideally while staying
+compatible with the pre-existing measurement schema (plan/valve/switch/color-palette
+tables already exist there and already carry over).
+
+Traced the actual current state before proposing anything (not guessing):
+
+- `apps/sLSPR/acq/src/lspr_app/storage/hdf5_export.py`'s `_write_assignment_tables_metadata`/
+  `_write_switch_solution_metadata`/`_write_plan_tables` — confirms the existing
+  `metadata/assignment_tables/{switch_solution_map, switch_solution_details,
+  valve_state_map, color_palette_entries}` tables are real, working, and follow one
+  generic `_upsert_table(group, name, rows, columns)` pattern — a genuine, reusable
+  blueprint for new tables.
+- `apps/LSPRi/acq/src/lspri_acq_app/domain/roi.py` — `AreaRoi`/`AreaRoiGroup` already
+  ported field-for-field from LSPRi eva (sample circle + concentric reference ring,
+  scoring fields present but unused at v1). No new ROI design needed.
+- `apps/LSPRi/acq/src/lspri_acq_app/domain/models.py`'s `ImagingAcquisitionSettings` and
+  `device/camera_base.py`'s `CameraSettings` are both single global values
+  (`exposure_us`/`gain`) for the whole sweep — no per-wavelength model exists yet, needed
+  for the maintainer's "exposure varies per wavelength for good contrast" requirement.
+- `device/illumination_base.py`'s `IlluminationSource` ABC has no concept of a spectrum
+  (measured or default-file) or LED current at all yet.
+- `acquisition/sweep_pipeline.py`'s `SweepPipeline.start()` unconditionally starts
+  `SaveWriterThread` — every cube gets written to disk the instant the sweep runs, no
+  live-preview-without-saving vs. armed/recording distinction, unlike sLSPR acq's own
+  `recording_active` split (`main_window_runtime.py`/`acquisition_controller.py`). This is
+  the actual gap behind "images aren't recorded until measurement is started" not yet
+  being true.
+- `lspr_io`'s `lspr_session` schema (v1) is a thin stub today — just
+  `experiment_plan_steps`/`experiment_plan_total_duration_s` attrs, not a real state dump —
+  so it isn't a ready-made "session file" answer on its own.
+- The plan doc's own §9/§12 already had an unbuilt, unchecked milestone for exactly this
+  ("HDF5 schema extension in `lspr_io` — experimental data only, minor version bump") with
+  `/processed/roi_definitions`, `/processed/absorbance_spectra/{roi_id}`,
+  `/processed/sensorgram/{roi_id}` sketched but not built — today's design keeps those
+  names and adds the illumination/camera-settings and image-cube-manifest pieces that
+  weren't in that earlier sketch.
+
+Presented two schema-strategy options to the maintainer: a new schema name reusing the
+shared assignment-tables plumbing, vs. extending `lspr_measurement` itself with a minor
+version bump (6.3 → 6.4). **Maintainer chose to extend `lspr_measurement`** (one schema
+name/reader family for both single-spectrum and imaging acquisitions). Consequence worked
+out with the maintainer: since the new groups are additive/ignorable per the existing
+compatibility policy, a "session" file and a "completed measurement" file can be the *same*
+format — a session save is just a v6.4 file with the new setup groups populated and zero
+raw rows; loading either a fresh setup snapshot or a previously recorded measurement uses
+the same reader, matching the maintainer's own phrasing ("restoring new session, or loading
+of those files"). No separate session schema needed.
+
+**Agreed v6.4 group/dataset layout** (maintainer confirmed, "yes, I think it is ok"):
+
+- `metadata/illumination_settings` — one row per wavelength: `wavelength_nm`,
+  `settle_time_ms`, `current` (nullable), `spectrum_source` (`"measured"` /
+  `"default_file"`), joined to `metadata/illumination_spectra/{wavelength_nm}` for the
+  actual spectrum arrays (measured ones stored raw; default-file ones store a
+  reference/hash to the source file, not a duplicate copy).
+- `metadata/camera_settings` — one row per wavelength: `exposure_us`, `gain`, `binning`,
+  `resolution_width_px`/`resolution_height_px`, `crop_x_px`/`crop_y_px`/`crop_width_px`/
+  `crop_height_px`, `saving_mode` — joined to `illumination_settings` by `wavelength_nm`,
+  same join convention as the existing `switch_solution_details`/`switch_solution_map`
+  pair.
+- `processed/roi_definitions` — kept as already sketched in §9; will carry the
+  `AreaRoi`/`AreaRoiGroup` fields verbatim.
+- `processed/absorbance_spectra/{roi_id}`, `processed/sensorgram/{roi_id}` — kept as
+  already sketched in §9, unchanged.
+- A new image-cube manifest table (`cube_index`, `timestamp_utc_ms`, `file_path`) so the
+  HDF5 file can point at the separate TIFF/OME-Zarr files `image_writer.py` already writes,
+  without duplicating pixel data into two places.
+- An attr distinguishing a pure setup/session snapshot (no raw rows yet) from a file that
+  has actually recorded data, so the reader knows whether to open it read-mostly
+  (completed measurement) or editable (in-progress session).
+
+Also agreed, independent of the schema question: `ImagingAcquisitionSettings`/
+`CameraSettings` need to become per-wavelength tables in the domain model (not just in
+HDF5) for the GUI workflow to be buildable at all, and `SweepPipeline` needs a
+`recording_active`-style gate before `SaveWriterThread` starts, mirroring sLSPR acq's
+existing pattern.
+
+**Not yet implemented** — this entry records the design discussion and the maintainer's
+decisions; the schema.py version bump, the domain model changes, the recording gate, and
+the actual `lspri_acq_app` HDF5 writer module are the next, separately-scoped implementation
+slices (see §9/§12 in the plan doc, updated alongside this entry).
+
+---
+
+## 2026-08-09: Session-recording implemented — schema bump, per-wavelength settings, recording gate, writer/reader, all tested
+
+Maintainer confirmed the design from the entry above ("yes, I think it is ok, you can
+continue") and the schema-strategy choice (extend `lspr_measurement` rather than a new
+schema name). Implemented in five slices, each run against the full relevant test suite
+before moving to the next - 214 tests passing across `lspr_io` + `lspri_acq_app` by the
+end, 0 regressions in either app's or the umbrella's existing suites (957 umbrella tests,
+211 `lspri_acq_app` tests, excluding the pre-existing known-hanging
+`test_live_processing_worker.py`).
+
+**1. `lspr_io` schema bump to 6.4** (`packages/lspr_io/src/lspr_io/schema.py`) - new
+dataset/group/column constants for `metadata/illumination_settings`,
+`metadata/illumination_spectra/{wavelength_nm}`, `metadata/camera_settings`,
+`metadata/image_cube_manifest`, `processed/roi_definitions`,
+`processed/absorbance_spectra/{roi_id}`, `processed/sensorgram/{roi_id}`, and a
+`has_recorded_data` metadata attr - same dated-comment-block convention as 6.0-6.3.
+`validate_measurement_metadata()` needed zero code changes (it's already generic against
+the version constants, confirmed by reading it, not assumed) - only two pre-existing tests
+had the old `"6.3"`/`3` literal hardcoded (`tests/integration/test_acq_hdf5.py`,
+`tests/integration/test_io.py`), fixed to `"6.4"`/`4`.
+
+**Also promoted to `lspr_io`, not just LSPRi acq's own module**: sLSPR acq's private
+`HDF5MeasurementWriter._upsert_table` generalized into a public `lspr_io.upsert_table()`
+(`packages/lspr_io/src/lspr_io/hdf5.py`) - LSPRi acq's new writer needed the identical
+"small named string table, overwritten in place" pattern for its five new tables, and
+re-deriving it would have been silent duplication of working, tested logic. sLSPR acq's own
+copy is left untouched (not migrated to call the shared one) - no functional gain to justify
+touching a working, heavily-tested file in a different submodule for this. Also promoted the
+existing private `_read_string_table_dataset` to public `read_string_table_dataset` (same
+file) - the natural read-side counterpart, needed by the new reader (see slice 4 below).
+
+**2. Per-wavelength camera/illumination settings** (`apps/LSPRi/acq/src/lspri_acq_app/domain/models.py`,
+`acquisition/sweep_pipeline.py`) - new `WavelengthCameraSettings`/
+`WavelengthIlluminationSettings` dataclasses; `ImagingAcquisitionSettings` gained
+`camera_settings_by_wavelength`/`illumination_settings_by_wavelength` override dicts,
+empty by default so every existing caller's global-exposure behavior is unchanged.
+`SweepController._run_one_sweep()` now calls `camera.configure()` once per wavelength
+(previously once per sweep, before the wavelength loop even started) via a new
+`_camera_settings_for()`/`_settle_time_ms_for()` pair that check the override dict first,
+falling back to the existing global fields. Moving the configure() call also improved
+resilience as a side effect - a configure failure now goes through the same per-step
+error-and-backoff path as a `set_wavelength`/`acquire_frame` failure, instead of
+permanently failing the whole controller before its first sweep. 6 new tests
+(`test_domain_models.py`, `test_sweep_pipeline.py`), including one asserting the *actual*
+`Camera.configure()` calls a real `SimulatedCamera` subclass recorded, not just that the
+dataclass fields exist.
+
+**3. Recording gate** (`acquisition/sweep_pipeline.py`) - `SweepController` gained a
+`threading.Event`-backed `recording_active` flag (`set_recording_active()`/
+`is_recording_active()`, also exposed on `SweepPipeline`), defaulting to **False**. The
+gate lives at the single point a completed cube is handed off: `if recording_active:
+save_queue.put(cube)` always runs; `_queue_put_latest(processing_queue, cube)` always
+runs regardless, so live preview/ROI extraction/display keep working during setup. This is
+the actual fix for "camera images aren't recorded until a measurement is started" - before
+this, `SweepPipeline.start()` always saved every cube unconditionally, so that requirement
+wasn't true yet despite being assumed in earlier planning. Two pre-existing tests
+(`test_processing_queue_only_ever_holds_the_latest_cube`,
+`SweepPipelineSmokeTest.test_sweep_produces_saved_cubes_and_sensorgram_points`) used
+`save_queue` depth as a "how many sweeps completed" proxy and needed `recording_active=True`
+added explicitly, now documented inline as intentional ("this test uses save_queue depth as
+its N-sweeps-completed proxy" / "golden `recording is on` path"). 4 new dedicated gate
+tests.
+
+**4. `apps/LSPRi/acq/src/lspri_acq_app/storage/hdf5_export.py` built** - new file,
+`ImagingMeasurementWriter` + `read_imaging_session()`/`ImagingSessionSnapshot`. Module
+docstring states directly: **a "session" and a "measurement" are the same file format** - a
+session save is just a v6.4 file with the setup groups populated and zero raw rows,
+`has_recorded_data` is the only distinguishing attr, matching the maintainer's own framing
+during the design discussion. Writer methods: `write_illumination_settings`/
+`write_camera_settings` (derive one row per wavelength from `ImagingAcquisitionSettings`,
+override dict first then global fallback), `write_illumination_spectrum` (one measured or
+default-file spectrum per wavelength), `write_roi_definitions` (`AreaRoi`/`AreaRoiGroup` ->
+`processed/roi_definitions`, group membership joined in via `group_id`),
+`write_valve_state_labels`/`write_color_palette_entries`/`write_switch_solution_labels`
+(same `assignment_tables` shape sLSPR acq already writes, for the maintainer's requested
+plan/valve/switch/color-palette compatibility), `append_image_cube_manifest_row`
+(re-upserts a growing in-memory list - acceptable at expected imaging-experiment cube
+counts, not a specialized append-only string table), `append_sensorgram_point`/
+`append_absorbance_spectrum` (real growable HDF5 datasets, resize-and-append, one group per
+ROI, wavelength axis stored once), `mark_recording_started()`. Explicitly does NOT write
+image pixel data (that's `image_writer.py`'s job - this only records a manifest pointing at
+it) or the experiment-control plan table (already covered by
+`lspr_acq_shell.experiment_control_export`'s existing HDF5 path via
+`lspr_io.build_experiment_plan_row_table` - wiring that into a live session file is a
+GUI-integration follow-up, not a missing writer capability). `read_imaging_session()` is the
+read-side counterpart - reconstructs a real `ImagingAcquisitionSettings` (with both
+override dicts repopulated), `AreaRoi`/`AreaRoiGroup` lists, and the three assignment-table
+dicts/lists from a file, proven via full write-then-read round-trip tests, not just
+per-table isolation. 18 new tests (`tests/test_hdf5_export.py`).
+
+**What's still not done** (all explicitly out of scope for this slice, not overlooked):
+wiring any of this into the GUI - no "Save Session"/"Load Session" menu action exists yet,
+`ExperimentControlWindow`'s already-persisted valve/switch/color-palette state isn't yet
+piped into the writer, and `SweepPipeline`/image cube saving isn't yet connected to
+`ImagingMeasurementWriter` at all (the sweep pipeline and this writer are still two
+independently-tested, unconnected pieces). Illumination/camera settings GUI (the panel
+where a user would actually set per-wavelength exposure) doesn't exist yet either -
+`ImagingAcquisitionSettings` is buildable programmatically/by tests but nothing in the app
+constructs one from user input yet. These are the natural next slices.

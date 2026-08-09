@@ -647,11 +647,32 @@ class SpectralCube:
     completed_at: datetime
 
 @dataclass(slots=True)
-class ImagingAcquisitionSettings:
-    wavelengths_nm: list[float]   # the sweep list
+class WavelengthCameraSettings:      # added 2026-08-09 - per-wavelength override
     exposure_us: float
     gain: float | None
-    settle_time_override_ms: float | None   # None = use illumination.settle_time_ms()
+    binning: int
+    resolution_width_px: int | None
+    resolution_height_px: int | None
+    crop_x_px: int | None
+    crop_y_px: int | None
+    crop_width_px: int | None
+    crop_height_px: int | None
+    saving_mode: str
+
+@dataclass(slots=True)
+class WavelengthIlluminationSettings:   # added 2026-08-09 - per-wavelength override
+    settle_time_ms: float | None
+    current: float | None
+    spectrum_source: str          # "measured" | "default_file"
+
+@dataclass(slots=True)
+class ImagingAcquisitionSettings:
+    wavelengths_nm: list[float]   # the sweep list
+    exposure_us: float             # global fallback
+    gain: float | None             # global fallback
+    settle_time_override_ms: float | None   # global fallback; None = use illumination.settle_time_ms()
+    camera_settings_by_wavelength: dict[float, WavelengthCameraSettings]          # added 2026-08-09
+    illumination_settings_by_wavelength: dict[float, WavelengthIlluminationSettings]  # added 2026-08-09
 
 @dataclass(slots=True)
 class AbsorbanceSpectrumResult:
@@ -740,6 +761,43 @@ split storage by kind, not by file-format convenience —
   - Not yet built (§12's remaining checklist item) — the async-writer plumbing
     from Phase 1 §4 item 3 is the intended seam (`AsyncTaggedWriter` subclass,
     new tags dispatched the same way `"append"`/`"metrics"` already are).
+
+**2026-08-09 — schema extension designed (v6.4), scope expanded to session-recording.**
+Maintainer walked through the real acquisition workflow (load HW → set up illumination →
+set up camera → place ROIs → run) and asked for it to be recorded in HDF5 and
+save/restorable as a session, staying compatible with the existing measurement schema
+where possible. See the 2026-08-09 build-log entry for the full discussion and the
+research behind it. Decided: extend `lspr_measurement` itself (6.3 → 6.4, additive/
+ignorable per the compatibility policy) rather than a new schema name, so one file format
+covers both a completed measurement and a pure setup/session snapshot (a "session" is just
+a v6.4 file with the new setup groups populated and no raw rows yet — same reader restores
+either). New groups, on top of the three already sketched above:
+
+- `metadata/illumination_settings` — one row per wavelength: `wavelength_nm`,
+  `settle_time_ms`, `current` (nullable — depends on the eventual LED controller, see §13),
+  `spectrum_source` (`"measured"` / `"default_file"`). Joined to
+  `metadata/illumination_spectra/{wavelength_nm}` for the actual spectrum arrays (measured
+  ones stored raw; default-file ones store a reference to the source file, not a
+  duplicate).
+- `metadata/camera_settings` — one row per wavelength: `exposure_us`, `gain`, `binning`,
+  `resolution_width_px`/`resolution_height_px`, `crop_x_px`/`crop_y_px`/`crop_width_px`/
+  `crop_height_px`, `saving_mode`. Joined to `illumination_settings` by `wavelength_nm`,
+  same join convention `switch_solution_details` already uses against
+  `switch_solution_map`.
+- An image-cube manifest table (`cube_index`, `timestamp_utc_ms`, `file_path`) pointing at
+  the separate TIFF/OME-Zarr files `image_writer.py` writes — pixel data stays out of
+  HDF5, per this section's original 2026-08-08 call.
+- An attr distinguishing a pure setup/session snapshot (no raw rows yet) from a file that
+  has actually recorded data.
+
+Two things needed regardless of the HDF5 question, agreed in the same discussion: (1)
+`ImagingAcquisitionSettings`/`CameraSettings` (§7) need to become per-wavelength, not a
+single global exposure/gain, for the GUI workflow to be buildable at all; (2)
+`SweepPipeline` (§8) needs a `recording_active`-style gate before `SaveWriterThread`
+starts, mirroring sLSPR acq's existing live-view-vs-recording split — today
+`SweepPipeline.start()` always saves every cube, so "images aren't recorded until a
+measurement is started" isn't true yet. Not implemented yet — this update records the
+agreed design; implementation is the next slice.
 - **Image frames** go to a **separate, user-selectable** image store — either a
   TIFF stack or an OME-Zarr dataset, both real options, not one hardcoded
   default (this is an experimental app; customization matters more than a
@@ -1174,9 +1232,34 @@ picking this up cold.
       `processing/cube_processing.py` ties ROI extraction + extinction math together
       per cube, reporting results via a callback rather than owning a sensorgram
       data structure (no sensorgram GUI panel exists yet, §10).
-- [ ] HDF5 schema extension in `lspr_io` (§9) — experimental data only (device
+      **Per-wavelength settings + recording gate added (2026-08-09)**: `ImagingAcquisitionSettings`
+      gained `camera_settings_by_wavelength`/`illumination_settings_by_wavelength` override
+      dicts (new `WavelengthCameraSettings`/`WavelengthIlluminationSettings` dataclasses, §7);
+      `SweepController` now configures the camera once per wavelength (was once per sweep)
+      and gained a `recording_active` gate (`set_recording_active()`/`is_recording_active()`,
+      defaults **False**) - `save_queue` only receives a cube once armed, `processing_queue`
+      (live preview) always does. This is what actually makes "images aren't recorded until a
+      measurement starts" true; it wasn't before this. See the 2026-08-09 build-log entry.
+- [x] HDF5 schema extension in `lspr_io` (§9) — experimental data only (device
       status, spectra, sensorgram, ROI definitions), minor version bump, changelog
-      entry. Not built yet.
+      entry. *(2026-08-09)* `LSPR_MEASUREMENT_SCHEMA_VERSION` bumped 6.3 → 6.4 with new
+      `metadata/illumination_settings`, `metadata/illumination_spectra/{wavelength_nm}`,
+      `metadata/camera_settings`, `metadata/image_cube_manifest`, `processed/roi_definitions`,
+      `processed/absorbance_spectra/{roi_id}`, `processed/sensorgram/{roi_id}` constants and
+      a `has_recorded_data` metadata attr (§9). Also promoted sLSPR acq's private
+      `_upsert_table`/`_read_string_table_dataset` into public `lspr_io.upsert_table()`/
+      `read_string_table_dataset()` rather than re-deriving the same table read/write pattern
+      a second time. `apps/LSPRi/acq/src/lspri_acq_app/storage/hdf5_export.py` built on top
+      (new file) - `ImagingMeasurementWriter` (setup-time writers for all the groups above,
+      plus append-style growth for the image-cube manifest/sensorgram/absorbance data) and
+      `read_imaging_session()`/`ImagingSessionSnapshot` (the read-side counterpart, proven via
+      full write-then-read round-trip tests). 34 new tests total across `lspr_io` and
+      `lspri_acq_app` for this item. **Not yet built**: wiring any of this to the GUI (no
+      Save/Load Session action, `ExperimentControlWindow`'s valve/switch/color-palette state
+      isn't piped into the writer yet, `SweepPipeline` isn't connected to
+      `ImagingMeasurementWriter` at all) or an illumination/camera-settings panel for a user
+      to actually build an `ImagingAcquisitionSettings` from input. See the 2026-08-09
+      build-log entry for the full breakdown.
 - [x] Image storage: TIFF stack and OME-Zarr writers (§9). *(2026-08-08)* Both
       built, both real user-selectable options (`StorageSettings`), real-measured
       (not guessed) against a live-write-shaped benchmark - see the build-log

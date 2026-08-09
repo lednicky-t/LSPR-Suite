@@ -267,7 +267,7 @@ def _validate_required_group(handle: h5py.Group | h5py.File, path: str) -> list[
     return []
 
 
-def _read_string_table_dataset(dataset: h5py.Dataset | None) -> tuple[list[str], list[list[str]]]:
+def read_string_table_dataset(dataset: h5py.Dataset | None) -> tuple[list[str], list[list[str]]]:
     if dataset is None:
         return [], []
     columns: list[str] = []
@@ -279,6 +279,58 @@ def _read_string_table_dataset(dataset: h5py.Dataset | None) -> tuple[list[str],
     for row in dataset[...]:
         rows.append([str(cell.decode("utf-8") if isinstance(cell, bytes) else cell) for cell in row])
     return columns, rows
+
+
+def upsert_table(
+    group: h5py.Group,
+    name: str,
+    rows: list[list[str]],
+    columns: list[str],
+    *,
+    compression_kwargs: dict[str, object] | None = None,
+) -> None:
+    """Write (or replace, in place, resizing if the row count changed) a
+    small named string table under `group` - one row per list, a `columns`
+    attr recording the column names. Generalized 2026-08-09 from sLSPR acq's
+    private `HDF5MeasurementWriter._upsert_table` (storage/hdf5_export.py) -
+    same logic verbatim, promoted here because LSPRi acq's own writer needs
+    the identical pattern for its new v6.4 illumination/camera/ROI tables and
+    re-deriving it would just be silent duplication. sLSPR acq's own copy is
+    left as-is (not migrated to call this) to avoid touching a working,
+    heavily-tested file for no functional gain - a future cleanup could
+    unify them.
+    """
+    compression_kwargs = compression_kwargs or {}
+    if rows:
+        table = np.asarray(rows, dtype=h5py.string_dtype(encoding="utf-8"))
+    else:
+        table = np.empty((0, len(columns)), dtype=h5py.string_dtype(encoding="utf-8"))
+    if name in group:
+        dataset = group[name]
+        needs_recreate = dataset.chunks is None or dataset.shape != table.shape or dataset.ndim != table.ndim
+        if needs_recreate:
+            del group[name]
+            dataset = group.create_dataset(
+                name,
+                shape=table.shape,
+                maxshape=(None, table.shape[1] if table.ndim > 1 else None),
+                dtype=table.dtype,
+                chunks=True,
+                **compression_kwargs,
+            )
+        elif dataset.shape != table.shape:
+            dataset.resize(table.shape)
+        dataset[...] = table
+        dataset.attrs["columns"] = _string_array(columns)
+        return
+    dataset = group.create_dataset(
+        name,
+        data=table,
+        maxshape=(None, table.shape[1] if table.ndim == 2 else 0),
+        chunks=True,
+        **compression_kwargs,
+    )
+    dataset.attrs["columns"] = _string_array(columns)
 
 
 def _write_processing_settings_json(config_group: h5py.Group, payload: dict[str, Any]) -> None:
@@ -417,7 +469,7 @@ def validate_measurement_file(handle: h5py.File) -> MeasurementFileValidation:
         else:
             runtime_dataset = data_group.get(LSPR_MEASUREMENT_RUNTIME_DATASET_NAME)
             if runtime_dataset is not None:
-                runtime_columns, _runtime_rows = _read_string_table_dataset(runtime_dataset)
+                runtime_columns, _runtime_rows = read_string_table_dataset(runtime_dataset)
                 if runtime_columns and LSPR_MEASUREMENT_RUNTIME_TIMESTAMP_UTC_COLUMN not in runtime_columns:
                     result.warnings.append(
                         "Missing absolute runtime timestamp column: "
@@ -500,7 +552,7 @@ def validate_measurement_file(handle: h5py.File) -> MeasurementFileValidation:
                         f"Missing assignment table: metadata/{LSPR_MEASUREMENT_ASSIGNMENT_TABLES_GROUP_NAME}/{dataset_name}"
                     )
                     continue
-                columns, _rows = _read_string_table_dataset(dataset)
+                columns, _rows = read_string_table_dataset(dataset)
                 if not columns:
                     result.warnings.append(
                         f"Assignment table metadata/{LSPR_MEASUREMENT_ASSIGNMENT_TABLES_GROUP_NAME}/{dataset_name} is missing column metadata."
