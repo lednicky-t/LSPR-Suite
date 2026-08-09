@@ -2715,3 +2715,55 @@ independently-tested, unconnected pieces). Illumination/camera settings GUI (the
 where a user would actually set per-wavelength exposure) doesn't exist yet either -
 `ImagingAcquisitionSettings` is buildable programmatically/by tests but nothing in the app
 constructs one from user input yet. These are the natural next slices.
+
+---
+
+## 2026-08-09 (continued): Illumination/camera settings panel built - the first GUI piece
+
+Maintainer asked to keep going; offered three roughly-equal-sized next slices (settings
+panel, wiring experiment-control state + Save/Load Session into the writer, or wiring a
+live sweep to the writer) rather than guessing given how disconnected the pieces still
+were - maintainer picked the settings panel, matching the first step of their own workflow
+description ("user will setup the illumination parameters... then user setup camera
+parameters").
+
+**Built**: `apps/LSPRi/acq/src/lspri_acq_app/gui/illumination_camera_settings_panel.py`
+(new file), `IlluminationCameraSettingsPanel` - one `QTableWidget` row per swept
+wavelength, each row always carrying an explicit `WavelengthCameraSettings`/
+`WavelengthIlluminationSettings` override (not a "blank cell means use the global
+default" table - traced that ambiguity would be a real UX trap, since a blank/zero settle
+time is not the same thing as "ask illumination.settle_time_ms()"). Gain/Settle/Current use
+`QDoubleSpinBox.setSpecialValueText()` at a sentinel minimum for "not set" -> `None`, the
+standard Qt idiom for an optional numeric field, instead of a second checkbox widget per
+field. `current_settings() -> ImagingAcquisitionSettings` builds a real settings object
+from whatever's in the table right now; `load_settings()` is the inverse, for repopulating
+the table after a session restore (`read_imaging_session()`, previous entry).
+
+**v1-scoped, matching this app's established "lean panel, not everything at once"
+pattern**: exposes wavelength/exposure/gain/binning/settle/current/spectrum-source;
+resolution/crop/saving_mode (also part of `WavelengthCameraSettings` and the v6.4
+`camera_settings` schema) aren't editable from this panel yet - noted in the module
+docstring as a natural "advanced" dialog per row, not a wider default table.
+
+Embedded in `MainWindow` as a third column in the existing horizontal splitter (was
+roi_panel | experiment_control_window, now roi_panel | settings_panel |
+experiment_control_window) - a reasonable v1 placement, not treated as a final layout
+decision. Verified via a real headless launch (not just unit tests): constructed
+`MainWindow`, added two wavelength rows through the actual embedded widget, read back a
+real `ImagingAcquisitionSettings` with both wavelengths - `QT_QPA_PLATFORM=offscreen`,
+confirmed working end to end, not just importable. Screenshot verification not attempted
+this round (would need the primary-monitor correction from earlier in the session applied
+first) - the headless launch plus 10 new real-widget unit tests
+(`tests/test_illumination_camera_settings_panel.py`) is the evidence for this slice.
+
+**Verified**: 231 tests in `lspri_acq_app`'s own suite (was 211), all passing. Full
+umbrella suite: 956/957 (the one failure is `test_async_writer_reports_failure_via_on_error_callback`,
+the same pre-existing Windows temp-file-cleanup flake documented multiple times earlier in
+this log, confirmed reproducible in isolation and unrelated to anything touched here -
+the umbrella suite doesn't even import this new panel). `pyflakes` clean.
+
+**Still not done, same as the previous entry's list minus this item**: no Save/Load Session
+menu action, `ExperimentControlWindow`'s valve/switch/color-palette state still isn't piped
+into the writer, and `SweepPipeline` still isn't connected to `ImagingMeasurementWriter` -
+the settings panel can build an `ImagingAcquisitionSettings` now, but nothing consumes one
+yet (no "start sweep with these settings" button exists).

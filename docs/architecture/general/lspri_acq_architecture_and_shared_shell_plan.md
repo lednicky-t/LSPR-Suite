@@ -875,6 +875,13 @@ agreed design; implementation is the next slice.
   panel code itself.
 - **Experiment control panel**: reused directly from `lspr_acq_shell` — pump/valve plan
   editing and execution UI, unchanged.
+- **Illumination/camera settings panel**: *(2026-08-09)* Built —
+  `gui/illumination_camera_settings_panel.py`'s `IlluminationCameraSettingsPanel`, one
+  table row per swept wavelength producing a real `ImagingAcquisitionSettings` (§7).
+  Embedded in `MainWindow` as a third splitter column. v1-scoped: exposure/gain/binning/
+  settle/current/spectrum-source only; resolution/crop/saving_mode not yet editable here.
+  Nothing consumes the settings object it produces yet (no sweep-start wiring) — see the
+  2026-08-09 build-log entry.
 
 ---
 
@@ -1284,6 +1291,13 @@ picking this up cold.
       build-log entry. **Not yet built**: minimal image-processing panel (crop/
       rotate/background-flatten), and no live sweep is wired to this view yet
       (still shows one static startup preview frame, not a running acquisition).
+- [x] Illumination/camera settings panel — §10. *(2026-08-09)*
+      `gui/illumination_camera_settings_panel.py`'s `IlluminationCameraSettingsPanel` -
+      per-wavelength table producing a real `ImagingAcquisitionSettings`; `load_settings()`
+      is the inverse, for session restore. Embedded in `MainWindow`. 10 new real-widget
+      tests, verified via a real headless launch (not just imports). **Not yet built**:
+      resolution/crop/saving_mode fields, and nothing consumes the settings object yet (no
+      "start sweep" button) - see the 2026-08-09 build-log entry.
 - [x] Unit tests for ROI/extinction/metric math (no Qt, no hardware) — §12.
       *(2026-08-08)* `processing/roi_extraction.py` (bounding-box-cropped
       `RoiMaskSet`/`RoiMaskCache` per the Phase 0 lesson - explicitly *not* a port of
