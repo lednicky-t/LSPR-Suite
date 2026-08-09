@@ -2293,3 +2293,46 @@ header row, CH1-4 flow/direction columns).
 the lean `PlanTableModel`), the Tier-3 dialog layer (what the four gear buttons will
 eventually open), real import/export file I/O, the time-unit toggle, the "CHs" uniform/
 per-channel direction toggle, the switch-solution combo.
+
+## 2026-08-09: Valve-label and color-palette dialogs - third slice of visual-parity effort
+
+Continued the staged effort by wiring two of the four inert settings-gear buttons from the
+manual editor row: `step_valve_settings_button` and `color_palette_button`. Chose these two
+first because they're the most self-contained of the four (the switch-solution editor needs
+the solution-mode-toggle machinery already deferred; the pump-display dialog is tied to a
+device-display feature not wired in this app at all).
+
+**Checked scope before building**: sLSPR acq's `edit_valve_labels` (~185 lines) and
+`edit_color_palette_entries` (~300 lines) in `experiment_control_dialogs.py` are both fully
+custom `QDialog`s - frameless windows with gradient/colored borders, their own themed table
+widgets, custom title bars. Given the pattern already established for the plan table itself
+(lean `PlanTableModel` instead of porting `ExperimentPlanTableModel`'s window-coupled
+delegates), built lean equivalents instead of porting the custom chrome: standard `QDialog`s
+with the same editable data (a `QFormLayout` of line-edit + color-picker-button rows for
+valve labels; a `QTableWidget` with add/remove-row buttons for the palette) using
+`QColorDialog.getColor()` for color picking rather than a custom swatch widget.
+
+**Real state, not stubs**: `self._valve_state_labels`/`self._valve_state_colors` (dicts,
+defaulting to the same values sLSPR acq starts with) and `self._color_palette_entries`
+(list, defaulting to the shared `PLAN_COLOR_OPTIONS`) are genuine instance state now -
+`_valve_state_label()` and `_populate_color_combo()`/`_default_experiment_control_color()`
+read from them instead of the fixed defaults they read before. Neither persists across app
+restarts yet - this app has no settings-persistence story at all yet, a separate,
+not-yet-scoped piece of work (sLSPR acq saves both to its UI-state JSON file).
+
+**Verified**: 8 new tests (35 total in `test_experiment_control_window.py`, up from 27) -
+driven by patching `QDialog.exec` to inspect/mutate the dialog's real, already-constructed
+child widgets (`findChildren`) before returning Accepted/Rejected, simulating a user
+editing fields then clicking OK/Cancel, rather than mocking the dialog methods themselves.
+Covers: accept applies edits (including that the valve button's displayed text updates
+immediately), cancel leaves state untouched, a blank valve label falls back to the raw
+state name, removing a palette row shrinks the combo, renaming a palette entry is reflected
+in the combo. LSPRi acq's own full suite: 149/149. Full umbrella suite: 956/956 (957
+baseline minus one flaky, unrelated test - `test_async_writer_reports_failure_via_on_error_callback`,
+a *different* known pre-existing flake than the multiprocessing one, confirmed passing in
+isolation, same pattern documented in earlier entries). sLSPR acq's own suite: same 14/22
+baseline. `pyflakes` clean. Screenshot-confirmed no construction-time regression.
+
+**Not done**: the switch-solution and pump-display dialogs (their gear buttons are still
+inert), settings persistence for the two new pieces of state, the real
+`flow_plan_model.ExperimentPlanTableModel` + delegates, real import/export file I/O.
