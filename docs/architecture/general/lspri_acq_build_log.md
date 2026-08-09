@@ -1956,3 +1956,81 @@ log.
 **Not done**: the state-machine half of Tier 2 (run/hold/pause/stop, the auto-advance timer
 loop) - the harder, riskier half, still to come, with the 53-test characterization suite as
 its safety net.
+
+## 2026-08-09: Tier 2, step 2 - run/hold/pause/stop state machine shared as a mixin
+
+Finished Tier 2. The design sketched earlier (a separate `PlanRunController` object owning
+the runtime state, with the window's `_plan_running`/`_plan_holding`/etc. becoming properties
+delegating to it) turned out to be the wrong shape once actually worked through: those flags
+are read directly at 250+ sites elsewhere in the 6,165-line file (mostly editing-lock guard
+conditions unrelated to the state machine itself), and every existing test in this area -
+the pre-existing `test_experiment_control_step_navigation.py` and this session's own 53-test
+characterization suite - constructs `ExperimentControlWindow.__new__(...)` and sets state
+directly as plain attributes. Composition would have meant either touching all 250+ read
+sites, or giving the properties a dual-mode fallback for when `__init__` never ran (a
+backwards-compatibility shim CLAUDE.md explicitly warns against) - and either way, every one
+of those existing tests would have needed rewriting just to keep testing the same behavior.
+
+**Switched to a mixin instead**, before writing any of it, once this was clear: moved all 30
+state-machine methods verbatim into `lspr_acq_shell.experiment_control_run_loop.PlanRunLoopMixin`
+(a plain Python class, not a `QObject` - avoids any PyQt metaclass complication when combined
+with `QWidget`), and made `ExperimentControlWindow(PlanRunLoopMixin, QWidget)` inherit them.
+`_plan_running`, `_plan_active_row`, and every other piece of runtime state stay exactly what
+they always were - plain instance attributes on the window itself, still initialized in
+`__init__` exactly as before (zero changes there). Python resolves `ExperimentControlWindow._enter_hold_state`
+through the MRO whether the method lives directly on the class or on this mixin, so every
+external read site and every existing test needed zero changes - this was verified directly,
+not assumed (see below). The mixin's docstring documents the ~15-method "host" contract a
+concrete window class must provide (`_read_experiment_control_steps`,
+`_apply_step_to_pump_async`, `_sync_experiment_control_timeline`, etc.) as prose, not a formal
+`Protocol` class - this project doesn't use one for GUI wiring elsewhere, and the contract is
+small enough that documentation is clearer than machinery for it. This is genuinely what
+"share the state machine" means now for LSPRi acq: its own experiment-control window inherits
+the same mixin and provides the same host methods (which it needs to build anyway), rather
+than reimplementing run/hold/pause/stop from scratch.
+
+**Moved** (all 30 methods, byte-identical bodies - traced and read fresh from the file
+post-step-1's line-number shift before copying, not from memory): the runtime clock/flag
+primitives (`_set_plan_runtime_flags`, `_capture_plan_elapsed_from_clock`,
+`_reset_plan_runtime_counters`, `_ensure_measurement_started`, `_experiment_runtime_snapshot`,
+`_timeline_progress_for_display`, `_plan_runtime_for_display`, `_step_runtime_for_display`,
+`_apply_pause_state`), the step-transition internals (`_resume_experiment_plan`,
+`_begin_experiment_plan_run`, `_begin_paused_experiment_plan_run`,
+`_resume_experiment_control_after_manual_step_change`,
+`_queue_experiment_control_start_after_recording`,
+`_run_pending_experiment_control_start_after_recording`, `_enter_hold_state`,
+`_enter_pause_state`, `_stop_experiment_plan`), manual row navigation
+(`_set_experiment_control_runtime_row`, `_jump_to_experiment_control_step`,
+`_apply_selected_experiment_control_step`, `_move_to_relative_experiment_control_step` - found
+while tracing direct-assignment sites for the state attributes, not originally scoped as part
+of Tier 2 until traced, same pattern as Tier 0's `pump_plan.py` discovery), and the core loop
+itself (`_run_experiment_control`, `_start_or_resume_experiment_control`,
+`_hold_experiment_control`, `_pause_experiment_control`, `_stop_experiment_control`,
+`_schedule_plan_timer`, `_advance_experiment_control_progress`,
+`_activate_experiment_control_step_for_elapsed`). Left on the window (genuinely window-
+specific "host" methods, not state-machine logic): `_sync_experiment_control_timeline`,
+`_ensure_experiment_control_plan_row_visible`, `_set_experiment_control_runtime_row_property`,
+`_apply_step_to_pump_async`, `_stop_all_channels`, `_pause_row_step`, and the widget/recording-
+controller readouts.
+
+**Verified, and this time genuinely proves the move preserved behavior rather than just "the
+tests still pass"**: ran the pre-existing `test_experiment_control_step_navigation.py` (10
+tests) completely unmodified against the moved code - all 10 passed with zero changes, direct
+evidence the mixin's method resolution is transparent. This session's own 53-test
+characterization suite needed exactly one change: the `monotonic()` mock-patch target moved
+from `lspr_app.gui.experiment_control_window` to `lspr_acq_shell.experiment_control_run_loop`,
+since that's genuinely where the function is called from now (not a workaround - the real
+owner of that call moved, so the real owner of the patch target moved with it). Full umbrella
+suite 963/963 (the one flaky `test_async_writer_reports_failure_via_on_error_callback` failure
+this run, unrelated file, passed on immediate re-run - same intermittent pattern documented
+in every recent entry). sLSPR acq's own suite: same 14/22 with the same 8 pre-existing
+unrelated failures. `pyflakes` clean on every touched file (also removed now-unused `monotonic`
+import and the `experiment_runtime_snapshot`/`ExperimentRuntimeSnapshot` import from the
+window, both fully moved to the mixin). Launched sLSPR acq headless in simulation mode - no
+errors/tracebacks. Screenshotted the running window - renders correctly, "Hardware
+initialization complete." status, no crash.
+
+**Not done**: `LspriAcqExperimentControlBackend` itself - LSPRi acq's own experiment-control
+window (which will inherit `PlanRunLoopMixin` and implement its host-method contract) hasn't
+been built yet; that's the next real step toward an actual working control panel in LSPRi
+acq. Tier 3 (dialogs/cell-editing, a rewrite candidate) also not started.

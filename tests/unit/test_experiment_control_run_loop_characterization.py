@@ -12,12 +12,26 @@ file - not enough for a rewrite of code this consequential.
 
 Every stubbed collaborator here (`_apply_step_to_pump_async`,
 `_sync_experiment_control_timeline`, `_read_experiment_control_steps`, etc.)
-is exactly the boundary the planned `PlanRunHost` Protocol will formalize -
-these tests double as a first draft of that interface's contract.
+is exactly the "host" contract `lspr_acq_shell.experiment_control_run_loop.PlanRunLoopMixin`
+now documents.
 
 Follows the existing bare-`__new__` + stubbed-collaborator pattern from
 `test_experiment_control_step_navigation.py` rather than constructing a real
 Qt window.
+
+UPDATE 2026-08-09, after the actual extraction: the state-machine methods
+under test are now inherited from `PlanRunLoopMixin` rather than defined
+directly on `ExperimentControlWindow` - moved verbatim, so every test below
+still exercises the exact same code, just via the mixin. All 10 pre-existing
+tests in `test_experiment_control_step_navigation.py` passed against the
+moved code with zero changes; this file needed exactly one change - the
+`monotonic()` patch target moved from `lspr_app.gui.experiment_control_window`
+to `lspr_acq_shell.experiment_control_run_loop`, since that's where the
+function is actually called from now. `PlanRunLoopMixin` is the real owner
+of this logic; testing it through `ExperimentControlWindow` (rather than a
+second, parallel bare-mixin fixture) was kept deliberately, since the
+mixin's whole point is running unmodified inside a real window - this is the
+same code path either way.
 """
 
 from __future__ import annotations
@@ -40,7 +54,7 @@ from lspr_acq_shell.pump_plan import PumpChannelStep, PumpPlanStep
 from lspr_app.gui.experiment_control_window import ExperimentControlWindow
 
 
-_MODULE = "lspr_app.gui.experiment_control_window"
+_MODULE = "lspr_acq_shell.experiment_control_run_loop"
 
 
 def _make_step(step_index: int, *, duration_s: float = 30.0, description: str = "") -> PumpPlanStep:

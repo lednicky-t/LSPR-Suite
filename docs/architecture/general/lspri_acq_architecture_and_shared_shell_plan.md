@@ -1051,7 +1051,7 @@ picking this up cold.
       which needs real redesign, not just a move; the window-specific dialogs/
       editing, a rewrite candidate) not started - Tier 2 needs the maintainer's
       real-hardware sign-off before either app relies on a refactored version.
-      **Tier 2 started 2026-08-09**: traced real coupling (only `_plan_step_commands()`,
+      **Tier 2 done 2026-08-09**: traced real coupling (only `_plan_step_commands()`,
       ~160 lines, decides hardware commands - the actual dispatch was already
       shared in Tier 0; the run/hold/pause/stop timer loop is genuinely
       window-entangled, with its guard flags read at 250+ other sites).
@@ -1059,9 +1059,25 @@ picking this up cold.
       function), given LSPRi acq's own run loop needs sweep-pipeline hooks
       anyway. Given only 10 pre-existing tests covered this logic, maintainer
       chose to write thorough characterization tests against the current,
-      unmodified state machine first - see the 2026-08-09 build-log entry for
-      the 53-test suite (mutation-tested for real, not just run) that is now
-      the safety net for the actual extraction, still to come.
+      unmodified state machine first - 53 tests, mutation-tested for real,
+      not just run (`tests/unit/test_experiment_control_run_loop_characterization.py`).
+      Extracted in two pieces: (1) `_plan_step_commands` moved to
+      `lspr_acq_shell.experiment_control_step_decision.plan_step_commands`, a
+      pure function taking a new `StepCommandContext` dataclass instead of
+      reading `self.*`; (2) the run/hold/pause/stop state machine (30
+      methods) moved to `lspr_acq_shell.experiment_control_run_loop.PlanRunLoopMixin`
+      - as a **mixin**, not composition-with-properties as originally
+      sketched, after tracing revealed the composition design would have had
+      to touch all 250+ external read sites (or add a backwards-compat
+      property fallback) and would have broken every existing test's bare-
+      `__new__` fixture pattern. `ExperimentControlWindow(PlanRunLoopMixin, QWidget)`
+      inherits the methods verbatim; `_plan_running` etc. remain plain
+      instance attributes, unchanged, so none of the 250+ sites or the 63
+      existing/new tests needed to change (only the characterization file's
+      `monotonic()` mock-patch target moved, since that's genuinely where
+      the call now happens). `LspriAcqExperimentControlBackend` itself is
+      still not built - LSPRi acq's own experiment-control window, which
+      will inherit the same mixin, hasn't been written yet.
 - [x] Basler driver (`pypylon`) built *(2026-08-08)* - **not yet manually verified
       against real hardware** (no Basler camera was attached in the environment this
       was written in; confirmed 0 devices via real `pylon.TlFactory.EnumerateDevices()`
