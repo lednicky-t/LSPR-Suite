@@ -1848,3 +1848,59 @@ correctly, no visual glitches or missing widgets.
 decision redesign and run/hold/pause/stop state machine; the dialogs/editing rewrite),
 `LspriAcqExperimentControlBackend` itself (still blocked on Tier 2), image-processing panel,
 live sweep wiring into the GUI, Lori LED driver.
+
+## 2026-08-09: Tier 2 scoping + characterization tests (before any restructuring)
+
+Started Tier 2 (the safety-critical decision logic + run/hold/pause/stop state machine).
+Traced real coupling before proposing anything, same discipline as every prior tier: Tier 0
+already moved `_StepApplyRunnable`/`_PlannedCommand` (the actual hardware-dispatch
+mechanism), so the only piece still deciding *what* commands go to the pump/valve/selector
+is `_plan_step_commands()` (~160 lines) - which turned out to have almost no window
+coupling (one live widget read, `manual_tube_spins[i].value()` for tube diameter - a
+per-channel setup value, not plan data). The run/hold/pause/stop timer loop is a different
+story: genuinely entangled with recording, the timeline widget, table row selection, and
+the status bar - and its guard flags (`_plan_running`/`_plan_holding`/`_plan_paused`) are
+read at 250+ other sites across the 6,165-line file (mostly editing-lock guard conditions
+elsewhere, not the state machine itself).
+
+Presented this to the maintainer as a scope choice - share only the decision function
+(lower risk, leaves sLSPR acq's tested run loop untouched) vs. also sharing the state
+machine behind an abstract host interface (more reuse, touches tested code, LSPRi acq's own
+run loop will need sweep-pipeline hooks sLSPR acq never had anyway). **Maintainer chose the
+full-scope option** - share the state machine too.
+
+Before writing any restructuring code, flagged a second real finding: only 10 tests
+(`test_experiment_control_step_navigation.py`) directly exercise this state machine, thin
+for logic that decides when real hardware commands fire. Given the choice was made without
+that number in view, went back rather than silently proceeding - maintainer chose to write
+thorough characterization tests against the *current, unmodified* code first, then
+restructure with those tests as the safety net.
+
+**Characterization tests written** (`tests/unit/test_experiment_control_run_loop_characterization.py`,
+53 tests, all against unmodified `experiment_control_window.py`): every state transition
+(idle->running->holding->paused->stopped, including no-op guards for invalid transitions
+like holding a stopped plan), the auto-advance timer callback (`_advance_experiment_control_progress`
+- step-apply-in-flight retry-at-50ms, mid-step elapsed updates, step-to-step advance,
+finish-on-last-step), `_schedule_plan_timer`'s exact interval selection (150ms poll cadence
+for hold/pause/not-yet-started, remaining-time-clamped-to-[1,150]ms while actively running),
+manual step jump/apply behavior differing by current state (idle: select only; running:
+reset clock and re-apply in place; holding/paused: resume the plan at the new row), and the
+HOLD-vs-PAUSE distinction (`_enter_hold_state` sends no hardware command at all; `_enter_pause_state`
+applies a configurable pause-template step via `_apply_step_to_pump_async(..., start=False)`).
+Followed the existing bare-`__new__` + stubbed-collaborator pattern from
+`test_experiment_control_step_navigation.py` (no real Qt window construction); every stub
+point doubles as a first draft of the `PlanRunHost` Protocol boundary the actual extraction
+will need. Found and fixed 3 test-authoring mistakes of my own by running against real code
+(a `monotonic()` mock with a stray second value never consumed; two tests that had
+over-stubbed `_set_experiment_control_runtime_row` instead of letting its real
+pass-through implementation run, so they weren't actually exercising the call chain they
+claimed to). **Mutation-tested the suite for real, not just run it**: temporarily deleted
+one state-clearing line from `_enter_hold_state` (`self._plan_started_monotonic = None`) and
+confirmed a test failed with the exact expected assertion, then reverted - concrete evidence
+the tests catch real regressions, not just passing trivially.
+
+**Verified**: full umbrella suite 948/948 (895 baseline + 53 new), `pyflakes` clean.
+
+**Not done**: the actual `PlanRunHost` Protocol design and `_plan_step_commands`/state-
+machine extraction into `lspr_acq_shell` - next step, with this test file as the safety net.
+Nothing from this entry committed yet.

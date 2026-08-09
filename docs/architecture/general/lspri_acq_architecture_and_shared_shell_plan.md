@@ -1051,6 +1051,17 @@ picking this up cold.
       which needs real redesign, not just a move; the window-specific dialogs/
       editing, a rewrite candidate) not started - Tier 2 needs the maintainer's
       real-hardware sign-off before either app relies on a refactored version.
+      **Tier 2 started 2026-08-09**: traced real coupling (only `_plan_step_commands()`,
+      ~160 lines, decides hardware commands - the actual dispatch was already
+      shared in Tier 0; the run/hold/pause/stop timer loop is genuinely
+      window-entangled, with its guard flags read at 250+ other sites).
+      Maintainer chose to share the state machine too (not just the decision
+      function), given LSPRi acq's own run loop needs sweep-pipeline hooks
+      anyway. Given only 10 pre-existing tests covered this logic, maintainer
+      chose to write thorough characterization tests against the current,
+      unmodified state machine first - see the 2026-08-09 build-log entry for
+      the 53-test suite (mutation-tested for real, not just run) that is now
+      the safety net for the actual extraction, still to come.
 - [x] Basler driver (`pypylon`) built *(2026-08-08)* - **not yet manually verified
       against real hardware** (no Basler camera was attached in the environment this
       was written in; confirmed 0 devices via real `pylon.TlFactory.EnumerateDevices()`
