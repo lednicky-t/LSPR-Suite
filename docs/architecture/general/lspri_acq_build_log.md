@@ -2130,3 +2130,54 @@ camera/illumination acquisition (main_window.py currently runs the ROI panel and
 experiment-control panel as two independent panels), Tier 3 (sLSPR acq's plan-table
 cell-editing delegates - not shared or ported), the image-processing panel (crop/rotate/
 background-flatten, explicitly deferred earlier), Lori LED reference driver.
+
+## 2026-08-09: LSPRi acq's experiment-control panel gets tube-diameter control and an editable pause template
+
+Maintainer asked why tube-diameter control and the pause template were listed as "not
+implemented," specifically whether there was a real technical problem, and asked for both to
+be built the same as sLSPR acq's, one at a time.
+
+**Tube diameter**: no real problem - `TubeDiameterComboBox` (the exact widget sLSPR acq uses,
+restricted to the pump's 26 real supported tube sizes) was already shared into
+`lspr_acq_shell.experiment_control_widgets` back in Tier 1; it just hadn't been added to
+LSPRi acq's window when the MVP was built. Added `self.tube_diameter_spins` - one
+`TubeDiameterComboBox` per channel, shown in a labeled row above the plan table - and wired
+`_apply_step_to_pump_async`'s `tube_mm_by_channel` to read live values from them instead of a
+fixed `[DEFAULT_TUBE_MM] * ACTIVE_PUMP_CHANNELS`. One deliberate simplification kept: no
+"uniform" toggle that drives all four channels from a single control (sLSPR acq's
+`manual_uniform_button`) - always independent per-channel here, since that toggle is UI
+convenience, not core functionality.
+
+**Pause template**: genuinely different from tube diameter - sLSPR acq edits it via
+`ExperimentControlDialogs.edit_pause_state`, a dedicated, fully themed `QDialog` with its own
+styled table (`experiment_control_dialogs.py`), part of the Tier-3 dialog layer that was
+deliberately not shared (traced earlier as comparably window-entangled to Tier 2's state
+machine). Rather than port that dialog, reused what already exists: the pause template is
+just another `PumpPlanStep`, and the window already has a fully working, editable
+`PlanTableModel`/`ExperimentControlTableView`/`PlanColorDelegate` combination for the main
+plan table - so `self.pause_template_table`/`self._pause_template_model` is a second, tiny
+one-row instance of exactly the same machinery, not a new dialog. `_pause_row_step()` now
+returns `deepcopy(self._pause_template_model.steps()[0])` instead of a fixed all-stop
+constant. `duration_s` is stored but unused (the pause step applies once via
+`_apply_step_to_pump_async`, never runs through the timer) - noted in the module docstring so
+it isn't mistaken for a bug later.
+
+**Verified**: 7 new tests (20 total in `test_experiment_control_window.py`, up from 13) -
+tube-diameter widget count/defaults, and (via a spy that wraps the real `plan_step_commands`
+to capture what it was called with, not a mock of it) that a changed tube-diameter value and
+an edited pause template both actually reach the dispatched hardware command, not just the
+widgets themselves; also that editing the pause template doesn't leak into the main plan
+table, and that `_pause_row_step()` returns a real deepcopy (mutating the returned step
+doesn't affect the template). One test-authoring mistake caught by running it for real: an
+isolation test compared against `"Open"`, which is also the main table's own default valve
+value, giving a false pass regardless of real isolation - fixed by asserting against a value
+that starts different on each table (the comment field, which starts empty on the main step).
+LSPRi acq's own full suite: 134/134 (127 baseline + 7 new). Full umbrella suite: 963/963,
+clean, no flakes this run. `pyflakes` clean. Screenshotted the running window - both new rows
+render and are visibly populated (tube diameter combos default to 0.25mm, pause-state table
+shows its own header row beneath the main plan table).
+
+**Not done**: session-recording/HDF5 integration, the sweep-pipeline sync between the pump
+plan and camera/illumination acquisition, Tier 3 itself (the dialog/delegate layer - still
+not shared, though its two most-needed pieces for this app now have lean equivalents), the
+image-processing panel, Lori LED reference driver.
