@@ -2767,3 +2767,60 @@ menu action, `ExperimentControlWindow`'s valve/switch/color-palette state still 
 into the writer, and `SweepPipeline` still isn't connected to `ImagingMeasurementWriter` -
 the settings panel can build an `ImagingAcquisitionSettings` now, but nothing consumes one
 yet (no "start sweep with these settings" button exists).
+
+---
+
+## 2026-08-09 (continued again): Save/Load Session wired into MainWindow
+
+Maintainer said to keep going without specifying which of the two remaining slices
+(experiment-control-state + Save/Load Session, or live-sweep wiring) - picked the smaller,
+more bounded one first, consistent with how every other multi-slice effort this session was
+sequenced (land the safer/smaller piece, then the riskier one).
+
+**New public seams added** so `MainWindow` doesn't have to reach into either panel's
+private state:
+- `ExperimentControlWindow.assignment_table_state()` / `apply_assignment_table_state()`
+  (`gui/experiment_control_window.py`) - read/write the window's valve-label, valve-color,
+  color-palette, and switch-solution-label state. Deliberately separate from
+  `_save_experiment_control_settings()`, which is this window's own independent per-user
+  JSON persistence, not a session file - conflating the two would have made "restore this
+  session" and "restore my UI preferences from last time I ran the app" the same operation
+  when they're not. `apply_*` re-populates the color/switch combos immediately (not just the
+  backing lists) so a restored session is visibly correct, not just correct on next read.
+- `RoiPanel.load_rois()` (`gui/roi_panel.py`) - replaces every current ROI (with its real
+  pyqtgraph overlay items, via the existing `_add_roi_object`) with a given list, the
+  session-restore counterpart to `add_roi()`'s "one new default-shaped ROI" case.
+
+**`MainWindow.save_session()`/`load_session()`** (`gui/main_window.py`) - plain methods
+(not embedded in the button click handlers) so they're directly testable without driving a
+real native file dialog. `save_session()` writes illumination/camera settings from the
+settings panel, ROI definitions from the ROI panel, and valve/switch/color-palette state
+from the experiment-control window into one `ImagingMeasurementWriter` file.
+`load_session()` is the exact inverse via `read_imaging_session()`. Two "Save Session..."/
+"Load Session..." buttons added to the header row (`QFileDialog` for the path) - `MainWindow`
+is a plain `QWidget`, not `QMainWindow`, so no menu bar exists to hang a menu action off of;
+buttons were the pragmatic v1 choice, not a considered rejection of a menu.
+
+**Explicitly does NOT yet touch**: the experiment-control plan table itself (already has
+its own import/export path per `hdf5_export.py`'s module docstring - wiring that into the
+same file is a separate follow-up) or anything sweep/recording-related (still nothing
+connects `SweepPipeline` to `ImagingMeasurementWriter`).
+
+**Verified**: real round-trip test (`tests/test_main_window.py`, new file) - populates all
+three panels through their real widgets, saves, loads into a *second* fresh `MainWindow`,
+and asserts the restored settings/ROIs/valve-label/color-palette/switch-label state matches,
+not just that individual writer/reader calls succeeded in isolation (that was already proven
+in the earlier `test_hdf5_export.py` entry - this proves the GUI wiring on top of it). Also
+a dedicated regression test that save-then-immediately-load doesn't hang/raise (catches the
+class of bug where a writer is left open/locked on some path). Headless launch smoke test
+(`QT_QPA_PLATFORM=offscreen`) confirms the same round trip through the real
+`MainWindow.save_session()`/`load_session()` entry points, not just the test harness.
+6 new tests in `test_experiment_control_window.py`, 4 in `test_roi_panel.py`, 4 in the new
+`test_main_window.py`. `lspri_acq_app` suite: 221 -> 235 passing. Full umbrella suite:
+957/957 clean this run. `pyflakes` clean (also fixed one small pre-existing unused-variable
+warning in `test_sweep_pipeline.py`, left over from an earlier entry today, while in there).
+
+**Still not done**: no live sweep wired anywhere in the GUI, `SweepPipeline` still isn't
+connected to `ImagingMeasurementWriter`, and the plan table itself still isn't part of the
+session file. The next natural slice is wiring a real (simulated-device) sweep to the image
+view/ROI processing/recording gate - the last of the three options offered earlier today.

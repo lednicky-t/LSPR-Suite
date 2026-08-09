@@ -882,6 +882,12 @@ agreed design; implementation is the next slice.
   settle/current/spectrum-source only; resolution/crop/saving_mode not yet editable here.
   Nothing consumes the settings object it produces yet (no sweep-start wiring) — see the
   2026-08-09 build-log entry.
+- **Save/Load Session**: *(2026-08-09)* Built — `MainWindow.save_session()`/`load_session()`
+  (§9's `ImagingMeasurementWriter`/`read_imaging_session()`) plus two new public seams,
+  `ExperimentControlWindow.assignment_table_state()`/`apply_assignment_table_state()` and
+  `RoiPanel.load_rois()`. Two header-row buttons (`MainWindow` is a plain `QWidget`, no menu
+  bar). Does not yet touch the plan table (has its own im/export path already) or anything
+  sweep/recording-related. See the 2026-08-09 build-log entry.
 
 ---
 
@@ -1298,6 +1304,12 @@ picking this up cold.
       tests, verified via a real headless launch (not just imports). **Not yet built**:
       resolution/crop/saving_mode fields, and nothing consumes the settings object yet (no
       "start sweep" button) - see the 2026-08-09 build-log entry.
+- [x] Save/Load Session — §10. *(2026-08-09)* `MainWindow.save_session()`/`load_session()`,
+      new `ExperimentControlWindow.assignment_table_state()`/`apply_assignment_table_state()`
+      and `RoiPanel.load_rois()` seams. 14 new tests including a full round trip through all
+      three panels in a real second `MainWindow`. **Not yet built**: plan table isn't part of
+      the session file (has its own im/export path already), and no sweep/recording wiring -
+      see the 2026-08-09 build-log entry.
 - [x] Unit tests for ROI/extinction/metric math (no Qt, no hardware) — §12.
       *(2026-08-08)* `processing/roi_extraction.py` (bounding-box-cropped
       `RoiMaskSet`/`RoiMaskCache` per the Phase 0 lesson - explicitly *not* a port of
