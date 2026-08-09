@@ -2336,3 +2336,71 @@ baseline. `pyflakes` clean. Screenshot-confirmed no construction-time regression
 **Not done**: the switch-solution and pump-display dialogs (their gear buttons are still
 inert), settings persistence for the two new pieces of state, the real
 `flow_plan_model.ExperimentPlanTableModel` + delegates, real import/export file I/O.
+
+## 2026-08-09: Switch-solution dialog, pump-display dialog, and real settings persistence
+
+Maintainer asked to keep going through the remaining gaps one by one, and to keep matching
+sLSPR acq's real behavior, not an approximation of it. Closed out the last two inert gear
+buttons and, separately, gave the whole app real settings persistence for the first time.
+
+**Switch-solution dialog - traced sLSPR acq's *actual current* behavior, not its field
+names**: `step_switch_spin` (a raw 1-12 spinbox) was removed entirely from this app, replaced
+with `step_switch_combo` ("N: solution name"). Found by reading `_set_switch_solution_mode`
+directly: it unconditionally does `self._switch_solution_mode = False`,
+`step_switch_mode_button.setVisible(False)`, `step_switch_spin.setVisible(False)`,
+`step_switch_combo.setVisible(True)` regardless of its own `enabled` argument or the stored
+`_switch_solution_mode` setting - the raw-spin/mode-toggle code path is dead in sLSPR acq
+right now, so building it here would have "matched" a name that no longer reflects real
+behavior. `_edit_switch_solution_labels` is a lean 12-row `QTableWidget` dialog (Solution
+column only - sLSPR acq's own dialog also has Concentration/Unit/Notes columns, left out
+since nothing in this app reads them).
+
+**Pump-display dialog - the first of the four dialogs wired to a setting with a real
+hardware effect**: `StepCommandContext.pump_display_enabled` was hardcoded `False` since
+Tier 2; `_edit_pump_display_settings` (a checkbox + live 16-character preview, using the
+already-shared `PUMP_DISPLAY_MAX_LENGTH`) now actually controls whether a step's comment
+gets sent to the pump's own display when that step is applied to real hardware.
+
+**Real settings persistence, not another simplification**: found `lspr_acq_shell.settings_store`
+already has a complete, generic JSON settings engine (atomic writes, corruption quarantine,
+an `app`/`ui_state` convention) - its own module docstring gives the *exact* usage pattern
+for a second app (`save_app_setting(key, value, path=user_profile.current_config_path("lspri_acq_settings.json"))`),
+so this was a direct use of existing shared infrastructure, not new plumbing. One blob under
+an `"experiment_control"` key: valve labels/colors, the color palette, switch-solution
+labels, the pump-display setting, and tube diameters (all loaded once in `__init__`, saved
+again after each dialog's Accept and after any tube-diameter change). The plan itself is
+deliberately not included - project/session state, not a UI setting, matching the
+distinction CLAUDE.md documents for `lspr_settings.json`.
+
+**Real test-isolation bug caught before it shipped**: the first draft had every test in the
+file constructing `ExperimentControlWindow()` directly, meaning every dialog-accept path's
+new `_save_experiment_control_settings()` call would have written to the *real* per-user
+`lspri_acq_settings.json` and cross-polluted every other test's fresh window in the same
+run. Fixed by adding a `_make_window(testcase, ...)` factory that patches `_settings_path`
+to an isolated `tempfile.TemporaryDirectory()` per test, then swept it across all 10
+existing window-construction sites in the test file, not just the new tests.
+
+**Verified**: 50 tests total (up from 44) - 6 for the switch-solution dialog, 4 for pump
+display (including that enabling it really does flow into `StepCommandContext`), and a
+dedicated `SettingsPersistenceTests` class with 6 tests proving actual cross-instance
+survival (construct a window, change a setting, construct a *second* window sharing the
+same settings path, assert the second one loaded what the first saved) - not just "the save
+call doesn't raise." LSPRi acq's own full suite: 164/164. Full umbrella suite: 956/956 (one
+different pre-existing flaky test this run - `test_async_writer_reports_failure_via_on_error_callback`
+- confirmed passing in isolation). sLSPR acq's own suite: unchanged, same 14/22 baseline
+(untouched this round). `pyflakes` clean.
+
+**Screenshot verification could not be completed this round** - two consecutive automated
+screenshot attempts captured unrelated video content instead of the app window (the desktop
+had PotPlayer windows open on a secondary monitor; `Desktop(backend="uia").windows(title_re=...)`
+matched something unexpected rather than the real LSPRi acq window, confirmed via a direct
+window enumeration that found no window with "LSPRi" in its title at either attempt). Per
+this project's own GUI-testing scope boundary (only touch the target app via automation,
+nothing else on the desktop), stopped after the second wrong capture rather than keep
+retrying. Correctness was instead confirmed via a headless launch (ran cleanly for 10s, no
+exception) plus the test suite above, which is now strong enough (real cross-instance
+persistence tests, real dispatch-context assertions) to stand on its own without a visual
+check for this particular change.
+
+**Not done**: the real `flow_plan_model.ExperimentPlanTableModel` + its 8 delegates (still
+the lean `PlanTableModel`), real import/export file I/O.
