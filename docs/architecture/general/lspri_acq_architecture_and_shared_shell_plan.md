@@ -1075,9 +1075,34 @@ picking this up cold.
       instance attributes, unchanged, so none of the 250+ sites or the 63
       existing/new tests needed to change (only the characterization file's
       `monotonic()` mock-patch target moved, since that's genuinely where
-      the call now happens). `LspriAcqExperimentControlBackend` itself is
-      still not built - LSPRi acq's own experiment-control window, which
-      will inherit the same mixin, hasn't been written yet.
+      the call now happens). **`LspriAcqExperimentControlBackend` (LSPRi
+      acq's own experiment-control window) built 2026-08-09**:
+      `apps/LSPRi/acq/src/lspri_acq_app/gui/experiment_control_window.py`
+      inherits `PlanRunLoopMixin` and implements its host contract, paired
+      with a new, deliberately lean `gui/plan_table_model.py` (plain Qt
+      text/combo cell editing) rather than porting sLSPR acq's 1,123-line
+      `flow_plan_model.ExperimentPlanTableModel` + its window-coupled
+      dropdown-picker delegates - traced and found not worth sharing for a
+      first working panel (comparable entanglement to Tier 2's state
+      machine; a real candidate for a future Tier 3-equivalent pass, not
+      done now). Also moved `device_io_pool()` (the single-lane device-
+      command thread pool) to `lspr_acq_shell.device_io_pool` - a small,
+      zero-coupling piece both apps' step dispatch needs. Embedded in
+      `MainWindow` next to the ROI panel via a `QSplitter`. Simplifications
+      documented in the new window's own module docstring: fixed default
+      tube diameter (no manual per-channel spinboxes yet), a fixed pause-
+      row template (not user-configurable yet), and no session-recording/
+      HDF5 integration yet (that's the separate, not-yet-built sweep-
+      pipeline milestone) - running the plan drives real pump/valve/
+      selector hardware today, it just doesn't log a session file yet.
+      PUMP/SWITCH/SELECTOR device connectivity needed no new wiring at all -
+      traced and found `lspr_acq_shell.device_lifecycle` already registers
+      those three families unconditionally at import time (not an app-
+      specific opt-in the way CAMERA/ILLUMINATION were), so any app
+      importing `lspr_acq_shell` already has them. 13 new tests in
+      `apps/LSPRi/acq/tests/test_experiment_control_window.py` exercise the
+      real window end to end, including the real async dispatch onto
+      `device_io_pool()` (not a mock) - see the 2026-08-09 build-log entry.
 - [x] Basler driver (`pypylon`) built *(2026-08-08)* - **not yet manually verified
       against real hardware** (no Basler camera was attached in the environment this
       was written in; confirmed 0 devices via real `pylon.TlFactory.EnumerateDevices()`

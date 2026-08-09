@@ -2034,3 +2034,99 @@ initialization complete." status, no crash.
 window (which will inherit `PlanRunLoopMixin` and implement its host-method contract) hasn't
 been built yet; that's the next real step toward an actual working control panel in LSPRi
 acq. Tier 3 (dialogs/cell-editing, a rewrite candidate) also not started.
+
+## 2026-08-09: `LspriAcqExperimentControlBackend` built - LSPRi acq gets a real, working experiment-control panel
+
+Asked the maintainer how to scope this: build a working core panel now using everything
+shared so far (table/timeline reuse, run/hold/pause/stop, step-command decision - full
+functionality minus the polish dialogs), do the polish-dialog extraction (Tier 3) first for
+literal "all functions" parity, or pause. Maintainer chose to build the core panel now.
+
+**Two real findings before writing any GUI code, same discipline as every prior tier**:
+
+1. PUMP/SWITCH/SELECTOR device connectivity needed **no new wiring at all**, contrary to
+   `apps/LSPRi/acq/src/lspri_acq_app/device/registry.py`'s own docstring ("PUMP/SWITCH/
+   SELECTOR reuse is deliberately NOT wired here yet"). Traced it: `lspr_acq_shell.device_lifecycle`
+   registers all three families unconditionally at *module import time*
+   (`register_device_family(PUMP, ...)` etc. at the bottom of that file), not behind an app-
+   specific opt-in the way CAMERA/ILLUMINATION were (those needed the new
+   `register_driver_connect_factory()` mechanism built earlier this session). Any app that
+   imports `lspr_acq_shell` at all already has PUMP/SWITCH/SELECTOR discoverable and
+   connectable - that docstring predates the maintainer's later confirmation that this app
+   drives the same fluidics hardware, and was accurate caution at the time it was written, not
+   a real remaining blocker now.
+2. sLSPR acq's plan-table *cell-editing* layer (`gui/flow_plan_model.py`, 1,123 lines -
+   `ExperimentPlanTableModel` plus 8 delegate classes for valve/switch/color/duration cells)
+   was never in scope for Tiers 0-2 (those covered the timeline/table *view* and the
+   run/hold/pause/stop *logic*, not the model feeding the view) and turned out to be just as
+   window-entangled as Tier 2's state machine was - every delegate holds a `self._window`
+   reference and calls back into it (`_theme_palette()`, `_populate_color_combo()`,
+   `_duration_display_decimals()`, etc.) for theme-aware popup rendering. Given the
+   maintainer's "build fast" choice, this became the basis for the plan below rather than
+   another characterize-first extraction.
+
+**Built, not extracted, per the maintainer's choice**: `apps/LSPRi/acq/src/lspri_acq_app/gui/plan_table_model.py`
+- a new, deliberately lean `QAbstractTableModel` over `list[PumpPlanStep]` (14 columns: step
+number, duration, valve, switch, 4 channel flows, 4 channel directions, color, comment), plain
+Qt text editing, no custom dropdown-picker delegates. Pairs directly with the already-shared
+`lspr_acq_shell.experiment_control_widgets.ExperimentControlTableView`/`PlanColorDelegate`
+(Tier 1) - those only ever needed the standard `QAbstractTableModel` API plus a few view-level
+methods `ExperimentControlTableView` already provides, confirmed by inspection rather than
+assumed.
+
+**`apps/LSPRi/acq/src/lspri_acq_app/gui/experiment_control_window.py`** - the actual
+`LspriAcqExperimentControlBackend`: `ExperimentControlWindow(PlanRunLoopMixin, QWidget)`,
+implementing the mixin's full host contract. Real, working pieces: `_apply_step_to_pump_async`
+(built from the shared `plan_step_commands`/`StepCommandContext`, `_StepApplyRunnable`, and
+the newly-shared `device_io_pool()` - see below), `_service_device_connected`/
+`_service_connection_detail` (via `DeviceCommunicationService.shared()`, the same process-wide
+singleton CAMERA/ILLUMINATION already use), `_stop_all_channels`, toolbar-driven add/duplicate/
+delete/reorder (the last via `ExperimentControlTableView`'s existing `step_move_requested`
+signal, already shared since Tier 1). Documented, deliberate simplifications (all noted in the
+new file's own module docstring, not silently dropped): a fixed default tube diameter per
+channel (`DEFAULT_TUBE_MM` for all 4, no manual spinbox row yet), a fixed pause-row template
+(not user-configurable yet), and no session-recording/HDF5 integration
+(`_request_recording_control` always succeeds, `_emit_experimental_control_state` only logs) -
+that's the separate, not-yet-built sweep-pipeline milestone. Running the plan today drives
+real pump/valve/selector hardware; it does not yet write a session file.
+
+**`device_io_pool()` moved to `lspr_acq_shell.device_io_pool`** (found needed while wiring
+`_apply_step_to_pump_async`): a 5-line process-global `QThreadPool(maxThreadCount=1)`
+singleton accessor, zero window coupling, previously living only in sLSPR acq's
+`gui/device_lifecycle_task.py`. sLSPR acq's own file now re-exports it (not called internally
+there, so pyflakes needed the same `_ = device_io_pool` re-export marker `pump_plan.py`
+already established as this project's convention for that situation).
+
+**Embedded** in `MainWindow` (`main_window.py`) next to the existing ROI panel via a
+`QSplitter`, replacing the "later milestone" placeholder comment that file already had.
+
+**Verified**: 13 new tests in `apps/LSPRi/acq/tests/test_experiment_control_window.py` -
+construction, add/duplicate/delete-while-running-is-ignored, and a full Run/Hold/Pause/Stop
+integration suite that drives the *real* inherited state machine against the *real* (no
+hardware attached) device service, including waiting for the real async dispatch onto
+`device_io_pool()` to complete (`waitForDone()` + `processEvents()`), not a mock of
+`_apply_step_to_pump_async` - confirms Run doesn't crash or hang with nothing connected, and
+that the status line correctly reports "not connected" rather than silently succeeding.
+LSPRi acq's full own suite: 127/127 (114 baseline + 13 new). Full umbrella suite: 962-963/963
+across three runs - one pre-existing, unrelated, order-dependent flaky test failed per run
+(a different one each time: `test_async_writer_reports_failure_via_on_error_callback`, then
+`test_live_acquisition_worker_relays_child_logs`), each confirmed to pass cleanly in
+isolation - not a regression. `pyflakes` clean on every new/touched file. Launched LSPRi acq
+(headless, no errors) and screenshotted the running window - the experiment-control panel
+renders correctly next to the ROI panel: toolbar, a default Step 1 row, and the timeline
+showing "Step 1" with Run enabled and Hold/Pause/Stop correctly disabled while idle.
+
+**Incident, not a code issue**: mid-session, discovered two of this session's own earlier
+`pytest tests/ -q` invocations, backgrounded after exceeding the tool's timeout, had never
+actually been terminated - they (plus their orphaned `multiprocessing` worker children) were
+still running concurrently with later test runs, causing inflated run times (110-145s instead
+of the ~55s baseline) and contributing to the flaky-test noise above. Found via `Get-CimInstance
+Win32_Process` (command-line inspection, not just process names) and terminated. Worth
+watching for in any session using backgrounded long-running test commands.
+
+**Not done**: manual tube-diameter-per-channel control, an editable pause-row template,
+session-recording/HDF5 integration and the sweep-pipeline sync between the pump plan and
+camera/illumination acquisition (main_window.py currently runs the ROI panel and the
+experiment-control panel as two independent panels), Tier 3 (sLSPR acq's plan-table
+cell-editing delegates - not shared or ported), the image-processing panel (crop/rotate/
+background-flatten, explicitly deferred earlier), Lori LED reference driver.
