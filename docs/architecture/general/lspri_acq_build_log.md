@@ -2181,3 +2181,63 @@ shows its own header row beneath the main plan table).
 plan and camera/illumination acquisition, Tier 3 itself (the dialog/delegate layer - still
 not shared, though its two most-needed pieces for this app now have lean equivalents), the
 image-processing panel, Lori LED reference driver.
+
+## 2026-08-09: Visual-parity effort started - theme and real icon toolbar
+
+Maintainer asked why LSPRi acq's panel didn't look like sLSPR acq's, and asked for a real
+match - "rewrite the whole part in sLSPR acq and then port it or copy it, I dont care, but I
+want it to look the same and behave the same." Investigated the actual scope before writing
+anything (same discipline as every prior tier): the un-shared visual/behavioral layer totals
+roughly 4,000+ lines (`experiment_control_dialogs.py` 1,605, `flow_plan_model.py` 1,123,
+`experiment_control_editing.py` 739, plus ~650 more across smaller satellite files, plus the
+genuinely visual-layout slice of the 5,552-line window itself) - comparable in size to
+everything landed this session combined. Presented this honestly rather than silently
+narrowing scope or silently taking on an unverifiable multi-thousand-line diff; maintainer
+chose to split it into a dedicated, staged, multi-session effort, then chose (when the manual
+editor row turned out to partly depend on the not-yet-built dialog layer) to push through
+building it anyway with the dialog-dependent buttons present but inert for now.
+
+**This session's slice**: theme (`_theme_palette`/`_apply_style`, ported verbatim from sLSPR
+acq - a static hex-color dict and a ~260-line QSS stylesheet, not a theme *engine*, so far
+less risky than the name suggested) and the real icon toolbar - `add_step_button`/
+`apply_step_button` (edit-mode toggle)/`duplicate_step_button`/`remove_step_button`/
+`import_plan_button`/`export_plan_button`, plus the run-control row
+(`run_button`/`hold_button`/`pause_button`/`stop_button`/`previous_step_button`/
+`next_step_button`) - using the exact same icons, tint colors, tooltips, and Qt object names
+sLSPR acq's does. `previous_step_button`/`next_step_button` are real, not stubs -
+`_move_to_relative_experiment_control_step` was already ported in Tier 2, just never wired to
+a button in this app until now. Import/export buttons are present with matching icons but are
+NOT wired to real file I/O yet (clearly stated in their tooltips and in a status message if
+clicked) - that needs `ExperimentPlanImportTask`/`ExperimentPlanExportTask` (async QRunnable
+file I/O, file dialogs), out of scope for this slice.
+
+**New shared module**: `lspr_acq_shell.experiment_control_builders` -
+`create_flow_step_action_button` (pure) plus `create_direction_button`/`set_direction_button`/
+`set_step_valve_button_state_for_button` (duck-typed on a `window` with `_theme_palette()`/
+`_valve_state_label()`, same pattern as `PlanRunLoopMixin`'s host contract) - moved from sLSPR
+acq's `gui/experiment_control_builders.py` verbatim; sLSPR acq keeps a re-export shim.
+
+**A real diagnostic detour**: after landing the code, screenshots kept showing the *old*
+plain-text buttons even though the source file was confirmed correct
+(`python -c "import lspri_acq_app...; print(m.__file__)"` pointed at the right path). Traced
+it to a stale/ghost window from an earlier launch still being matched by the screenshot
+script's title-regex search - killing every LSPRi-acq-related python process first, then
+relaunching, produced the correct screenshot. Separately, the full umbrella suite hung twice
+(11+ minutes, then ~5 minutes) before finishing - isolated with `--deselect` bisection to
+`tests/unit/test_live_processing_worker.py`, a real subprocess-spawning multiprocessing test
+unrelated to anything touched this session; with it excluded, the suite ran cleanly in 26s
+(unit only) and 165s (full). Recorded here as a known, pre-existing environmental flake, not
+something to silently paper over or claim was fixed.
+
+**Verified**: LSPRi acq's own suite 134/134 (unchanged count - this was a visual/wiring
+change, no new tests added yet for the toolbar itself beyond what already exercises
+`_move_to_relative_experiment_control_step` indirectly). Full umbrella suite 957/957 with
+`test_live_processing_worker.py` excluded (963 baseline minus its 6 tests) - zero regressions
+from this change. `pyflakes` clean on every touched/new file. Screenshot-confirmed the icon
+toolbar now visually matches sLSPR acq's real toolbar (same icons, same colors, same order).
+
+**Not done**: the manual single-step editor row (Duration/CHs/Dir/Tube/Flow/CH1-4/Valve/
+Color/Comment, including the uniform/per-channel toggle and switch-solution combo), the real
+`flow_plan_model.ExperimentPlanTableModel` + delegates (still using the lean
+`PlanTableModel`), the Tier-3 dialog layer, real import/export file I/O. Next session's slice,
+per the staged plan.

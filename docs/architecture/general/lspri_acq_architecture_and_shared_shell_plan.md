@@ -1103,6 +1103,18 @@ picking this up cold.
       `apps/LSPRi/acq/tests/test_experiment_control_window.py` exercise the
       real window end to end, including the real async dispatch onto
       `device_io_pool()` (not a mock) - see the 2026-08-09 build-log entry.
+      **Visual-parity effort started 2026-08-09**: maintainer asked for the panel to
+      look and behave exactly like sLSPR acq's, not just functionally equivalent.
+      Real scope traced first: ~4,000+ un-shared lines (dialogs, table delegates,
+      editing controller) - comparable to everything landed this session. Staged
+      across sessions per the maintainer's choice. This session's slice: the real
+      theme (`_theme_palette`/`_apply_style`, ported verbatim - a static color dict
+      + stylesheet, not an engine) and the real icon toolbar (add/edit-toggle/
+      duplicate/remove/import/export, plus run/hold/pause/stop/previous/next),
+      using the newly-shared `lspr_acq_shell.experiment_control_builders`. Still to
+      come: the manual single-step editor row, the real table delegates, the
+      dialog layer, real import/export file I/O - see the 2026-08-09 build-log
+      entry.
 - [x] Basler driver (`pypylon`) built *(2026-08-08)* - **not yet manually verified
       against real hardware** (no Basler camera was attached in the environment this
       was written in; confirmed 0 devices via real `pylon.TlFactory.EnumerateDevices()`
