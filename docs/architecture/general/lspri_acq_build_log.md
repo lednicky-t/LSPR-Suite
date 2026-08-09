@@ -2404,3 +2404,46 @@ check for this particular change.
 
 **Not done**: the real `flow_plan_model.ExperimentPlanTableModel` + its 8 delegates (still
 the lean `PlanTableModel`), real import/export file I/O.
+
+## 2026-08-09: Real import/export file I/O
+
+Wired the last two placeholder buttons - `import_plan_button`/`export_plan_button` - to real
+file I/O, using `lspr_acq_shell.experiment_control_import`/`_export` directly. Both were
+already fully shared since Tier 0 with effectively zero window coupling, so this was
+building the window-side glue (file dialogs, payload construction, signal handling), not new
+shared infrastructure.
+
+**Scoped to native YAML export + universal import**: sLSPR acq's export path also supports
+two legacy compat CSV/TXT formats (a 25-column layout for external-tool interop, including
+one with a preserved typo in a header - "Descritption") - deliberately not built here, since
+native YAML is this app's own primary format too and the compat formats exist for interop
+this app doesn't need yet. `_build_native_experiment_plan_document` matches sLSPR acq's own
+document schema field-for-field, so a plan exported from either app opens correctly in the
+other. Import accepts native YAML, CSV/TSV, *and* HDF5 - unlike export, this needed no extra
+scoping decision: `ExperimentPlanImportTask` already dispatches by file suffix internally, so
+supporting HDF5 import cost nothing beyond what YAML/CSV already required.
+
+**Deliberately simplified on the import side**: imported colors and tube diameters are
+merged into this app's (now-persisted) state; imported valve-label/switch-solution overrides
+are not, since sLSPR acq's own import merge path is meant for pairing with its HDF5
+measurement-file import flow, which has no equivalent in this app yet (no recording/HDF5
+export here at all).
+
+**Verified**: 8 new tests (58 total, up from 50) - including a genuine round-trip test
+(export a plan with distinct values, construct a *second* window, import the exported file
+into it, assert the values match) using the real `QThreadPool.globalInstance()` dispatch,
+not a mock of the import/export tasks. Also covers: no-steps export is a no-op (no file
+written), a nonexistent import path reports status without raising, cancelling either
+dialog does nothing, and that importing a plan with new colors/tube diameters actually
+updates this window's palette and tube-diameter controls. LSPRi acq's own full suite:
+172/172. Full umbrella suite: 956/956 (the same `test_async_writer_reports_failure_via_on_error_callback`
+flake as earlier today, already confirmed unrelated and order-dependent). sLSPR acq's own
+suite: unchanged, same 14/22 baseline. `pyflakes` clean. Screenshot verification skipped
+again this round for the same reason as the previous entry (window-capture tooling issue,
+not an app problem) - the round-trip file-I/O tests are direct, strong evidence on their own.
+
+**This closes every item from the "do all one by one" list except the biggest one**: the
+real `flow_plan_model.ExperimentPlanTableModel` + its 8 delegates, replacing the lean
+`PlanTableModel` still in place. That one was flagged from the start as comparable in size
+to Tier 2's entire state machine and is the next, and last, piece of this visual-parity
+effort.
