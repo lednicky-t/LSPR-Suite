@@ -68,6 +68,7 @@ class AppTarget:
     enabled: bool = True
     github_repo: str = ""
     version_file: str = ""
+    status_label: str = "Under development"
 
     def resolve_root(self) -> Path | None:
         for candidate in self.root_candidates:
@@ -169,6 +170,7 @@ TARGETS = [
         note="Prefers the suite-local workspace when present; set LSPR_LEGACY_SINGLE_ROOT for an external legacy workspace.",
         github_repo="lednicky-t/SingleSpotLSPR-Acquisition",
         version_file="src/lspr_app/version.py",
+        status_label="Stable",
     ),
     AppTarget(
         key="slspr_eva",
@@ -194,18 +196,25 @@ TARGETS = [
         key="lspri_acq",
         title="LSPRimaging Acquisition",
         subtitle="Camera + light-source acquisition",
-        address="apps/LSPRi/acq/app.py",
+        address="apps/LSPRi/acq/src/main.py",
         root_candidates=_candidate_paths(
             SUITE_ROOT / "apps" / "LSPRi" / "acq",
         ),
-        script="app.py",
+        script="src/main.py",
+        python_candidates=_candidate_paths(
+            *_venv_python(SUITE_ROOT),
+        ),
         module=None,
         extra_paths=(
+            SUITE_ROOT / "packages" / "lspr_ui" / "src",
             SUITE_ROOT / "packages" / "lspr_core" / "src",
             SUITE_ROOT / "packages" / "lspr_io" / "src",
+            SUITE_ROOT / "packages" / "lspr_acq_shell" / "src",
             SUITE_ROOT / "apps" / "LSPRi" / "acq" / "src",
         ),
-        note="Coming soon.",
+        note="Early scaffold - device layer and imaging GUI panels are still under construction.",
+        github_repo="lednicky-t/LSPRimaging-Acquisition",
+        version_file="src/lspri_acq_app/version.py",
         enabled=False,
     ),
     AppTarget(

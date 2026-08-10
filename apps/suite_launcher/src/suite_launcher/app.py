@@ -535,7 +535,7 @@ class LaunchCard(QFrame):
         subtitle.setObjectName("CardSubtitle")
         subtitle.setWordWrap(True)
 
-        badge = QLabel("Available" if target.is_available() else "Coming soon")
+        badge = QLabel(target.status_label)
         badge.setObjectName("CardBadge")
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
