@@ -21,6 +21,7 @@ from lspr_imaging_app.processing.chromatic import (
     _recent_step_scale,
     auto_track_landmarks_over_wavelengths,
     default_landmark_anchors,
+    detect_regional_landmarks,
     detect_regional_spot_landmarks,
     track_spot_landmarks,
 )
@@ -254,6 +255,80 @@ class TestSpotLandmarkRegionSpread(unittest.TestCase):
         for feature_id, (expected_x, expected_y) in single_spot_positions.items():
             x, y = detected[feature_id]
             self.assertLess(float(np.hypot(x - expected_x, y - expected_y)), 3.0)
+
+
+class TestBoundsAwareGridLayout(unittest.TestCase):
+    def test_no_bounds_matches_prior_full_image_behavior(self) -> None:
+        # bounds=None (the default) must be byte-for-byte identical to the
+        # pre-existing full-image layout -- this is the backward-compat
+        # guarantee for every existing session/profile with no custom area.
+        with_default = default_landmark_anchors((_IMAGE_SIZE, _IMAGE_SIZE), 15)
+        with_explicit_none = default_landmark_anchors((_IMAGE_SIZE, _IMAGE_SIZE), 15, bounds=None)
+        self.assertEqual(with_default, with_explicit_none)
+
+    def test_anchors_and_regions_stay_within_custom_bounds(self) -> None:
+        bounds = (40, 60, 300, 200)
+        bx, by, bw, bh = bounds
+        anchors = default_landmark_anchors((900, 1300), 15, bounds=bounds)
+        regions = _landmark_regions((900, 1300), 15, bounds=bounds)
+        for feature_id, (x, y) in anchors.items():
+            self.assertTrue(
+                bx <= x <= bx + bw and by <= y <= by + bh,
+                f"anchor {feature_id} at ({x:.1f},{y:.1f}) fell outside bounds {bounds}",
+            )
+        # Regions are still clipped to actual image bounds (0..image size),
+        # but should stay close to the requested rectangle, not sprawl back
+        # out toward the full 1300x900 image the way the no-bounds case would.
+        all_x0 = min(region[0] for region in regions.values())
+        all_x1 = max(region[1] for region in regions.values())
+        self.assertGreater(all_x0, bx - 50)
+        self.assertLess(all_x1, bx + bw + 50)
+
+    def test_a_tiny_bounds_rectangle_keeps_points_local_not_whole_image(self) -> None:
+        # This is the actual motivating case: without bounds, 15 points would
+        # spread across nearly the whole 1300x900 frame. A small user-chosen
+        # rectangle must keep them local to it instead.
+        bounds = (500, 400, 120, 90)
+        anchors = default_landmark_anchors((900, 1300), 15, bounds=bounds)
+        xs = [x for x, _y in anchors.values()]
+        ys = [y for _x, y in anchors.values()]
+        self.assertLess(max(xs) - min(xs), 130.0)
+        self.assertLess(max(ys) - min(ys), 100.0)
+
+    def test_detect_regional_landmarks_respects_bounds(self) -> None:
+        image = np.zeros((900, 1300), dtype=np.float32)
+        bounds = (500, 400, 200, 150)
+        detected = detect_regional_landmarks(image, 5, bounds=bounds)
+        bx, by, bw, bh = bounds
+        for feature_id, (x, y) in detected.items():
+            self.assertTrue(
+                bx - 20 <= x <= bx + bw + 20 and by - 20 <= y <= by + bh + 20,
+                f"feature {feature_id} at ({x:.1f},{y:.1f}) fell far outside bounds {bounds}",
+            )
+
+    def test_detect_regional_spot_landmarks_respects_bounds(self) -> None:
+        # A real particle sits inside the bounds rectangle; another sits well
+        # outside it. Regardless of exactly where within bounds the single
+        # anchor's own (intentionally small) catchment region lands -- see
+        # test_a_tiny_bounds_rectangle_keeps_points_local_not_whole_image --
+        # the far-outside particle must never be the one selected, and the
+        # result must stay within (a small margin around) the bounds box.
+        bounds = (20, 20, 100, 100)
+        blob_x, blob_y = 60.0, 60.0  # inside bounds
+        outside_blob_x, outside_blob_y = 170.0, 170.0  # well outside bounds
+        image = np.full((_IMAGE_SIZE, _IMAGE_SIZE), 50000.0, dtype=np.float32)
+        yy, xx = np.indices((_IMAGE_SIZE, _IMAGE_SIZE), dtype=np.float32)
+        image[(xx - blob_x) ** 2 + (yy - blob_y) ** 2 <= 8.0**2] = 2000.0
+        image[(xx - outside_blob_x) ** 2 + (yy - outside_blob_y) ** 2 <= 8.0**2] = 2000.0
+        settings = AreaRoiDetectionSettings(mode="dark", sample_radius_px=8.0)
+        detected = detect_regional_spot_landmarks(
+            image, 1, spot_radius_px=8.0, spot_mode="dark", area_roi_settings=settings, bounds=bounds
+        )
+        x, y = next(iter(detected.values()))
+        self.assertGreater(float(np.hypot(x - outside_blob_x, y - outside_blob_y)), 30.0)
+        bx, by, bw, bh = bounds
+        margin = 30.0
+        self.assertTrue(bx - margin <= x <= bx + bw + margin and by - margin <= y <= by + bh + margin)
 
 
 class TestAutoTrackLandmarksOverWavelengths(unittest.TestCase):
