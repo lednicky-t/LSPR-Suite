@@ -1025,6 +1025,22 @@ class MainWindow(QMainWindow):
         dialog = SettingsResetDialog(self)
         dialog.exec()
 
+    def _running_launched_titles(self) -> list[str]:
+        """Titles of apps this hub has launched that are still alive.
+
+        In the portable build, every app launched from here runs on the Python
+        interpreter and DLLs bundled inside this exact "LSPR Suite Launcher"
+        folder. If one is still open when an update tries to swap that folder
+        out, Windows refuses to rename it out from under the open file handles -
+        see updater/updater_main.py's swap_in_place().
+        """
+        titles: list[str] = []
+        for target in TARGETS:
+            processes = self._processes_by_key.get(target.key, [])
+            if any(process.poll() is None for process in processes):
+                titles.append(target.title)
+        return titles
+
     def _check_for_updates(self) -> None:
         self.update_button.setEnabled(False)
         self.update_button.setText("Checking...")
@@ -1096,6 +1112,20 @@ class MainWindow(QMainWindow):
                     "This is a development checkout running from source, so automatic "
                     "update doesn't apply here - use 'git pull' to get the new code.\n\n"
                     f"Release notes:\n{release.notes or '(none provided)'}"
+                ),
+            )
+            return
+
+        running_titles = self._running_launched_titles()
+        if running_titles:
+            QMessageBox.warning(
+                self,
+                "Apps still running",
+                (
+                    "Please close the following before updating - they run using files "
+                    "inside the LSPR Suite Launcher folder that the update needs to "
+                    "replace, and Windows won't allow that while they're open:\n\n"
+                    + "\n".join(f"- {title}" for title in running_titles)
                 ),
             )
             return

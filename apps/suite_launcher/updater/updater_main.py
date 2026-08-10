@@ -49,6 +49,28 @@ def wait_for_exit(pid: int, timeout_s: float = 30.0, poll_interval_s: float = 0.
     return not process_is_running(pid)
 
 
+def _rename_with_retries(src: Path, dst: Path, attempts: int = 10, delay_s: float = 1.0) -> None:
+    """Rename *src* to *dst*, retrying on WinError 32/5 (sharing violation / access denied).
+
+    Windows refuses to rename a folder while any file inside it is still open by
+    any process. wait_for_exit() only confirms the Suite Launcher itself has
+    exited - not antivirus/indexer scans that can briefly reopen a file right
+    after a process closes it, or another app the user launched from the Suite
+    Launcher folder (they share its bundled Python runtime) that hadn't fully
+    unloaded yet. Retrying briefly absorbs that instead of failing the update.
+    """
+    last_exc: OSError | None = None
+    for _ in range(attempts):
+        try:
+            src.rename(dst)
+            return
+        except OSError as exc:
+            last_exc = exc
+            time.sleep(delay_s)
+    assert last_exc is not None
+    raise last_exc
+
+
 def extract_update(zip_path: Path, extract_dir: Path) -> Path:
     """Extract *zip_path* into *extract_dir* and return the path to the launcher folder inside it."""
     extract_dir.mkdir(parents=True, exist_ok=True)
@@ -72,13 +94,13 @@ def swap_in_place(new_folder: Path, target: Path) -> None:
 
     target_existed = target.exists()
     if target_existed:
-        target.rename(backup)
+        _rename_with_retries(target, backup)
     try:
         shutil.move(str(new_folder), str(target))
     except Exception:
         if target_existed:
             shutil.rmtree(target, ignore_errors=True)
-            backup.rename(target)
+            _rename_with_retries(backup, target)
         raise
     if target_existed:
         shutil.rmtree(backup, ignore_errors=True)
@@ -125,7 +147,20 @@ def main() -> int:
     parser.add_argument("--zip", type=Path, required=True)
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--relaunch", type=Path, required=True)
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
+    except SystemExit:
+        # argparse's usage/error text goes to sys.stderr, which is None in this
+        # --windowed build, so a missing-argument error would otherwise just
+        # exit silently with no visible feedback - as it does when someone runs
+        # this exe by hand instead of the Suite Launcher spawning it.
+        _show_error(
+            "This is an internal helper that LSPR Suite Launcher runs automatically "
+            "to apply updates - it isn't meant to be started by hand and has nothing "
+            "to do on its own.\n\nTo update, use the \"Check for Updates\" button in "
+            "LSPR Suite Launcher instead."
+        )
+        raise
 
     succeeded = run_update(args.wait_pid, args.zip, args.target, args.relaunch)
     return 0 if succeeded else 1
