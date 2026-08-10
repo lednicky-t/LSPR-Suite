@@ -42,6 +42,23 @@ class LauncherRegistryTests(unittest.TestCase):
         self.assertTrue(all(target.title for target in TARGETS))
         self.assertFalse(next(target for target in TARGETS if target.key == "lspri_acq").enabled)
 
+    def test_acq_targets_put_lspr_acq_shell_on_pythonpath(self) -> None:
+        # Both acquisition apps import lspr_acq_shell (the shared
+        # experiment-control code). Without an explicit extra_paths entry
+        # pointing at the *copied* files inside the portable bundle, they'd
+        # fall back to however pip's editable install resolves the package -
+        # which bakes in the absolute path of whichever machine ran
+        # build_portable.ps1, and breaks on every other machine. See
+        # targets.py's SUITE_ROOT-relative extra_paths for the pattern this
+        # protects: lspr_ui/lspr_core/lspr_io and each app's own src get the
+        # same treatment.
+        for key in ("slspr_acq", "lspri_acq"):
+            target = next(target for target in TARGETS if target.key == key)
+            self.assertTrue(
+                any(path.parts[-3:] == ("packages", "lspr_acq_shell", "src") for path in target.extra_paths),
+                f"{key} extra_paths is missing packages/lspr_acq_shell/src: {target.extra_paths}",
+            )
+
     def test_launch_profile_helpers(self) -> None:
         self.assertEqual(normalize_launch_profile(" control_editor "), LAUNCH_PROFILE_CONTROL_EDITOR)
         self.assertEqual(normalize_launch_profile("unknown"), "full")
