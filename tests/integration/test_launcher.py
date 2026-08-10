@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -23,7 +24,7 @@ from lspr_core import (
 )
 from suite_launcher import updater
 from suite_launcher.app import LaunchCard, MainWindow
-from suite_launcher.app import _settings_bool
+from suite_launcher.app import _LAUNCH_CREATIONFLAGS, _settings_bool
 from suite_launcher.targets import TARGETS, _candidate_paths
 from suite_launcher.targets import AppTarget
 from suite_launcher.version import APP_VERSION
@@ -175,6 +176,46 @@ class LauncherRegistryTests(unittest.TestCase):
         self.assertEqual(card.button.text(), "Kill")
         card.set_running(False)
         self.assertEqual(card.button.text(), "Launch")
+
+
+class MainWindowLaunchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.window = MainWindow()
+
+    def tearDown(self) -> None:
+        self.window.close()
+        self.window.deleteLater()
+
+    def test_launch_target_suppresses_the_console_window(self) -> None:
+        # Launched apps run on python.exe, a console-subsystem binary that
+        # otherwise pops up an empty console window on Windows - see
+        # _LAUNCH_CREATIONFLAGS. stdout/stderr piping is handle-based, not
+        # window-based, so this must not affect output capture.
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            script = root / "launch.py"
+            script.write_text("print('ok')\n", encoding="utf-8")
+            target = AppTarget(
+                key="demo",
+                title="Demo",
+                subtitle="Demo",
+                address="demo.py",
+                root_candidates=(root,),
+                script="launch.py",
+            )
+
+            mock_process = mock.Mock()
+            mock_process.stdout = mock.Mock()
+            mock_process.stdout.readline = mock.Mock(return_value="")
+            mock_process.poll.return_value = None
+
+            with mock.patch("suite_launcher.app.subprocess.Popen", return_value=mock_process) as popen_mock:
+                self.window._launch_target(target)
+
+        popen_mock.assert_called_once()
+        self.assertEqual(popen_mock.call_args.kwargs["creationflags"], _LAUNCH_CREATIONFLAGS)
+        self.assertEqual(popen_mock.call_args.kwargs["stdout"], subprocess.PIPE)
 
 
 class MainWindowUpdateCheckTests(unittest.TestCase):
