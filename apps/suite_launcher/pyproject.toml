@@ -11,6 +11,7 @@ dynamic = ["version"]
 dependencies = [
     "PyQt6",
     "lspr-ui>=0.1.0",
+    "certifi",
 ]
 
 [project.scripts]
