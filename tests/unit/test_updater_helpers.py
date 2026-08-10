@@ -4,6 +4,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from tests._paths import ensure_repo_paths
 
@@ -44,6 +45,48 @@ class ExtractUpdateTests(unittest.TestCase):
                 updater_main.extract_update(zip_path, extract_dir)
 
 
+class RenameWithRetriesTests(unittest.TestCase):
+    def test_retries_past_a_transient_lock_then_succeeds(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            src = root / "src"
+            src.mkdir()
+            dst = root / "dst"
+
+            attempts = {"count": 0}
+            original_rename = Path.rename
+
+            def _flaky_rename(self_path, target):
+                attempts["count"] += 1
+                if attempts["count"] < 3:
+                    raise OSError(32, "The process cannot access the file because it is being used by another process")
+                return original_rename(self_path, target)
+
+            with mock.patch.object(Path, "rename", _flaky_rename), mock.patch.object(updater_main.time, "sleep"):
+                updater_main._rename_with_retries(src, dst, attempts=5, delay_s=0.01)
+
+            self.assertTrue(dst.exists())
+            self.assertFalse(src.exists())
+            self.assertEqual(attempts["count"], 3)
+
+    def test_raises_after_exhausting_all_attempts(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            src = root / "src"
+            src.mkdir()
+            dst = root / "dst"
+
+            def _always_locked(self_path, target):
+                raise OSError(32, "The process cannot access the file because it is being used by another process")
+
+            with mock.patch.object(Path, "rename", _always_locked), mock.patch.object(
+                updater_main.time, "sleep"
+            ) as sleep_mock:
+                with self.assertRaises(OSError):
+                    updater_main._rename_with_retries(src, dst, attempts=4, delay_s=0.01)
+            self.assertEqual(sleep_mock.call_count, 4)
+
+
 class SwapInPlaceTests(unittest.TestCase):
     def test_swap_in_place_replaces_contents_and_keeps_target_path(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -74,6 +117,22 @@ class SwapInPlaceTests(unittest.TestCase):
             updater_main.swap_in_place(new_folder, target)
 
             self.assertTrue((target / "new_marker.txt").exists())
+
+
+class MainStandaloneLaunchTests(unittest.TestCase):
+    def test_running_without_required_args_shows_a_friendly_message(self) -> None:
+        # Someone double-clicking Updater.exe by hand, rather than the Suite
+        # Launcher spawning it with its required flags, used to just vanish
+        # silently (argparse's usage/error text goes to sys.stderr, which is
+        # None in this --windowed build). This should explain what happened
+        # instead.
+        with mock.patch("sys.argv", ["Updater.exe"]), mock.patch.object(
+            updater_main, "_show_error"
+        ) as show_error_mock:
+            with self.assertRaises(SystemExit):
+                updater_main.main()
+        show_error_mock.assert_called_once()
+        self.assertIn("isn't meant to be started by hand", show_error_mock.call_args.args[0])
 
 
 if __name__ == "__main__":

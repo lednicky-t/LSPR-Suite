@@ -213,6 +213,32 @@ class MainWindowUpdateCheckTests(unittest.TestCase):
         self.assertIn("v999.0.0", info_mock.call_args.args[2])
         self.assertIn("git pull", info_mock.call_args.args[2])
 
+    def test_check_for_updates_blocks_while_a_launched_app_is_running(self) -> None:
+        # Every app launched from the portable build runs on the Python
+        # interpreter bundled inside this exact "LSPR Suite Launcher" folder,
+        # so Windows can't rename that folder aside to apply an update while
+        # one is still open - see updater/updater_main.py's swap_in_place().
+        release = updater.ReleaseInfo(
+            tag="v999.0.0",
+            version=(999, 0, 0),
+            notes="",
+            download_url="https://example.invalid/bundle.zip",
+            asset_name="bundle.zip",
+        )
+        fake_process = mock.Mock()
+        fake_process.poll.return_value = None  # still running
+        self.window._processes_by_key["slspr_acq"] = [fake_process]
+
+        with mock.patch("suite_launcher.app.sys.frozen", True, create=True), mock.patch.object(
+            QMessageBox, "warning"
+        ) as warning_mock, mock.patch.object(QMessageBox, "question") as question_mock:
+            self.window._handle_update_check_finished(release, None)
+
+        warning_mock.assert_called_once()
+        self.assertIn("Apps still running", warning_mock.call_args.args[1])
+        self.assertIn("singleLSPR Acquisition", warning_mock.call_args.args[2])
+        question_mock.assert_not_called()
+
     def test_app_release_check_up_to_date_updates_card_label(self) -> None:
         card = self.window.cards["slspr_acq"]
         card._local_version = "0.4.0"
