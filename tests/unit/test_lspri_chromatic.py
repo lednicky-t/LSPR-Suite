@@ -23,6 +23,8 @@ from lspr_imaging_app.processing.chromatic import (
     identity_affine_matrix,
     invert_affine_matrix,
 )
+from lspr_imaging_app.domain.models import PreprocessingSettings
+from lspr_imaging_app.gui.analysis_tasks import _estimate_chromatic_models_task, _sampled_wavelengths
 
 
 class TestAffineFit(unittest.TestCase):
@@ -101,6 +103,42 @@ class TestSimilarityComposeDecompose(unittest.TestCase):
         self.assertAlmostEqual(angle, 0.0, places=8)
         self.assertAlmostEqual(shift_x, 0.0, places=8)
         self.assertAlmostEqual(shift_y, 0.0, places=8)
+
+
+class TestEstimateChromaticModelsExclusion(unittest.TestCase):
+    def test_sample_candidates_are_scoped_to_reference_cube_exclusions(self) -> None:
+        # Wavelength 520 is excluded only for spectral cube 0 (the reference
+        # cube); cube 1 still has a valid 520 nm record. The GUI would never
+        # have offered 520 nm on cube 0 for landmark-marking, so the sample
+        # candidates used to validate "did you mark every sample" must be
+        # scoped to cube 0's own non-excluded wavelengths -- not the union
+        # across every cube -- or this raises a spurious "missing reference
+        # point" error for a wavelength the user could never have marked.
+        wavelengths = [500.0, 510.0, 520.0, 530.0, 540.0]
+        record_specs = [
+            (cube, wavelength, f"cube{cube}_wl{int(wavelength)}.tif")
+            for cube in (0, 1)
+            for wavelength in wavelengths
+            if not (cube == 0 and wavelength == 520.0)
+        ]
+        reference_key = (0, 500.0)
+        preprocessing = PreprocessingSettings(
+            chromatic_registration_mode="landmark_radial",
+            chromatic_sample_image_count=3,
+            chromatic_feature_count=2,
+        )
+        cube0_candidates = [wl for wl in wavelengths if wl != 520.0]
+        sample_wavelengths = _sampled_wavelengths(cube0_candidates, 3)
+        landmarks_payload = [
+            (feature_id, 0, wavelength, 10.0 * feature_id, 20.0 * feature_id)
+            for wavelength in sorted(set(sample_wavelengths) | {reference_key[1]})
+            for feature_id in (1, 2)
+        ]
+        models = _estimate_chromatic_models_task(record_specs, preprocessing, reference_key, landmarks_payload)
+        modeled_keys = {(model.spectral_cube_index, model.wavelength_nm) for model in models}
+        self.assertEqual(modeled_keys, {(cube, wavelength) for cube, wavelength, _path in record_specs})
+        self.assertNotIn((0, 520.0), modeled_keys)
+        self.assertIn((1, 520.0), modeled_keys)
 
 
 if __name__ == "__main__":
