@@ -1342,3 +1342,127 @@ picking this up cold.
   second camera vendor is actually being added.
 - Wavelength list characteristics (how many steps, spacing, VIS vs NIR range) — affects
   VariSpec `settle_time_ms()` defaults and expected sweep duration.
+
+---
+
+## 14. Tier 3+ — consolidating the experiment-control panel into one real shared module
+
+**2026-08-09.** After the stylesheet-parsing bug (an operator-precedence typo in the
+shared `create_direction_button()` — `%` binds tighter than `+`, so the `:hover` segment's
+`%(button_hover)s` placeholders never got substituted; fixed) surfaced as a visible symptom
+of two independent implementations drifting apart, the maintainer asked to stop chasing
+visual parity piecemeal and instead scope consolidating the experiment-control panel into
+**one real shared implementation** both apps use directly — not two implementations trying
+to look alike. Explicit framing: *"I don't want to have two models... the backend can be
+rewritten as much as possible for porting and better modularity... simplification would be
+really great."* This section is the full-scope analysis requested before committing to that
+— **nothing below has been implemented yet.**
+
+### 14.1 What Tier 0–2 already share (recap, for context)
+
+- `pump_plan.py` (the `PumpPlanStep` domain model, `to_core_experiment_step`/
+  `to_core_experiment_plan`, `recompute_plan_timing`, etc.) — Tier 0.
+- `experiment_control_step_decision.plan_step_commands` (pure hardware-command decision
+  function) and `experiment_control_run_loop.PlanRunLoopMixin` (the run/hold/pause/stop
+  state machine, 30 methods) — Tier 0/2.
+- `experiment_control_timeline.py` (`PumpPlanTimelineWidget`) and
+  `experiment_control_widgets.py` (`ExperimentControlTableView`, `PlanColorDelegate`,
+  `TubeDiameterComboBox`) — Tier 1.
+- `experiment_control_builders.py` (icon-button builders, duck-typed on `window`) and
+  `device_io_pool.py` — small zero/low-coupling pieces moved alongside the above.
+
+Real coupling was traced (not assumed) for all of the above before moving. This section
+continues that discipline for what's left.
+
+### 14.2 What's genuinely left in sLSPR acq, un-shared, and its real size
+
+Traced by reading real code, not estimating from file names. Six files, ~9,100 lines total:
+
+| File | Lines | What it is |
+|---|---|---|
+| `gui/experiment_control_window.py` | 5,547 (283 methods) | The window itself — see 14.3 for a categorized breakdown |
+| `gui/experiment_control_dialogs.py` | 1,605 | The 4 real dialogs (valve labels, color palette, switch solutions, pump display) + supporting table/edit widgets |
+| `gui/flow_plan_model.py` | 1,123 | `ExperimentPlanTableModel` (the real 8-delegate table model) |
+| `gui/experiment_control_editing.py` | 739 | `ExperimentControlEditingController` — spreadsheet-style copy/paste editing, not previously accounted for in any earlier tier's scoping |
+| `gui/undo_support.py` | 75 | Small undo/redo helper (`push_snapshot`) |
+| `gui/ui_helpers.py` | 19 | Trivial (`make_compact_spinbox`) |
+
+This is **the actual size of "copy sLSPR acq's panel completely, visually and
+behaviorally."** LSPRi acq's current window (1,483 lines) implements a deliberately lean
+subset of this — a real production window has roughly 6x more behavior in it than what
+LSPRi acq built so far.
+
+### 14.3 `experiment_control_window.py`'s 283 methods, categorized
+
+Grouped by responsibility, with a first-pass portability read (not final — each group needs
+its own real coupling trace, the way Tier 2's state machine got 53 characterization tests
+before extraction):
+
+**Already effectively shared or thin wrappers over shared code** (dialog launchers, valve
+button state, step-apply dispatch via `device_io_pool`) — small, low-risk to formalize.
+
+**Genuinely portable, not yet shared** (~120 methods): switch-solution combo/UI, color
+combo styling and custom-color picking, table column-width/header-state persistence,
+status/error messaging, cell-edit-state tracking, column-index helpers, theme/style
+(`_theme_palette`/`_apply_style` — currently **duplicated** in LSPRi acq, not shared, which
+is exactly the kind of drift that produced the stylesheet bug), table population/read-back,
+drag-reorder, manual editor row composition, HDF5 assignment-table row export helpers (a
+real overlap point — LSPRi acq's own `assignment_table_state()`, built this session, covers
+similar ground in a leaner shape).
+
+**Substantial standalone subsystems, each a real feature LSPRi acq doesn't have at all
+today** — each of these is its own tier-sized project, not a quick add:
+- **Plan CSV/HDF5 import-export UI** (~35 methods) — progress population for large plans,
+  delimiter detection, legacy L/R-valve-label mapping, device-label mapping. LSPRi acq's
+  Tier 0 only got the background `ExperimentPlanImportTask`/`ExportTask` classes; all the
+  UI orchestration around them is still window-local.
+- **Pause-row template** (~17 methods) — an editable template row for defining pause
+  behavior. LSPRi acq has "a fixed pause-row template, not user-configurable" today.
+- **Spreadsheet-style cell navigation/editing** (~18 methods, `eventFilter` + wheel-scroll +
+  click-to-open combo + mouse-to-index mapping) — this is the actual "editing behaviour"
+  the maintainer asked about by name. Genuinely sophisticated custom Qt event-filter code;
+  real risk of subtle interaction bugs if ported carelessly.
+- **Copy/paste editing** (`ExperimentControlEditingController`, 739 lines, its own file) —
+  not even in the 283-method count above; a fully separate controller class.
+- **View-mode splitter-size memory** (~30 methods) — compact/detailed layout modes, each
+  remembering its own splitter sizes across sessions.
+- **Time-unit toggle** (seconds/minutes/hours, ~6 methods) — LSPRi acq's duration is
+  hardcoded to seconds today.
+- **Progressive/lazy plan-row loading** (~15 methods) — loads visible rows first, populates
+  the rest in the background, so opening a huge saved plan doesn't freeze the UI at
+  startup. Real engineering, not a small helper.
+
+**Real hardware/device-lifecycle sync** (~12 methods) — likely *mostly* already portable in
+practice, since both apps already get PUMP/SWITCH/SELECTOR device families for free from
+`lspr_acq_shell.device_lifecycle` (traced and confirmed when LSPRi acq's own window was
+built) — but the window-side sync methods themselves haven't been traced yet.
+
+### 14.4 Recommendation
+
+Given the real size above, "one shared module, exactly like sLSPR acq, usable anywhere"
+is the right end state, but it is realistically **several more tiers**, each sized and
+verified independently the way Tier 0–2 were — not one continuous push. A reasonable
+sequence, cheapest/lowest-risk first:
+
+1. **Tier 3a** — `ExperimentPlanTableModel` + its 8 delegates (`flow_plan_model.py`) and
+   `ExperimentControlDialogs` + supporting widgets (`experiment_control_dialogs.py`) into
+   `lspr_acq_shell`. Both already traced as having a small, clean coupling surface (§14
+   research above). Land for sLSPR acq first (shim + verify unchanged), *then* migrate
+   LSPRi acq onto them — which additionally means rewriting LSPRi acq's step-list ownership
+   from "model owns inserts/removes" to "window owns the list, pushes `set_steps()`" to
+   match, since `ExperimentPlanTableModel` has no insert/remove/move methods of its own.
+   **sLSPR acq side done 2026-08-10** — `experiment_plan_table_model.py`,
+   `experiment_control_dialogs.py`, `experiment_control_plan_view.py`,
+   `experiment_control_table.py`, `undo_support.py` all moved to `lspr_acq_shell`, sLSPR acq
+   shimmed, 97 real tests (found in the umbrella `tests/` tree, not the submodule - an
+   earlier "zero coverage" read was wrong) verified passing against the moved code. **LSPRi
+   acq side not started** — still on its own lean `PlanTableModel`/delegates/dialogs. See
+   the 2026-08-10 build-log entry.
+2. **Tier 3b** — theme (`_theme_palette`/`_apply_style`) actually shared instead of
+   duplicated, closing the exact gap that caused this conversation's bug.
+3. **Tier 3c+** — the standalone subsystems in §14.3, prioritized by what the maintainer
+   actually wants LSPRi acq to have (e.g., spreadsheet-style editing and pause-row template
+   are probably higher-value than view-mode splitter memory or the time-unit toggle).
+
+This section records the analysis; the next step is the maintainer picking
+where to start.

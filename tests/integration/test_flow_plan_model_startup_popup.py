@@ -61,8 +61,8 @@ class FlowPlanModelStartupPopupTests(unittest.TestCase):
             def showPopup(self) -> None:
                 calls.append("popup")
 
-        with patch("lspr_app.gui.flow_plan_model.QComboBox", _FakeCombo), patch(
-            "lspr_app.gui.flow_plan_model.QTimer.singleShot",
+        with patch("lspr_acq_shell.experiment_plan_table_model.QComboBox", _FakeCombo), patch(
+            "lspr_acq_shell.experiment_plan_table_model.QTimer.singleShot",
             side_effect=lambda _interval, callback: calls.append(callback),
         ):
             delegate._prepare_editor(_FakeCombo(), QModelIndex())
@@ -88,8 +88,8 @@ class FlowPlanModelStartupPopupTests(unittest.TestCase):
             def showPopup(self) -> None:
                 calls.append("popup")
 
-        with patch("lspr_app.gui.flow_plan_model.QComboBox", _FakeCombo), patch(
-            "lspr_app.gui.flow_plan_model.QTimer.singleShot",
+        with patch("lspr_acq_shell.experiment_plan_table_model.QComboBox", _FakeCombo), patch(
+            "lspr_acq_shell.experiment_plan_table_model.QTimer.singleShot",
             side_effect=lambda _interval, callback: calls.append(callback),
         ):
             delegate._prepare_editor(_FakeCombo(), QModelIndex())

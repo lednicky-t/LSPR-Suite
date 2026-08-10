@@ -49,7 +49,7 @@ def _ensure_app() -> QApplication:
 
 
 def _make_model_with_one_step(*, flow_ul_min: float = 10.0, direction: str = "CW") -> ExperimentPlanTableModel:
-    model = ExperimentPlanTableModel(["col"] * 24, None)
+    model = ExperimentPlanTableModel(["col"] * 24, None, app_name="LSPR Acquisition", app_version="0.4.0")
     channels = [PumpChannelStep(flow_ul_min=flow_ul_min, direction=direction) for _ in range(ACTIVE_PUMP_CHANNELS)]
     step = PumpPlanStep(step=1, duration_s=60.0, channels=channels)
     model.set_single_step(step)

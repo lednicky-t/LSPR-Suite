@@ -2824,3 +2824,129 @@ warning in `test_sweep_pipeline.py`, left over from an earlier entry today, whil
 connected to `ImagingMeasurementWriter`, and the plan table itself still isn't part of the
 session file. The next natural slice is wiring a real (simulated-device) sweep to the image
 view/ROI processing/recording gate - the last of the three options offered earlier today.
+
+---
+
+## 2026-08-09 (continued yet again): Found and fixed a real shared-code bug; full-scope analysis of "one shared experiment-control panel" requested and delivered
+
+Maintainer hit a real runtime symptom while using LSPRi acq's experiment-control panel:
+`Could not parse stylesheet of object QToolButton(..., name = "directionButton")`, twice.
+Traced to `packages/lspr_acq_shell/src/lspr_acq_shell/experiment_control_builders.py`'s
+`create_direction_button()`: Python's `%` (string substitution) binds tighter than `+`
+(concatenation), so `A % theme + B + C % theme` parses as `(A % theme) + B + (C % theme)` -
+the middle segment (the `:hover` stylesheet) never got its `%(button_hover)s`/
+`%(border_hover)s` placeholders substituted, leaving literal `%(...)s` text that Qt's CSS
+parser can't understand. Fixed by wrapping the whole template in one set of parens and
+applying `%` once. Verified via a headless `ExperimentControlWindow()` construction with no
+parse warnings. Since this file is shared, the bug silently affected sLSPR acq's direction
+buttons too, not just LSPRi acq's.
+
+Maintainer then asked to stop chasing visual parity piecemeal (this bug being a symptom of
+exactly that - two independent implementations drifting) and instead scope consolidating
+the experiment-control panel into **one real shared implementation**: *"I don't want to have
+two models... the backend can be rewritten as much as possible for porting and better
+modularity... simplification would be really great."* Explicitly asked for a full analysis
+before any more implementation.
+
+Started tracing the two pieces already in flight (`ExperimentPlanTableModel`/its 8
+delegates, `ExperimentControlDialogs`) and found them **more portable than the earlier
+"not worth sharing" judgment call assumed** - `ExperimentPlanTableModel.__init__` takes no
+window reference at all (zero coupling), `ExperimentControlDialogs` is a small class taking
+`parent`/`theme_palette`/`contrast_text_color`/`tint_icon` with clean parameter-in/return-out
+`edit_*` methods (only 4 lines touch `self._parent` across 1,605 lines), and the 8 delegates
+need only a ~7-hook duck-typed `window` contract, the same pattern already proven for
+`PlanRunLoopMixin`. But also found a real complication: `ExperimentPlanTableModel` has no
+`insert_step`/`remove_step`/`move_step`/`duplicate_step` methods at all - the *window* owns
+the step list and pushes the whole thing back via `set_steps()` (full model reset), the
+opposite of LSPRi acq's own model (which owns inserts/removes directly). Migrating LSPRi acq
+onto the real model means rewriting how its window manages its step list, not swapping one
+model class for another.
+
+Given that, did the full-scope inventory requested rather than continuing to implement:
+read `experiment_control_window.py`'s full method list (283 methods, 5,547 lines) plus
+sized `experiment_control_dialogs.py` (1,605), `flow_plan_model.py` (1,123),
+`experiment_control_editing.py` (739 - the copy/paste controller, not previously accounted
+for in any tier's scoping), `undo_support.py` (75), `ui_helpers.py` (19) - **~9,100 lines
+total still un-shared**, categorized by responsibility into what's already effectively
+shared, what's genuinely portable but not yet moved (~120 methods: switch/color combo UI,
+column persistence, theme/style - currently *duplicated* not shared, which is exactly what
+produced today's bug - table population, drag-reorder), and several **standalone
+subsystems each roughly tier-sized on their own**: plan CSV/HDF5 import-export UI (~35
+methods, beyond Tier 0's background-task classes), pause-row template (~17 methods),
+spreadsheet-style cell navigation/editing (~18 methods + a full separate 739-line copy/paste
+controller - this is literally the "editing behaviour" asked about by name), view-mode
+splitter-size memory (~30 methods), time-unit toggle, and progressive/lazy plan-row loading
+for large saved plans. Full categorized breakdown, with a proposed staged Tier 3a/3b/3c+
+sequence, written into §14 of the plan doc (`lspri_acq_architecture_and_shared_shell_plan.md`)
+rather than kept only in chat - durable reference for whichever tier gets picked up next,
+by this agent or a future one.
+
+**Not implemented**: this entry and §14 are the analysis the maintainer asked for. Nothing
+beyond the stylesheet bug fix was changed in this pass - next step is the maintainer
+choosing where in the staged sequence to start (§14.4 lays out the recommendation: Tier 3a
+first - the table model + dialogs, already the most-traced and lowest-risk of the pieces
+identified).
+
+---
+
+## 2026-08-10: Tier 3a landed (sLSPR acq side) - table model, delegates, dialogs, undo support now real shared code
+
+Maintainer picked Tier 3a. Traced two more real construction/wiring entry points before
+moving anything - `gui/experiment_control_table.py` (`configure_experiment_control_plan_table`,
+the actual `ExperimentPlanTableModel(...)` construction site - not in
+`experiment_control_window.py` itself, confirming the maintainer's own read that "features
+are spread across the code") and `gui/experiment_control_plan_view.py`
+(`configure_experiment_control_plan_view`, the delegate-installation + model-setter wiring).
+Both turned out to be **already portable as written** - `configure_experiment_control_plan_view`
+duck-types on `window` via the exact same contract the delegates already establish, no
+sLSPR-acq-specific state. Checked every remaining dependency before assuming portability:
+`PUMP_DISPLAY_MAX_LENGTH`, `DeviceLifecycleController`, `SELECTOR`, `flow_tabler_icon`/
+`tint_tabler_icon`, `make_compact_spinbox` were **all already available from `lspr_acq_shell`
+or `lspr_ui`** - sLSPR acq's own `ui_helpers.py`/`icon_helpers.py`/`device/reglo_icc.py` are
+themselves already thin shims. Only the plan-table's `ExperimentPlanTableModel` needed a real
+generalization: `to_core_experiment_plan()` requires `app_name`/`app_version`, which a shared
+package can't get from `lspr_app.version` - both `ExperimentPlanTableModel` and
+`ExperimentControlDialogs` (the latter only for its pause-state dialog, which builds a model
+too) now take both as required keyword-only constructor args, matching the "no default
+because a wrong one would misrepresent the data" rule used elsewhere (`Camera.capabilities()`).
+
+**Correction to the previous entry's "zero test coverage" claim**: that search only checked
+the sLSPR acq submodule's own `tests/` directory. The umbrella repo's `tests/unit`/
+`tests/integration` actually carry substantial real coverage for this exact code -
+97 passing tests across `test_experiment_control_copy_paste.py`,
+`test_experiment_control_pump_dispatch.py`, `test_experiment_control_selection_overlay.py`,
+`test_experiment_control_timeline_font.py`, `test_experiment_control_undo.py`,
+`test_pump_display_global_highlight.py`, `test_flow_plan_model_startup_popup.py`,
+`test_experiment_control_live_editing.py`, `test_experiment_control_plan_table_extended_wheel.py`,
+plus several more runtime/state-logging/navigation files - found by actually searching the
+right place before concluding a from-scratch characterization pass was needed. This became
+the real safety net for the move instead.
+
+**Moved to `lspr_acq_shell`** (new files): `experiment_plan_table_model.py`
+(`ExperimentPlanTableModel` + all 8 delegates + `safe_color_name`/`_contrast_text_color`/
+`seconds_to_display_value`/`display_value_to_seconds`/`clamped_flow_ul_min`/
+`_HighlightingCommentLineEdit`), `experiment_control_dialogs.py` (`ExperimentControlDialogs`
++ `PaletteTableWidget`/`PaletteNameDelegate`/`SwitchSolutionTableWidget`/`SwitchSolutionEdit`/
+`ValveLabelEdit`/`ValveLabelTableWidget`/`PauseStateTableView`), `experiment_control_plan_view.py`,
+`experiment_control_table.py`, `undo_support.py` (`SnapshotCommand`/`push_snapshot`, zero
+coupling to begin with). sLSPR acq's own five files are now thin re-export shims (matching
+the Tier 0/1/2 pattern exactly); `experiment_control_window.py`'s five `ExperimentControlDialogs(...)`
+call sites and its one `configure_experiment_control_plan_table(...)` call site updated to
+pass `app_name="LSPR Acquisition", app_version=APP_VERSION`.
+
+**Verified**: the 97 tests above, re-run against the moved code - 3 failed on the first pass
+(`unittest.mock.patch("lspr_app.gui.flow_plan_model.QComboBox", ...)` etc. - patch-by-string-path
+targets that pointed at names no longer defined in the shim module's own namespace), fixed by
+updating those patch targets to the real new location (`lspr_acq_shell.experiment_plan_table_model`),
+the same category of fix Tier 2's own characterization file needed when `monotonic()`'s
+patch target moved. Two direct `ExperimentPlanTableModel(...)` test call sites needed
+`app_name`/`app_version` added. All 97 pass afterward. Full umbrella suite: 957/957. LSPRi
+acq's own suite (untouched so far, but depends on `lspr_acq_shell.pump_plan`/
+`experiment_control_builders`/`device_lifecycle` which didn't change): 235/235. `pyflakes`
+clean (five underscore-prefixed re-exports needed adding to the shim's `__all__` - pyflakes
+doesn't know `unittest.mock.patch`-by-string-path or a sibling test file's import is a real
+use).
+
+**Not done yet**: LSPRi acq is still on its own lean `PlanTableModel`/3 delegates/4 lean
+dialogs - none of the code moved in this entry is used by LSPRi acq yet. That migration
+(§14.4's step-list-ownership rewrite) is the next, separately-scoped piece.
