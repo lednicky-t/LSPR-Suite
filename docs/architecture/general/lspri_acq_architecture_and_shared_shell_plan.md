@@ -1479,10 +1479,18 @@ sequence, cheapest/lowest-risk first:
    Both apps now share one real `ExperimentPlanTableModel` + 8 delegates + dialog-layer
    implementation. See the 2026-08-10 build-log entries (both halves) for the full detail.
 2. **Tier 3b** — theme (`_theme_palette`/`_apply_style`) actually shared instead of
-   duplicated, closing the exact gap that caused this conversation's bug.
+   duplicated, closing the exact gap that caused this conversation's bug. **Done
+   2026-08-10** — `lspr_acq_shell/experiment_control_theme.py` (new file):
+   `experiment_control_theme_palette(mode)` + `apply_experiment_control_style(widget,
+   palette)`. The two apps' real stylesheets weren't quite identical when compared in
+   full (sLSPR acq had several rules LSPRi acq lacked; LSPRi acq had one real rule -
+   `flowIconButton:checked` - sLSPR acq lacked) - merged into one template (the union)
+   rather than picking a side. Both windows' `_theme_palette`/`_apply_style` are now
+   two-line wrappers. See the 2026-08-10 build-log entry.
 3. **Tier 3c+** — the standalone subsystems in §14.3, prioritized by what the maintainer
    actually wants LSPRi acq to have (e.g., spreadsheet-style editing and pause-row template
-   are probably higher-value than view-mode splitter memory or the time-unit toggle).
+   are probably higher-value than view-mode splitter memory or the time-unit toggle). Not
+   started.
 
 This section records the analysis; the next step is the maintainer picking
 where to start.

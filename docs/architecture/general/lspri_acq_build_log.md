@@ -3022,3 +3022,47 @@ This closes Tier 3a in full: sLSPR acq and LSPRi acq now share one real
 plan doc's §14.4 for what's left of the broader "one shared panel" effort (Tier 3b theme
 sharing, Tier 3c+ standalone subsystems - import/export UI, pause-row-as-dialog, spreadsheet
 editing, view-mode memory, lazy row loading).
+
+---
+
+## 2026-08-10 (continued): Tier 3b - theme shared, not duplicated
+
+Maintainer said to go for Tier 3b next. Read both apps' real `_theme_palette`/`_apply_style`
+in full before moving anything (sLSPR acq's is ~310 lines, not the ~160 lines skimmed
+earlier when scoping §14 - the earlier size estimate undercounted it). Found the two
+weren't actually identical: sLSPR acq's dark/light palette dicts matched LSPRi acq's dark
+one exactly (no color drift), but sLSPR acq's stylesheet has real rules LSPRi acq's lacks
+(`QGroupBox`, `accentButton`/`dangerButton` object-name rules, `flowViewModeButton`,
+`flowColorAddButton`/`RemoveButton`, `flowSwitchModeButton`/`SwitchSettingsButton`/
+`ValveSettingsButton`/`CommentDisplayButton`, `flowHeaderLabel`, and finer-grained
+`QComboBox::drop-down`/`::item`/`QDoubleSpinBox` button-suppression rules inside the plan
+table) - while LSPRi acq's own copy has one real rule sLSPR acq's lacks
+(`QToolButton#flowIconButton:checked`, used by its checkable hold/pause/edit-mode toggle
+buttons). Merged rather than picked one side: the new shared template is the union - sLSPR
+acq's fuller rule set plus LSPRi acq's `:checked` addition, which is harmless to sLSPR acq
+(it never puts a `flowIconButton` into the checked state, so the rule simply never matches
+there) and gives LSPRi acq's window a batch of "free" polish (group-box/accent/danger-button/
+table-child-widget styling) it never had, for whatever it builds next that uses those object
+names.
+
+**New**: `lspr_acq_shell/experiment_control_theme.py` -
+`experiment_control_theme_palette(mode)` (both dark/light dicts, moved verbatim - sLSPR acq
+is the only current caller of light mode, but sharing the whole bidirectional palette costs
+nothing) and `apply_experiment_control_style(widget, palette)` (the merged stylesheet
+template). Both apps' `_theme_palette()`/`_apply_style()` are now two-line wrappers calling
+into it.
+
+**Verified**: new `tests/unit/test_experiment_control_theme.py` (9 tests - palette key
+completeness for both modes, dark != light, unknown-mode fallback, fresh-copy-per-call,
+stylesheet applies without raising, no leftover `%(...)s` placeholders, the merged
+`:checked` rule is actually present, a missing palette key raises `KeyError` rather than
+silently producing a broken stylesheet). Full sLSPR acq experiment-control suite: 113/113
+(104 + the 9 new ones). Full LSPRi acq suite: 226/226 (unchanged - theme sharing touched no
+step/table logic). Full umbrella suite: 966/966. `pyflakes` clean. Real headless
+construction check on both windows confirmed the `:checked` rule is present in the actual
+rendered stylesheet, not just the template string.
+
+Tier 3b done. Remaining per §14.4: Tier 3c+ (plan import/export UI, pause-row-as-dialog,
+spreadsheet-style cell navigation/editing, view-mode splitter memory, time-unit toggle,
+progressive/lazy plan-row loading) - each roughly its own tier-sized project, prioritized
+by what the maintainer actually wants LSPRi acq to have next.
