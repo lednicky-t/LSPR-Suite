@@ -2950,3 +2950,75 @@ use).
 **Not done yet**: LSPRi acq is still on its own lean `PlanTableModel`/3 delegates/4 lean
 dialogs - none of the code moved in this entry is used by LSPRi acq yet. That migration
 (§14.4's step-list-ownership rewrite) is the next, separately-scoped piece.
+
+---
+
+## 2026-08-10 (continued): LSPRi acq migrated onto the real shared table model/delegates - Tier 3a complete
+
+Maintainer said to keep going. Migrated `ExperimentControlWindow` from its own lean
+`gui/plan_table_model.py` (`PlanTableModel` + `ValveDelegate`/`SwitchSolutionDelegate`/
+`DirectionDelegate`) to the real shared `ExperimentPlanTableModel` + all 8 delegates from
+the previous entry - `gui/plan_table_model.py` and its dedicated `tests/test_plan_table_model.py`
+are **deleted**, not just superseded, per the maintainer's explicit "I don't want to have
+two models."
+
+**What the migration actually required**, traced by reading the full 1,484-line window and
+the real dependency chain, not assumed from the earlier scoping note:
+
+- **Duck-typed host contract additions**: `PLAN_COLUMNS` (a length-only placeholder list -
+  `build_experiment_control_headers()` overwrites every entry), 7 column-index helpers
+  (`_flow_rate_column`/`_direction_column`/`_tube_column`/`_valve_column`/`_switch_column`/
+  `_color_column`/`_description_column`, matching the shared model's own `4 +
+  ACTIVE_PUMP_CHANNELS*3 + ...` column arithmetic exactly), `_color_combo_popup_width`/
+  `_update_color_combo_style` (ported from sLSPR acq's window - the color delegate's popup
+  sizing/live-recolor logic, non-optional, called on every editor open), and a documented
+  no-op `_install_table_wheel_scroll_filter` (the wheel-scroll-cycling subsystem itself is
+  a separate, not-yet-shared piece - plan doc §14.3 - and this window has no `eventFilter`
+  override for it to plug into anyway, so a no-op is honest, not a shortcut).
+  `_populate_color_combo`/`_populate_switch_solution_combo`/`_switch_display_text` already
+  existed with matching signatures from the earlier visual-parity work - no changes needed.
+  `manual_tube_spins` is a plain alias for the existing `tube_diameter_spins` list (the
+  shared wiring code's own attribute name), not a rename.
+- **Step-list ownership rewrite**: `ExperimentPlanTableModel` has no
+  `insert_step`/`duplicate_step`/`remove_step`/`move_step` - `_add_experiment_control_step_from_editor`/
+  `_on_duplicate_step_clicked`/`_on_delete_step_clicked`/`_on_step_move_requested` were
+  rewritten to read `self._table_model.steps()`, mutate a plain Python list the same way
+  the old model methods did internally, and push it back via `set_steps()` (a full model
+  reset) - the same ownership model sLSPR acq's own window already uses.
+  `_read_experiment_control_steps()`/`_pause_row_step()` needed no changes at all - both
+  already called `.steps()`, which the shared model implements identically.
+- **Pause template**: switched from a second `PlanTableModel` instance to
+  `build_experiment_control_pause_model()` (the exact function sLSPR acq's own popup pause
+  dialog uses internally to build its one-row preview model) + `configure_experiment_control_plan_preview()`
+  for the delegates - kept as an embedded table rather than switching to sLSPR acq's popup
+  `QDialog` UX, a separate, still-standing simplification, now backed by the real model.
+- **A real bug caught by testing, not by inspection**: the shared model caches
+  valve-label/color-palette/switch-solution display state internally via explicit setters
+  (`set_valve_state_labels()` etc.), unlike the retired lean delegates, which read
+  `window._valve_state_label()` fresh on every paint. `_edit_valve_state_labels`/
+  `_edit_color_palette_entries`/`_edit_switch_solution_labels`/`apply_assignment_table_state`
+  all updated `self._valve_state_labels` etc. but never told either table model about it -
+  so an edited valve label would show correctly on the button/combo widgets but silently
+  keep displaying the *old* label in the actual plan table rows. Caught by rewriting
+  `PlanTableDelegateWiringTests`' `displayText()`-based assertion (which no longer applies -
+  the real `ExperimentPlanValveDelegate` has no `displayText()`; label formatting is the
+  model's `data()`, not the delegate's) into a `model.data(...)`-based one, which failed
+  until a new `_sync_table_models_display_state()` helper (pushes all four pieces of state
+  into both the main and pause-template models) was added and wired into all four edit
+  paths.
+- **App identity**: `ExperimentPlanTableModel`/`build_experiment_control_pause_model` both
+  now take `app_name="LSPRimaging Acquisition", app_version=APP_VERSION` (from
+  `lspri_acq_app.version`), the same requirement Tier 3a's first half added for sLSPR acq.
+
+**Verified**: full LSPRi acq suite 226/226 (235 minus the 9 retired `test_plan_table_model.py`
+tests), full umbrella suite 957/957, `pyflakes` clean (two now-unused imports removed:
+`PlanColorDelegate`, the unused `configure_experiment_control_plan_view` re-import). A real
+headless end-to-end smoke test through `MainWindow` (not just unit tests) - add/duplicate a
+step, edit a valve label and confirm the *table* (not just the button) shows it, save a
+session, load it into a *second* `MainWindow`, confirm the relabel survived the round trip.
+
+This closes Tier 3a in full: sLSPR acq and LSPRi acq now share one real
+`ExperimentPlanTableModel` + 8 delegates + dialog layer implementation, not two. See the
+plan doc's §14.4 for what's left of the broader "one shared panel" effort (Tier 3b theme
+sharing, Tier 3c+ standalone subsystems - import/export UI, pause-row-as-dialog, spreadsheet
+editing, view-mode memory, lazy row loading).

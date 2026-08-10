@@ -1186,6 +1186,17 @@ picking this up cold.
       come: the manual single-step editor row, the real table delegates, the
       dialog layer, real import/export file I/O - see the 2026-08-09 build-log
       entry.
+      **Tier 3 (2026-08-09/10)**: reframed from "port sLSPR acq's visuals into LSPRi
+      acq's own lean widgets" to "consolidate into one real shared implementation" per
+      the maintainer's explicit request, after a stylesheet-parsing bug (found and
+      fixed) exposed the two implementations already drifting apart. Full-scope
+      analysis of sLSPR acq's real experiment-control panel done first (§14 - ~9,100
+      un-shared lines, most of it several more tier-sized subsystems, not one). Tier
+      3a (the table model + 8 delegates + dialog layer) landed in full 2026-08-10:
+      moved to `lspr_acq_shell`, sLSPR acq shimmed, LSPRi acq migrated onto the real
+      code with its own lean `PlanTableModel`/delegates **deleted** (not superseded) -
+      both apps now run the identical model/delegate/dialog implementation. See §14
+      and the two 2026-08-10 build-log entries.
 - [x] Basler driver (`pypylon`) built *(2026-08-08)* - **not yet manually verified
       against real hardware** (no Basler camera was attached in the environment this
       was written in; confirmed 0 devices via real `pylon.TlFactory.EnumerateDevices()`
@@ -1451,13 +1462,22 @@ sequence, cheapest/lowest-risk first:
    LSPRi acq onto them — which additionally means rewriting LSPRi acq's step-list ownership
    from "model owns inserts/removes" to "window owns the list, pushes `set_steps()`" to
    match, since `ExperimentPlanTableModel` has no insert/remove/move methods of its own.
-   **sLSPR acq side done 2026-08-10** — `experiment_plan_table_model.py`,
+   **Done 2026-08-10 — both sides.** sLSPR acq side: `experiment_plan_table_model.py`,
    `experiment_control_dialogs.py`, `experiment_control_plan_view.py`,
    `experiment_control_table.py`, `undo_support.py` all moved to `lspr_acq_shell`, sLSPR acq
    shimmed, 97 real tests (found in the umbrella `tests/` tree, not the submodule - an
-   earlier "zero coverage" read was wrong) verified passing against the moved code. **LSPRi
-   acq side not started** — still on its own lean `PlanTableModel`/delegates/dialogs. See
-   the 2026-08-10 build-log entry.
+   earlier "zero coverage" read was wrong) verified passing against the moved code. LSPRi
+   acq side: migrated fully onto the shared model/delegates - its own lean
+   `gui/plan_table_model.py` (`PlanTableModel` + 3 lean delegates) and its dedicated test
+   file are **deleted**, not superseded. Required adding 7 column-index helpers +
+   `_color_combo_popup_width`/`_update_color_combo_style` (ported) + a documented no-op
+   `_install_table_wheel_scroll_filter`, rewriting the step insert/duplicate/remove/move
+   handlers to the "read `.steps()`, mutate a list, push `set_steps()`" ownership model, and
+   fixing a real bug the migration surfaced: the shared model caches valve/color/switch
+   display state via explicit setters, so edits weren't reaching the table until a new
+   `_sync_table_models_display_state()` helper was added and wired into all four edit paths.
+   Both apps now share one real `ExperimentPlanTableModel` + 8 delegates + dialog-layer
+   implementation. See the 2026-08-10 build-log entries (both halves) for the full detail.
 2. **Tier 3b** — theme (`_theme_palette`/`_apply_style`) actually shared instead of
    duplicated, closing the exact gap that caused this conversation's bug.
 3. **Tier 3c+** — the standalone subsystems in §14.3, prioritized by what the maintainer
