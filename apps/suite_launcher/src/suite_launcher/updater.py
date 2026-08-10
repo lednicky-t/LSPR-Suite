@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -13,6 +14,33 @@ ASSET_NAME_SUFFIX = ".zip"
 REQUEST_TIMEOUT_S = 8.0
 DOWNLOAD_TIMEOUT_S = 60.0
 DOWNLOAD_CHUNK_SIZE = 1 << 16
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Build a verification context that trusts both Windows' own certificate
+    store and the certifi CA bundle.
+
+    `ssl.create_default_context()` normally trusts whatever root certificates
+    Windows has locally. That's usually enough, but on a machine where the
+    Windows root store is missing a certificate GitHub's chain depends on -
+    common on locked-down lab/instrument PCs that can't reach Windows Update
+    to fetch new roots on demand, or that sit behind a filtering proxy - every
+    HTTPS request here fails with CERTIFICATE_VERIFY_FAILED. certifi ships a
+    frequently-updated CA bundle as a plain file, independent of the OS store,
+    so loading it as an extra trust source fixes that case without disabling
+    verification. If certifi isn't installed, fall back to the OS store alone.
+    """
+    context = ssl.create_default_context()
+    try:
+        import certifi
+
+        context.load_verify_locations(cafile=certifi.where())
+    except Exception:
+        pass
+    return context
+
+
+_SSL_CONTEXT = _build_ssl_context()
 
 
 @dataclass(frozen=True)
@@ -70,7 +98,7 @@ def fetch_latest_release(timeout: float = REQUEST_TIMEOUT_S) -> ReleaseInfo:
         LATEST_RELEASE_URL,
         headers={"Accept": "application/vnd.github+json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout, context=_SSL_CONTEXT) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return _parse_release_payload(payload)
 
@@ -113,7 +141,7 @@ def fetch_latest_app_release(repo: str, timeout: float = REQUEST_TIMEOUT_S) -> A
     """
     url = f"https://api.github.com/repos/{repo}/releases/latest"
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout, context=_SSL_CONTEXT) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return _parse_app_release_payload(repo, payload)
 
@@ -129,10 +157,18 @@ def download_release(
     on_progress: Callable[[int], None] | None = None,
     timeout: float = DOWNLOAD_TIMEOUT_S,
 ) -> Path:
-    """Stream the release's zip asset to *dest_path*, reporting 0-100 progress."""
+    """Stream the release's zip asset to *dest_path*, reporting 0-100 progress.
+
+    Raises OSError if the connection closes before the declared Content-Length
+    bytes have arrived. Without this check, a proxy or antivirus scanner that
+    silently truncates the response leaves a corrupt-but-present zip on disk;
+    that surfaces confusingly later as "Could not unpack the update" from the
+    separate Updater.exe process, with no indication it was actually a
+    download problem.
+    """
     request = urllib.request.Request(info.download_url, headers={"Accept": "application/octet-stream"})
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout, context=_SSL_CONTEXT) as response:
         total = response.length or int(response.headers.get("Content-Length", 0) or 0)
         written = 0
         with dest_path.open("wb") as handle:
@@ -144,4 +180,10 @@ def download_release(
                 written += len(chunk)
                 if on_progress is not None and total > 0:
                     on_progress(min(int(written * 100 / total), 100))
+    if total > 0 and written < total:
+        dest_path.unlink(missing_ok=True)
+        raise OSError(
+            f"Download was interrupted: got {written} of {total} bytes. "
+            "This usually means a network/proxy connection dropped mid-download - try again."
+        )
     return dest_path
