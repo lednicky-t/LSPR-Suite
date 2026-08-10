@@ -128,6 +128,11 @@ _LOG_LEVEL_RE = re.compile(r"^(?P<level>[A-Z]+):(?P<logger>[^:]+):")
 _LOG_LEVEL_BRACKET_RE = re.compile(r"^\[(?P<level>[A-Z]+)\]")
 _DIAGNOSTICS_PROFILES = ("off", "normal", "debug", "deep")
 _WM_CLOSE = 0x0010
+# Launched apps run on python.exe (a console-subsystem binary), which
+# otherwise pops up its own empty console window on Windows. stdout/stderr
+# piping below is unaffected - this only suppresses the window, not the
+# handles - so warning/error forwarding and the launch-progress bar still work.
+_LAUNCH_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 # Shared config directory used by the JSON-backed apps (acq, sLSPR eva) -
 # see apps/sLSPR/acq/.../storage/app_config.py and apps/sLSPR/eva/.../processing.py.
@@ -1407,6 +1412,7 @@ class MainWindow(QMainWindow):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                creationflags=_LAUNCH_CREATIONFLAGS,
             )
             self._processes_by_key.setdefault(target.key, []).append(process)
             self._process_launch_started_at[target.key] = perf_counter()
