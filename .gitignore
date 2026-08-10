@@ -39,3 +39,6 @@ apps/LSPRi/eva/.git_backup/
 
 # Debug and analysis bundles (committed per-session for AI debugging, not source)
 analysis/
+
+# Local scratch/spike experiment output (bench probes, benchmarks - not source)
+spikes/
