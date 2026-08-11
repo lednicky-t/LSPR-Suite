@@ -188,7 +188,7 @@ class TestSpotLandmarksWithAreaRoiSettings(unittest.TestCase):
     def test_track_spot_landmarks_picks_the_nearer_of_two_real_spots(self) -> None:
         # Two real particles exist in the target frame; the tracker must pick
         # the one nearer the predicted position, not just whichever
-        # detect_spots happens to return first.
+        # detect_rois happens to return first.
         reference = _blob_image(100.0, 80.0)
         target = np.full((200, 200), 50000.0, dtype=np.float32)
         yy, xx = np.indices((200, 200), dtype=np.float32)

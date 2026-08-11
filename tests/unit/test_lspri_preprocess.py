@@ -13,8 +13,9 @@ if str(APP_SRC) not in sys.path:
 
 import numpy as np
 
-from lspr_imaging_app.domain.models import PreprocessingSettings
+from lspr_imaging_app.domain.models import AreaRoiDetectionSettings, PreprocessingSettings
 from lspr_imaging_app.processing.preprocess import (
+    apply_preprocessing,
     apply_spatial_preprocessing,
     flatten_background,
     raw_bounding_box_for_processed_box,
@@ -131,6 +132,122 @@ class TestFlattenBackgroundRegionScoping(unittest.TestCase):
         # the fully-upsampled reference, but not by much relative to the
         # background's own dynamic range here (a few thousand counts).
         np.testing.assert_allclose(scoped, full[y0:y1, x0:x1], atol=5.0)
+
+
+class TestFlattenBackgroundExclusionDilation(unittest.TestCase):
+    """exclusion_dilation_px grows the ROI/mask exclusion zone before it's
+    used to weight the background estimate, so a mask/ROI boundary that
+    doesn't quite reach the true edge of what it's meant to exclude (a
+    stray halo pixel just outside it) doesn't still leak into the local
+    background average.
+    """
+
+    def _image_with_edge_fill(self, edge_value: float) -> np.ndarray:
+        height, width = 96, 96
+        yy, xx = np.indices((height, width), dtype=np.float32)
+        background = 500.0 + 3.0 * xx + 2.0 * yy
+        rng = np.random.default_rng(0)
+        noise = rng.normal(0.0, 5.0, size=(height, width)).astype(np.float32)
+        image = background + noise
+        # The "bad" strip is 12 rows tall, but the mask covering it (below)
+        # is only 11 rows -- a deliberate 1px boundary mismatch, like a
+        # hand-painted mask that doesn't quite reach the true edge.
+        image[:12, :] = edge_value
+        return np.clip(image, 0.0, 65535.0).astype(np.float32)
+
+    def test_boundary_halo_leaks_without_dilation_but_not_with_it(self) -> None:
+        mask = np.zeros((96, 96), dtype=bool)
+        mask[:11, :] = True  # 1px short of the 12-row bad strip
+        mask_settings = AreaRoiDetectionSettings(ignore_marked_pixels=True)
+        kwargs = dict(sigma_px=10.0, binning=1, mask_settings=mask_settings, external_mask=mask)
+
+        dark = self._image_with_edge_fill(0.0)
+        bright = self._image_with_edge_fill(60000.0)
+
+        undilated_dark = flatten_background(dark, exclusion_dilation_px=0, **kwargs)
+        undilated_bright = flatten_background(bright, exclusion_dilation_px=0, **kwargs)
+        # Without dilation, the unmasked halo row (row 11) still carries the
+        # differing edge value straight into the local background average,
+        # so the two runs must diverge somewhere below the strip.
+        self.assertGreater(
+            float(np.max(np.abs(undilated_dark[12:, :] - undilated_bright[12:, :]))), 50.0
+        )
+
+        dilated_dark = flatten_background(dark, exclusion_dilation_px=2, **kwargs)
+        dilated_bright = flatten_background(bright, exclusion_dilation_px=2, **kwargs)
+        # With the mask dilated by 2px (covering the halo row too), the two
+        # runs must agree outside the strip regardless of the hidden fill value.
+        np.testing.assert_allclose(dilated_dark[12:, :], dilated_bright[12:, :], atol=1e-3)
+
+
+class TestFlattenBackgroundHonorsProcessedSpaceMask(unittest.TestCase):
+    """Regression test for a bug where a mask resolved in *processed* space
+    (external_mask_processed=True -- the path every real caller uses, since
+    they all resolve masks via `processed_space=True`) was silently dropped
+    inside apply_preprocessing: never zeroed into the output and never
+    forwarded to flatten_background's exclusion weighting. In practice this
+    meant masked-out regions (e.g. a rotation-fill black edge someone
+    painted a mask over) still fully participated in the local background
+    average, quietly biasing background removal near the mask boundary.
+    """
+
+    def _image_with_edge_fill(self, edge_value: float) -> np.ndarray:
+        height, width = 96, 96
+        yy, xx = np.indices((height, width), dtype=np.float32)
+        background = 500.0 + 3.0 * xx + 2.0 * yy
+        rng = np.random.default_rng(0)
+        noise = rng.normal(0.0, 5.0, size=(height, width)).astype(np.float32)
+        image = background + noise
+        image[60:70, 60:70] += 2000.0  # a bright feature far from the masked edge
+        image[:12, :] = edge_value  # the "black edge" strip a mask covers
+        return np.clip(image, 0.0, 65535.0).astype(np.float32)
+
+    def test_masked_edge_content_does_not_leak_into_background(self) -> None:
+        mask = np.zeros((96, 96), dtype=bool)
+        mask[:12, :] = True
+        settings = PreprocessingSettings(
+            flatten_background_enabled=True,
+            flatten_background_exclude_mask=True,
+            flatten_background_binning=1,
+            flatten_background_sigma_px=10.0,
+        )
+        mask_settings = AreaRoiDetectionSettings(ignore_marked_pixels=True)
+
+        result_dark = apply_preprocessing(
+            self._image_with_edge_fill(0.0),
+            settings,
+            mask_settings=mask_settings,
+            external_mask=mask,
+            external_mask_processed=True,
+        )
+        result_bright = apply_preprocessing(
+            self._image_with_edge_fill(60000.0),
+            settings,
+            mask_settings=mask_settings,
+            external_mask=mask,
+            external_mask_processed=True,
+        )
+
+        # Whatever raw value was hiding under the mask (0 vs 60000) must have
+        # zero effect on the background estimate anywhere outside the mask --
+        # if it leaks in, these two runs diverge near the mask boundary.
+        np.testing.assert_allclose(result_dark[12:, :], result_bright[12:, :], atol=1e-3)
+
+    def test_masked_region_is_zeroed_before_flattening_regardless_of_mask_space(self) -> None:
+        # Same mask, applied once "pre-transform" (raw space, the pre-existing
+        # branch) and once "post-transform" (processed space, the branch that
+        # was silently a no-op) with identity spatial settings so the two
+        # spaces coincide -- both must zero the masked pixels identically.
+        mask = np.zeros((96, 96), dtype=bool)
+        mask[:12, :] = True
+        settings = PreprocessingSettings(flatten_background_enabled=False)
+        image = self._image_with_edge_fill(12345.0)
+
+        raw_space_result = apply_preprocessing(image, settings, external_mask=mask, external_mask_processed=False)
+        processed_space_result = apply_preprocessing(image, settings, external_mask=mask, external_mask_processed=True)
+
+        np.testing.assert_array_equal(raw_space_result, processed_space_result)
+        np.testing.assert_array_equal(processed_space_result[:12, :], np.zeros((12, 96), dtype=np.float32))
 
 
 if __name__ == "__main__":

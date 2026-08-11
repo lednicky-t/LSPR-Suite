@@ -530,10 +530,12 @@ class AnalysisState:
     mask: MaskSettings = field(default_factory=MaskSettings)
 ```
 
-**Backward compatibility aliases** (old names from before rename):
-- `DetectedSpot = AreaRoi`
-- `SpotGroup = AreaRoiGroup`
-- `SpotDetectionSettings = AreaRoiDetectionSettings`
+**Backward compatibility aliases** (old names from before rename): removed as of the 2026-08
+sample-ROI/reference-ROI terminology pass. `DetectedSpot`, `SpotGroup`, and `SpotDetectionSettings`
+no longer exist — use `AreaRoi`, `AreaRoiGroup`, `AreaRoiDetectionSettings` directly. Persisted
+JSON files from before the rename are still readable via the legacy-key fallbacks in
+`storage/workspace.py` (e.g. `spot_detection`, `detected_spots`, `spot_groups`, `spot_radius_px`,
+`ring_inner_radius_px`, etc.), just not via a Python alias.
 
 ---
 

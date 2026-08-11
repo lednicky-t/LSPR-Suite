@@ -23,9 +23,9 @@ from lspr_imaging_app.processing.analysis import (
 
 class TestAbsorbanceFromMeans(unittest.TestCase):
     def test_basic_log_ratio(self) -> None:
-        # absorbance = log10(background / roi); background brighter than roi
-        # (roi absorbs light) gives a positive absorbance.
-        result = absorbance_from_means(roi_mean=50.0, background_mean=500.0)
+        # absorbance = log10(reference / sample); reference brighter than sample
+        # (sample absorbs light) gives a positive absorbance.
+        result = absorbance_from_means(sample_mean=50.0, reference_mean=500.0)
         self.assertAlmostEqual(result, math.log10(500.0 / 50.0), places=9)
 
     def test_equal_means_gives_zero(self) -> None:
@@ -33,11 +33,11 @@ class TestAbsorbanceFromMeans(unittest.TestCase):
 
     def test_zero_or_negative_inputs_are_clamped_not_raised(self) -> None:
         # Both means are floored at 1e-9 rather than raising / returning inf or nan.
-        result = absorbance_from_means(roi_mean=0.0, background_mean=0.0)
+        result = absorbance_from_means(sample_mean=0.0, reference_mean=0.0)
         self.assertTrue(math.isfinite(result))
         self.assertAlmostEqual(result, 0.0, places=6)
 
-        result_negative = absorbance_from_means(roi_mean=-5.0, background_mean=100.0)
+        result_negative = absorbance_from_means(sample_mean=-5.0, reference_mean=100.0)
         self.assertTrue(math.isfinite(result_negative))
 
 
