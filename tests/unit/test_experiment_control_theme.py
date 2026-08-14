@@ -25,7 +25,7 @@ _REQUIRED_KEYS = {
     "bg", "fg", "muted", "field", "button", "button_hover", "button_pressed",
     "accent_button", "accent_hover", "title", "danger_button", "danger_hover",
     "border", "border_hover", "pressed", "scroll", "scroll_hover", "splitter",
-    "timeline_bg", "header", "selection",
+    "timeline_bg", "header", "selection", "mode_toggle_accent",
 }
 
 

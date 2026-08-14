@@ -35,27 +35,36 @@ def create_flow_step_action_button(icon: QIcon, tooltip: str) -> QToolButton:
     return button
 
 
+def direction_button_style(palette: dict[str, str]) -> str:
+    return (
+        "QToolButton#directionButton {"
+        " background: transparent;"
+        " border: 1px solid %(border)s;"
+        " border-radius: 10px;"
+        " padding: 0px;"
+        " margin: 0px;"
+        " font-size: 15px;"
+        " font-weight: 800;"
+        " color: %(fg)s;"
+        "}"
+        "QToolButton#directionButton:hover { background: %(button_hover)s; border-color: %(border_hover)s; }"
+        "QToolButton#directionButton:pressed { background: %(button_pressed)s; }"
+    ) % palette
+
+
+def apply_direction_button_theme(button: QToolButton, window) -> None:
+    """Re-apply the direction button's style for window's current theme -
+    call this on any persistent window's live theme switch. The style is
+    set directly on the button rather than inherited from a cascading
+    stylesheet, so a theme switch doesn't reach it on its own."""
+    button.setStyleSheet(direction_button_style(window._theme_palette()))
+
+
 def create_direction_button(window, direction: str) -> QToolButton:
     button = QToolButton()
     button.setObjectName("directionButton")
     button.setFixedSize(30, 28)
-    button.setStyleSheet(
-        (
-            "QToolButton#directionButton {"
-            " background: transparent;"
-            " border: 1px solid %(border)s;"
-            " border-radius: 10px;"
-            " padding: 0px;"
-            " margin: 0px;"
-            " font-size: 15px;"
-            " font-weight: 800;"
-            " color: %(fg)s;"
-            "}"
-            "QToolButton#directionButton:hover { background: %(button_hover)s; border-color: %(border_hover)s; }"
-            "QToolButton#directionButton:pressed { background: %(button_pressed)s; }"
-        )
-        % window._theme_palette()
-    )
+    apply_direction_button_theme(button, window)
     button.setToolTip("Pump direction")
     set_direction_button(window, button, direction)
     return button

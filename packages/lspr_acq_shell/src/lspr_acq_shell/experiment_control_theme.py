@@ -48,13 +48,14 @@ _DARK_PALETTE: dict[str, str] = {
     "timeline_bg": "#0f1216",
     "header": "#1b2026",
     "selection": "#252b33",
+    "mode_toggle_accent": "#e8d85f",
 }
 
 _LIGHT_PALETTE: dict[str, str] = {
-    "bg": "#f4f6f8",
+    "bg": "#ffffff",
     "fg": "#1d2733",
     "muted": "#5f7388",
-    "field": "#f4f6f8",
+    "field": "#ffffff",
     "button": "#eef3f7",
     "button_hover": "#e6edf3",
     "button_pressed": "#dde9f3",
@@ -69,9 +70,10 @@ _LIGHT_PALETTE: dict[str, str] = {
     "scroll": "#bcc9d5",
     "scroll_hover": "#9fb3c5",
     "splitter": "#dde5ec",
-    "timeline_bg": "#f4f6f8",
+    "timeline_bg": "#ffffff",
     "header": "#eef3f7",
     "selection": "#dbeafe",
+    "mode_toggle_accent": "#9c6b08",
 }
 
 
@@ -177,7 +179,7 @@ QToolButton#flowViewModeButton {
     border: none;
     padding: 0px;
     margin: 0px;
-    color: #e8d85f;
+    color: %(mode_toggle_accent)s;
     font-weight: 600;
 }
 QToolButton#flowViewModeButton:hover {
@@ -223,7 +225,7 @@ QToolButton#flowCommentDisplayButton {
     padding: 0px;
     min-width: 18px;
     min-height: 18px;
-    color: #f0f3f7;
+    color: %(muted)s;
 }
 QToolButton#flowValveSettingsButton {
     background: transparent;
@@ -231,7 +233,7 @@ QToolButton#flowValveSettingsButton {
     padding: 0px;
     min-width: 18px;
     min-height: 18px;
-    color: #f0f3f7;
+    color: %(muted)s;
 }
 QToolButton#flowSwitchModeButton:hover,
 QToolButton#flowSwitchSettingsButton:hover,
@@ -316,6 +318,7 @@ QTableView#flowControlTable::item:selected:!active {
 }
 QTableView#flowControlTable QHeaderView::section {
     background: %(header)s;
+    color: %(fg)s;
     border: none;
     border-right: 1px solid %(border)s;
     border-bottom: 1px solid %(border)s;
@@ -326,6 +329,7 @@ QTableView#flowControlTable QHeaderView::section {
 QScrollBar:vertical {
     background: transparent;
     width: 8px;
+    margin: 2px 0 2px 0;
 }
 QScrollBar::handle:vertical {
     background: %(scroll)s;
@@ -334,6 +338,35 @@ QScrollBar::handle:vertical {
 }
 QScrollBar::handle:vertical:hover {
     background: %(scroll_hover)s;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+    border: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 8px;
+    margin: 0 2px 0 2px;
+}
+QScrollBar::handle:horizontal {
+    background: %(scroll)s;
+    border-radius: 4px;
+    min-width: 30px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: %(scroll_hover)s;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+    border: none;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: transparent;
 }
 QSplitter::handle {
     background: %(splitter)s;

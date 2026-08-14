@@ -339,17 +339,25 @@ def bulb_icon(bulb_color: QColor) -> QIcon:
     return QIcon(pixmap)
 
 
-def dark_icon(active: bool) -> QIcon:
+def dark_icon(active: bool, theme_mode: str = "dark") -> QIcon:
+    if theme_mode == "light":
+        color = "#1d2733" if active else "#6b7684"
+    else:
+        color = "#ffffff" if active else "#8a93a0"
     return tint_tabler_icon(
         load_tabler_icon("moon-filled" if active else "moon"),
-        QColor("#ffffff" if active else "#8a93a0"),
+        QColor(color),
     )
 
 
-def reference_icon(active: bool) -> QIcon:
+def reference_icon(active: bool, theme_mode: str = "dark") -> QIcon:
+    if theme_mode == "light":
+        color = "#9c6b08" if active else "#6b7684"
+    else:
+        color = "#f4c430" if active else "#8a93a0"
     return tint_tabler_icon(
         load_tabler_icon("sun-filled"),
-        QColor("#f4c430" if active else "#8a93a0"),
+        QColor(color),
     )
 
 
@@ -398,7 +406,7 @@ def trash_icon(theme_mode: str) -> QIcon:
 def snowflake_icon(theme_mode: str, active: bool) -> QIcon:
     return tint_tabler_icon(
         load_tabler_icon("snowflake"),
-        QColor("#2f80c1" if active else ("#eef3fa" if theme_mode == "dark" else "#8a93a0")),
+        QColor("#2f80c1" if active else ("#8a93a0" if theme_mode == "dark" else "#6b7684")),
     )
 
 
