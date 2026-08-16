@@ -32,10 +32,32 @@ from __future__ import annotations
 # /metadata/solutions registry still described (but not implemented) in
 # measurement_file_format.md. Readers must tolerate both tables' absence in
 # older files; neither existing table/column is touched.
+#
+# 6.4 (2026-08-09): additive, compatible change - new groups for LSPRimaging
+# Acquisition's session-recording (see docs/architecture/general/
+# lspri_acq_build_log.md's 2026-08-09 entry for the full design discussion).
+# metadata/illumination_settings: one row per swept wavelength (wavelength_nm,
+# settle_time_ms, current, spectrum_source), joined to
+# metadata/illumination_spectra/{wavelength_nm} for the actual spectrum array.
+# metadata/camera_settings: one row per swept wavelength (exposure_us, gain,
+# binning, resolution, crop, saving_mode), joined to illumination_settings by
+# wavelength_nm - same join convention 6.3's switch_solution_details already
+# uses against switch_solution_map. metadata/image_cube_manifest: cube_index /
+# timestamp_utc_ms / file_path rows pointing at the separate TIFF/OME-Zarr
+# files lspri_acq_app's image_writer.py writes - pixel data itself stays out
+# of HDF5. metadata.attrs["has_recorded_data"]: distinguishes a pure setup/
+# session snapshot (no raw rows yet, still editable) from a file that has
+# actually recorded data. Also new: metadata/roi_definitions (AreaRoi/
+# AreaRoiGroup snapshot) and processed/absorbance_spectra/{roi_id},
+# processed/sensorgram/{roi_id} (per-ROI extinction spectra and sensorgram
+# points), matching the shapes already sketched in the plan doc's §9 before
+# this bump. None of this is specific to a single-spectrometer measurement;
+# readers must tolerate all of it being absent, which every non-imaging file
+# (including every sLSPR acq file) will continue to be.
 LSPR_MEASUREMENT_SCHEMA_NAME = "lspr_measurement"
-LSPR_MEASUREMENT_SCHEMA_VERSION = "6.3"
+LSPR_MEASUREMENT_SCHEMA_VERSION = "6.4"
 LSPR_MEASUREMENT_SCHEMA_MAJOR = 6
-LSPR_MEASUREMENT_SCHEMA_MINOR = 3
+LSPR_MEASUREMENT_SCHEMA_MINOR = 4
 LSPR_MEASUREMENT_FORMAT_NAME = "experiment_run"
 LSPR_MEASUREMENT_FORMAT_VERSION = 6
 
@@ -67,6 +89,51 @@ LSPR_MEASUREMENT_SWITCH_SOLUTION_MAP_DATASET_NAME = "switch_solution_map"
 LSPR_MEASUREMENT_SWITCH_SOLUTION_DETAILS_DATASET_NAME = "switch_solution_details"
 LSPR_MEASUREMENT_VALVE_STATE_MAP_DATASET_NAME = "valve_state_map"
 LSPR_MEASUREMENT_COLOR_PALETTE_ENTRIES_DATASET_NAME = "color_palette_entries"
+LSPR_MEASUREMENT_ILLUMINATION_SETTINGS_DATASET_NAME = "illumination_settings"
+LSPR_MEASUREMENT_ILLUMINATION_SPECTRA_GROUP_NAME = "illumination_spectra"
+LSPR_MEASUREMENT_CAMERA_SETTINGS_DATASET_NAME = "camera_settings"
+LSPR_MEASUREMENT_IMAGE_CUBE_MANIFEST_DATASET_NAME = "image_cube_manifest"
+LSPR_MEASUREMENT_HAS_RECORDED_DATA_ATTR = "has_recorded_data"
+LSPR_MEASUREMENT_ILLUMINATION_SETTINGS_COLUMNS = [
+    "wavelength_nm",
+    "settle_time_ms",
+    "current",
+    "spectrum_source",
+]
+LSPR_MEASUREMENT_CAMERA_SETTINGS_COLUMNS = [
+    "wavelength_nm",
+    "exposure_us",
+    "gain",
+    "binning",
+    "resolution_width_px",
+    "resolution_height_px",
+    "crop_x_px",
+    "crop_y_px",
+    "crop_width_px",
+    "crop_height_px",
+    "saving_mode",
+]
+LSPR_MEASUREMENT_IMAGE_CUBE_MANIFEST_COLUMNS = [
+    "cube_index",
+    "timestamp_utc_ms",
+    "file_path",
+]
+LSPR_MEASUREMENT_ROI_DEFINITIONS_DATASET_NAME = "roi_definitions"
+LSPR_MEASUREMENT_ROI_DEFINITIONS_COLUMNS = [
+    "area_roi_id",
+    "group_id",
+    "center_x",
+    "center_y",
+    "sample_radius_px",
+    "sample_diameter_px",
+    "reference_inner_diameter_px",
+    "reference_outer_diameter_px",
+    "sample_color_hex",
+    "reference_color_hex",
+]
+LSPR_PROCESSED_ABSORBANCE_SPECTRA_GROUP_NAME = "absorbance_spectra"
+LSPR_PROCESSED_SENSORGRAM_GROUP_NAME = "sensorgram"
+LSPR_PROCESSED_SENSORGRAM_COLUMNS = ["timestamp_utc_ms", "metric_value"]
 LSPR_PROCESSED_METRICS_GROUP_NAME = "metrics"
 LSPR_PROCESSED_METRICS_CONFIG_GROUP_NAME = "config"
 LSPR_PROCESSED_METRICS_SCHEMA_NAME = "lspr_processed_metrics"

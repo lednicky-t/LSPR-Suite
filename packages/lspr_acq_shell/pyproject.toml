@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lspr-acq-shell"
+description = "Shared live-acquisition shell (fluidics device framework, experiment control, sensorgram, session/HDF5-writer plumbing) for singleLSPR and LSPRimaging acquisition apps."
+readme = "README.md"
+requires-python = ">=3.12"
+dynamic = ["version"]
+dependencies = [
+    "h5py",
+    "PyQt6",
+    "pyqtgraph",
+    "pyserial",
+    "PyYAML",
+    "lspr-ui>=0.1.0",
+    "lspr-core>=0.1.0",
+    "lspr-io>=0.1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "lspr_acq_shell.version.__version__"}

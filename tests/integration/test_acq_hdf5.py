@@ -21,7 +21,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_app.domain.models import ProcessingSettings, Spectrum
-from lspr_app.gui.experiment_control_import import build_experiment_plan_steps_from_hdf5_rows
+from lspr_acq_shell.experiment_control_import import build_experiment_plan_steps_from_hdf5_rows
 from lspr_app.gui.main_window_import_dialog import probe_measurement_hdf5
 from lspr_app.storage.app_config import load_processing_settings_from_hdf5
 from lspr_app.storage.hdf5_export import (
@@ -366,7 +366,7 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
                     for row in inventory_table[...]
                 ]
 
-        self.assertEqual(root_schema_version, "6.3")
+        self.assertEqual(root_schema_version, "6.4")
         self.assertEqual(details_columns, ["switch_port", "concentration", "concentration_unit", "notes"])
         self.assertEqual(details_rows, [["A", "10 mM", "mM", "prepared fresh"], ["B", "", "", ""]])
         self.assertEqual(inventory_group_attrs["schema_name"], "lspr_device_inventory")

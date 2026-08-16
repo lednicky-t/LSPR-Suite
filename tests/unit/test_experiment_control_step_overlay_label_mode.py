@@ -21,7 +21,7 @@ APP_SRC = REPO_ROOT / "apps" / "sLSPR" / "acq" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_app.gui.experiment_control_timeline import PumpPlanTimelineWidget
+from lspr_acq_shell.experiment_control_timeline import PumpPlanTimelineWidget
 from lspr_app.gui.experiment_control_window import ExperimentControlWindow
 
 

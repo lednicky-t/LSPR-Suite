@@ -71,7 +71,7 @@ class _FakeWindow:
 
 def _make_model_and_delegate(*, pump_display_enabled: bool, pump_display_highlight_enabled: bool):
     headers = ["x"] * (4 + ACTIVE_PUMP_CHANNELS * 3 + 4)
-    model = ExperimentPlanTableModel(headers)
+    model = ExperimentPlanTableModel(headers, app_name="LSPR Acquisition", app_version="0.4.0")
     model.set_steps([PumpPlanStep(step=1, description=_LONG_COMMENT)])
     table = QTableView()
     table.setModel(model)
@@ -142,7 +142,7 @@ class HighlightingCommentLineEditTests(unittest.TestCase):
 
         pixmap = QPixmap(editor.size())
         pixmap.fill()
-        with patch("lspr_app.gui.flow_plan_model._draw_split_comment_text") as draw_split:
+        with patch("lspr_acq_shell.experiment_plan_table_model._draw_split_comment_text") as draw_split:
             editor.render(pixmap)
 
         draw_split.assert_called_once()

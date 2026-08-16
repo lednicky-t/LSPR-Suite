@@ -15,14 +15,22 @@ LSPR Suite
 │   ├── sLSPR/acq   singleLSPR Acquisition   — live spectrometer control, experiment execution
 │   ├── sLSPR/eva   singleLSPR Evaluation    — offline single-spot spectral analysis
 │   ├── LSPRi/eva   LSPRimaging Evaluation   — offline TIFF image-stack analysis
+│   ├── LSPRi/acq   LSPRimaging Acquisition  — not yet implemented, in progress (see below)
 │   └── suite_launcher                       — startup selector for all four apps
 └── packages/
-    ├── lspr_core   domain models, schema identity, experiment plan primitives
-    ├── lspr_io     HDF5/session file helpers, version stamping, migration readers
-    └── lspr_ui     Qt theme tokens, icon helpers, application bootstrap
+    ├── lspr_core       domain models, schema identity, experiment plan primitives
+    ├── lspr_io         HDF5/session file helpers, version stamping, migration readers
+    ├── lspr_ui         Qt theme tokens, icon helpers, application bootstrap
+    └── lspr_acq_shell  shared live-acquisition shell (fluidics, experiment control,
+                         sensorgram, session/HDF5-writer plumbing) - scaffold only as
+                         of 2026-08-06, being populated by extraction from sLSPR acq
 ```
 
-`LSPRimaging Acquisition` is reserved as a separate repository and is not yet implemented.
+`LSPRimaging Acquisition` is under active design/build as of 2026-08-06. See
+[`docs/architecture/general/lspri_acq_architecture_and_shared_shell_plan.md`](general/lspri_acq_architecture_and_shared_shell_plan.md)
+for the architecture and build plan, and
+[`docs/architecture/general/lspri_acq_build_log.md`](general/lspri_acq_build_log.md)
+for a dated log of what has actually been done so far.
 
 ---
 

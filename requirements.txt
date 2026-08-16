@@ -1,9 +1,16 @@
 -e packages/lspr_ui
 -e packages/lspr_core
 -e packages/lspr_io
+-e packages/lspr_acq_shell
 -e apps/suite_launcher
 -e apps/sLSPR/acq
 -e apps/sLSPR/eva
+-e apps/LSPRi/acq
 -e apps/LSPRi/eva
 # Optional for AMF M-Switch hardware:
 # python -m pip install AMFTools
+
+# Optional for IDS uEye cameras (LSPRimaging Phase 0 spike, spikes/lspri_acq_phase0/benchmark_ui.py):
+# python -m pip install pyueye
+# Also requires IDS's own "IDS Software Suite" driver from ids-imaging.com -
+# not pip-installable; pyueye fails to import until that driver is installed.

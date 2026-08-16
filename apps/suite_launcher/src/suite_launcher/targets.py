@@ -165,6 +165,7 @@ TARGETS = [
             SUITE_ROOT / "packages" / "lspr_ui" / "src",
             SUITE_ROOT / "packages" / "lspr_core" / "src",
             SUITE_ROOT / "packages" / "lspr_io" / "src",
+            SUITE_ROOT / "packages" / "lspr_acq_shell" / "src",
             SUITE_ROOT / "apps" / "sLSPR" / "acq" / "src",
         ),
         note="Prefers the suite-local workspace when present; set LSPR_LEGACY_SINGLE_ROOT for an external legacy workspace.",

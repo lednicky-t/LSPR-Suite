@@ -28,7 +28,7 @@ from lspr_app.device.simulated import SimulatedSpectrometer
 from lspr_app.domain.session import MeasurementSession
 from lspr_app.gui.main_window import MainWindow
 from lspr_app.gui.main_window_plotting import refresh_spectrum_plot_for
-from lspr_app.storage import user_profile as up
+from lspr_acq_shell import user_profile as up
 
 
 _APP = QApplication.instance() or QApplication([])
