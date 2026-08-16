@@ -114,6 +114,151 @@ class CompactWedgeSlider(QWidget):
         super().mouseMoveEvent(event)
 
 
+class DualHandleRangeSlider(QWidget):
+    """A horizontal slider with two draggable handles marking a [low, high]
+    sub-range of an integer [minimum, maximum] span - e.g. "which spectral
+    cubes/wavelengths to include" rather than a single value. Qt has no
+    built-in range slider, so this fills that gap the same way
+    CompactWedgeSlider above fills in for a shape QSlider can't draw.
+
+    Callers typically pair this with two spin boxes (one per handle) kept in
+    sync via valuesChanged, plus a "select all" button that calls
+    setValues(minimum, maximum).
+    """
+
+    valuesChanged = pyqtSignal(int, int)
+
+    _HANDLE_RADIUS = 7.0
+    _GROOVE_HEIGHT = 4.0
+
+    def __init__(self, orientation: Qt.Orientation = Qt.Orientation.Horizontal, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._orientation = orientation
+        self._minimum = 0
+        self._maximum = 100
+        self._low = 0
+        self._high = 100
+        self._dragging: str | None = None  # "low" | "high" | None
+        self.setMinimumSize(60, 20)
+        self.setFixedHeight(20)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def setRange(self, minimum: int, maximum: int) -> None:
+        self._minimum = int(minimum)
+        self._maximum = max(int(maximum), self._minimum)
+        self._low = int(np.clip(self._low, self._minimum, self._maximum))
+        self._high = int(np.clip(self._high, self._minimum, self._maximum))
+        if self._low > self._high:
+            self._low = self._high
+        self.update()
+
+    def minimum(self) -> int:
+        return int(self._minimum)
+
+    def maximum(self) -> int:
+        return int(self._maximum)
+
+    def setValues(self, low: int, high: int) -> None:
+        clamped_low = int(np.clip(int(low), self._minimum, self._maximum))
+        clamped_high = int(np.clip(int(high), self._minimum, self._maximum))
+        if clamped_low > clamped_high:
+            clamped_low, clamped_high = clamped_high, clamped_low
+        if clamped_low == self._low and clamped_high == self._high:
+            return
+        self._low = clamped_low
+        self._high = clamped_high
+        self.valuesChanged.emit(self._low, self._high)
+        self.update()
+
+    def values(self) -> tuple[int, int]:
+        return int(self._low), int(self._high)
+
+    def sizeHint(self) -> QSize:
+        return QSize(140, 20)
+
+    def _groove_rect(self) -> QRectF:
+        margin = self._HANDLE_RADIUS + 1.0
+        y = self.height() / 2.0
+        return QRectF(margin, y - self._GROOVE_HEIGHT / 2.0, max(self.width() - 2 * margin, 1.0), self._GROOVE_HEIGHT)
+
+    def _fraction_for_value(self, value: int) -> float:
+        span = self._maximum - self._minimum
+        if span <= 0:
+            return 0.0
+        return float(np.clip((value - self._minimum) / float(span), 0.0, 1.0))
+
+    def _handle_x(self, value: int) -> float:
+        groove = self._groove_rect()
+        return groove.left() + groove.width() * self._fraction_for_value(value)
+
+    def _value_for_x(self, x: float) -> int:
+        groove = self._groove_rect()
+        if groove.width() <= 0:
+            return self._minimum
+        fraction = float(np.clip((x - groove.left()) / groove.width(), 0.0, 1.0))
+        return int(round(self._minimum + fraction * (self._maximum - self._minimum)))
+
+    def paintEvent(self, _event) -> None:  # pragma: no cover - GUI runtime path
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        groove = self._groove_rect()
+        center_y = groove.center().y()
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#243041"))
+        painter.drawRoundedRect(groove, groove.height() / 2.0, groove.height() / 2.0)
+
+        low_x = self._handle_x(self._low)
+        high_x = self._handle_x(self._high)
+        fill_rect = QRectF(low_x, groove.top(), max(high_x - low_x, 0.0), groove.height())
+        if fill_rect.width() > 0.5:
+            painter.setBrush(QColor("#38bdf8"))
+            painter.drawRoundedRect(fill_rect, groove.height() / 2.0, groove.height() / 2.0)
+
+        for value in (self._low, self._high):
+            handle_center = QPointF(self._handle_x(value), center_y)
+            painter.setPen(QPen(QColor("#0b1220"), 1.4))
+            painter.setBrush(QColor("#f8fafc"))
+            painter.drawEllipse(handle_center, self._HANDLE_RADIUS, self._HANDLE_RADIUS)
+        painter.end()
+
+    def _handle_at(self, x: float) -> str:
+        """Which handle a press near x should drag: the nearer one, with the
+        high handle winning ties so a fully-collapsed range (low == high)
+        can still be pulled back open from either side."""
+        low_distance = abs(x - self._handle_x(self._low))
+        high_distance = abs(x - self._handle_x(self._high))
+        return "low" if low_distance < high_distance else "high"
+
+    def mousePressEvent(self, event) -> None:  # pragma: no cover - GUI runtime path
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        x = float(event.position().x())
+        self._dragging = self._handle_at(x)
+        self._drag_to(x)
+        event.accept()
+
+    def mouseMoveEvent(self, event) -> None:  # pragma: no cover - GUI runtime path
+        if self._dragging is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self._drag_to(float(event.position().x()))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # pragma: no cover - GUI runtime path
+        self._dragging = None
+        super().mouseReleaseEvent(event)
+
+    def _drag_to(self, x: float) -> None:
+        value = self._value_for_x(x)
+        if self._dragging == "low":
+            self.setValues(min(value, self._high), self._high)
+        elif self._dragging == "high":
+            self.setValues(self._low, max(value, self._low))
+
+
 def _content_based_minimum_width(spinbox: QAbstractSpinBox) -> int:
     """Widest text the box can ever show (its min/max, not just the current value),
     plus breathing room for the shared theme's ~1px border and ~5px side padding."""

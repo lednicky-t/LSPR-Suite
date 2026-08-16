@@ -39,7 +39,7 @@ from .theme import (
     startup_app_stylesheet,
     transparent_icon_button_stylesheet,
 )
-from .ui_helpers import CompactWedgeSlider, create_status_dot_icon, make_compact_spinbox, make_info_button, make_sim_slider, make_window_button
+from .ui_helpers import CompactWedgeSlider, DualHandleRangeSlider, create_status_dot_icon, make_compact_spinbox, make_info_button, make_sim_slider, make_window_button
 from .version import APP_NAME, APP_VERSION, __version__, version_string
 
 __all__ = [
@@ -54,6 +54,7 @@ __all__ = [
     "available_tabler_icon_names",
     "bulb_icon",
     "CompactWedgeSlider",
+    "DualHandleRangeSlider",
     "apply_base_app_theme",
     "dark_icon",
     "device_status_icon",
