@@ -126,3 +126,15 @@ class ImagingAcquisitionMetadata(BaseModel):
             if timing.spectral_cube_index == spectral_cube_index and timing.wavelength_nm == wavelength_nm:
                 return timing
         return None
+
+    def earliest_timing_for_cube(self, spectral_cube_index: int) -> ImagingCubeTiming | None:
+        """One representative timing for a whole cube: the earliest-acquired
+        image among that cube's wavelengths (i.e. when its sweep began),
+        since `image_timings` is per (cube, wavelength) - there's no single
+        native "cube timestamp" to read directly. Used for time-based
+        plotting (e.g. a sensorgram x-axis) where one x-value per cube is
+        needed, not one per image."""
+        candidates = [timing for timing in self.image_timings if timing.spectral_cube_index == spectral_cube_index]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda timing: timing.acquired_at_unix_ms)
