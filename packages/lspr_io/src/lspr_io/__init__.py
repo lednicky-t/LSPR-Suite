@@ -87,6 +87,7 @@ from .hdf5 import (
     write_xy_csv,
     write_session_metadata,
 )
+from .imaging import is_imaging_measurement_file, read_imaging_acquisition_metadata
 from .version import APP_NAME, APP_VERSION, __version__, version_string
 
 __all__ = [
@@ -177,4 +178,6 @@ __all__ = [
     "write_session_metadata",
     "write_xy_csv",
     "version_string",
+    "is_imaging_measurement_file",
+    "read_imaging_acquisition_metadata",
 ]
