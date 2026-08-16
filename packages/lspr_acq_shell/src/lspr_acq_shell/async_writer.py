@@ -150,6 +150,7 @@ class AsyncTaggedWriter(ABC):
             return
 
         last_flush = monotonic()
+        error_message: str | None = None
         try:
             while True:
                 timeout = max(0.0, self._flush_interval_s - (monotonic() - last_flush))
@@ -187,9 +188,15 @@ class AsyncTaggedWriter(ABC):
         except Exception as exc:
             log.exception("Writer for %s stopped due to an error", self._label)
             self._closed = True
-            self._notify_error(self._run_error_message(exc))
+            error_message = self._run_error_message(exc)
         finally:
+            # Close before notifying: on_error may wake a caller that treats
+            # "error fired" as "the writer is done" (e.g. cleaning up the
+            # underlying file) - notifying first raced that caller against
+            # this thread's own close() still being in flight.
             try:
                 writer.close()
             except Exception:
                 log.exception("Failed to cleanly close writer for %s", self._label)
+            if error_message is not None:
+                self._notify_error(error_message)
