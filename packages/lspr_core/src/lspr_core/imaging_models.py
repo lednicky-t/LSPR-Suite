@@ -99,6 +99,8 @@ class ImagingAcquisitionMetadata(BaseModel):
 
     source_format: str
     started_at_utc: str | None = None
+    operator: str | None = None
+    notes: str | None = None
     wavelengths_nm: list[float] = []
     camera_settings_by_wavelength: dict[float, WavelengthCameraSettings] = {}
     illumination_settings_by_wavelength: dict[float, WavelengthIlluminationSettings] = {}
@@ -115,3 +117,12 @@ class ImagingAcquisitionMetadata(BaseModel):
                 break
             active = event.comment
         return active
+
+    def timing_for(self, spectral_cube_index: int, wavelength_nm: float) -> ImagingCubeTiming | None:
+        """The recorded timing for one (spectral_cube_index, wavelength_nm)
+        image, or None if this metadata has no timing entry for it (e.g. a
+        camera-settings-only import with no measuring-times data)."""
+        for timing in self.image_timings:
+            if timing.spectral_cube_index == spectral_cube_index and timing.wavelength_nm == wavelength_nm:
+                return timing
+        return None

@@ -18,6 +18,7 @@ from lspr_imaging_app.processing.analysis import (
     absorbance_from_means,
     fit_absorbance_curve,
     metric_value_from_fit,
+    metric_value_from_spectrum,
 )
 
 
@@ -111,6 +112,69 @@ class TestMetricValueFromFit(unittest.TestCase):
         fit = fit_absorbance_curve(x, y, poly_order=2)
         value, _ = metric_value_from_fit(fit, "  Maximum  ")
         self.assertAlmostEqual(value, fit.peak_wavelength_nm, places=9)
+
+
+class TestMetricValueFromSpectrum(unittest.TestCase):
+    """metric_value_from_spectrum is the "Fitting: None" counterpart to
+    metric_value_from_fit - it reads Maximum/Centroid straight off the raw
+    absorbance points instead of a fitted curve, so a discrete dataset (not
+    fit_absorbance_curve's exact quadratic) is the right fixture here."""
+
+    def _asymmetric_spectrum(self, n: int = 21):
+        x = np.linspace(500.0, 700.0, n)
+        y = np.zeros_like(x)
+        y[10] = 1.0
+        y[9] = 0.6
+        y[11] = 0.6
+        return x, y
+
+    def test_maximum_metric_is_raw_argmax(self) -> None:
+        x, y = self._asymmetric_spectrum()
+        value, signal = metric_value_from_spectrum(x, y, "maximum")
+        self.assertAlmostEqual(value, x[10], places=9)
+        self.assertAlmostEqual(signal, 1.0, places=9)
+
+    def test_centroid_metric_is_weighted_average_for_symmetric_data(self) -> None:
+        x, y = self._asymmetric_spectrum()
+        value, signal = metric_value_from_spectrum(x, y, "centroid")
+        # y is symmetric about x[10], so the intensity-weighted centroid
+        # lands there too.
+        self.assertAlmostEqual(value, x[10], places=6)
+        self.assertAlmostEqual(signal, 1.0, places=6)
+
+    def test_wl_window_excludes_points_outside_range(self) -> None:
+        x, y = self._asymmetric_spectrum()
+        value, _ = metric_value_from_spectrum(x, y, "maximum", wl_min=500.0, wl_max=x[9])
+        self.assertAlmostEqual(value, x[9], places=9)
+
+    def test_non_finite_samples_are_dropped(self) -> None:
+        x, y = self._asymmetric_spectrum()
+        y = y.copy()
+        y[10] = np.nan
+        value, signal = metric_value_from_spectrum(x, y, "maximum")
+        self.assertAlmostEqual(value, x[9], places=9)
+        self.assertAlmostEqual(signal, 0.6, places=9)
+
+    def test_unknown_metric_key_returns_none_none(self) -> None:
+        x, y = self._asymmetric_spectrum()
+        value, signal = metric_value_from_spectrum(x, y, "not_a_real_metric")
+        self.assertIsNone(value)
+        self.assertIsNone(signal)
+
+    def test_empty_input_returns_none_none(self) -> None:
+        value, signal = metric_value_from_spectrum(np.array([]), np.array([]), "maximum")
+        self.assertIsNone(value)
+        self.assertIsNone(signal)
+
+    def test_agrees_with_fit_based_metric_on_a_smooth_symmetric_peak(self) -> None:
+        # Sanity cross-check: on data smooth enough for a quadratic fit to
+        # reproduce almost exactly, the fit-free and fit-based metrics should
+        # land on essentially the same peak/centroid.
+        x, y = TestFitAbsorbanceCurve()._symmetric_parabola(n=401)
+        fit = fit_absorbance_curve(x, y, poly_order=2)
+        fit_value, _ = metric_value_from_fit(fit, "maximum")
+        raw_value, _ = metric_value_from_spectrum(x, y, "maximum")
+        self.assertAlmostEqual(raw_value, fit_value, places=1)
 
 
 if __name__ == "__main__":
