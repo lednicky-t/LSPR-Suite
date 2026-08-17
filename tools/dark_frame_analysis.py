@@ -51,7 +51,7 @@ for p in (
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from lspr_imaging_app.io.dataset import load_dataset, dataset_load_plane  # noqa: E402
+from lspr_imaging_app.io.dataset import DatasetLoadChoice, load_dataset, dataset_load_plane  # noqa: E402
 
 
 def default_roi(height: int, width: int) -> tuple[int, int, int, int]:
@@ -88,6 +88,11 @@ def main() -> int:
     args = parser.parse_args()
 
     dataset = load_dataset(args.dataset_folder)
+    if isinstance(dataset, DatasetLoadChoice):
+        candidate_folders = ", ".join(str(candidate.folder) for candidate in dataset.candidates)
+        print(f"Multiple datasets found under {args.dataset_folder}: {candidate_folders}. "
+              "Point this script at one of them directly.")
+        return 1
     cubes = dataset.spectral_cube_indices
     wavelengths = dataset.wavelengths_nm
     dark_wl = min(wavelengths)
