@@ -30,7 +30,10 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_core import SOURCE_FORMAT_LEGACY_MEASURING_TIMES_CSV  # noqa: E402
+from lspr_core import (  # noqa: E402
+    SOURCE_FORMAT_LEGACY_MEASURING_TIMES_CSV,
+    ImagingAcquisitionMetadata,
+)
 
 from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord  # noqa: E402
 from lspr_imaging_app.io.dataset import (  # noqa: E402
@@ -84,7 +87,9 @@ def _write_tiff_stack(folder: Path, *, cube_count: int = 1, wavelengths=(470.0, 
             )
 
 
-def _write_ome_zarr_export(folder: Path, destination_name: str = "export") -> Path:
+def _write_ome_zarr_export(
+    folder: Path, destination_name: str = "export", *, metadata: ImagingAcquisitionMetadata | None = None
+) -> Path:
     # Source TIFFs live in their own throwaway temp dir, not under `folder`
     # itself - `folder` is what the test points the loader at, and a stray
     # TIFF-stack subfolder there would register as its own discovered
@@ -97,7 +102,7 @@ def _write_ome_zarr_export(folder: Path, destination_name: str = "export") -> Pa
             ImageRecord(ImageKey(wavelength_nm=wl, spectral_cube_index=0), source / f"imLCTFatWL{wl:.0f}Frame0.tif")
             for wl in (470.0, 480.0)
         ]
-        dataset = ImageDataset(folder=source, records=records)
+        dataset = ImageDataset(folder=source, records=records, acquisition_metadata=metadata)
         destination = export_ome_zarr_dataset(dataset, folder / destination_name, chunk_size_px=8, adaptive_workers_enabled=False)
     return destination
 
@@ -157,6 +162,29 @@ class DatasetFolderDiscoveryTests(unittest.TestCase):
         self.assertEqual(result.home, parent)
         self.assertNotEqual(result.home, result.folder)
         self.assertTrue(result.is_ome_zarr)
+
+    def test_ome_zarr_own_embedded_metadata_survives_load_dataset(self) -> None:
+        # An OME-Zarr export mirrors whatever acquisition metadata was loaded
+        # at export time into its own .zattrs (see
+        # test_lspri_ome_zarr_acquisition_metadata.py) - that makes the
+        # export self-contained, with no external measureing_times.csv/
+        # metaData.txt/sidecar json needed nearby. load_dataset's own
+        # external-file search (load_acquisition_metadata) correctly finds
+        # nothing next to a bare export like this, and must not let that
+        # None overwrite the embedded metadata load_ome_zarr_dataset already
+        # attached to the candidate.
+        embedded = ImagingAcquisitionMetadata(
+            source_format="lspri_acquisition_v6_4",
+            started_at_utc="2026-08-17T09:00:00Z",
+            wavelengths_nm=[470.0, 480.0],
+        )
+        destination = _write_ome_zarr_export(self.root, metadata=embedded)
+
+        result = load_dataset(destination)
+
+        self.assertIsInstance(result, ImageDataset)
+        self.assertIsNotNone(result.acquisition_metadata)
+        self.assertEqual(result.acquisition_metadata.started_at_utc, "2026-08-17T09:00:00Z")
 
     def test_both_formats_present_returns_a_choice(self) -> None:
         parent = self.root / "dataset"

@@ -11,6 +11,9 @@ dynamic = ["version"]
 dependencies = [
     "h5py",
     "PyQt6",
+    # See apps/LSPRi/eva/pyproject.toml for why - PyQt6-sip 13.11.1 has a
+    # reproducible access-violation crash on Python 3.14, fixed in 13.12.0.
+    "PyQt6-sip>=13.12.0",
     "pyqtgraph",
     "pyserial",
     "PyYAML",

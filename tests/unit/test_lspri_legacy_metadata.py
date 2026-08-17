@@ -139,6 +139,29 @@ class ImportLegacyImagingMetadataTests(unittest.TestCase):
         self.assertIsNone(metadata.comment_at(before_run))
         self.assertEqual(metadata.comment_at(metadata.image_timings[0].acquired_at_unix_ms), "Pump is not running")
 
+    def test_csv_only_import_still_links_cube_times_relative_to_start(self) -> None:
+        # No metaData.txt selected -> no absolute acquisition start date, but
+        # the CSV's own elapsed-ms column is still enough to link each image
+        # to a time and each cube to a relative order (see
+        # legacy_metadata.import_legacy_imaging_metadata's docstring): the
+        # sensorgram elapsed-time axis and comment_at() ordering only ever
+        # need differences between timings, never a real Unix timestamp.
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path, _txt_path = _write_legacy_files(Path(tmp))
+            metadata = import_legacy_imaging_metadata(csv_path, None)
+
+        self.assertIsNone(metadata.started_at_utc)
+        self.assertEqual(len(metadata.image_timings), 4)
+        self.assertEqual(len(metadata.comment_events), 2)
+
+        first = metadata.timing_for(0, 470.0)
+        second = metadata.timing_for(1, 470.0)
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        # Relative spacing must match the CSV's elapsed-ms column exactly,
+        # regardless of what synthetic anchor the two timings share.
+        self.assertEqual(second.acquired_at_unix_ms - first.acquired_at_unix_ms, 9535 - 144)
+
     def test_image_name_not_matching_pattern_is_skipped_not_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
