@@ -19,16 +19,18 @@ from typing import Callable
 from platformdirs import user_config_dir
 
 from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
+    QDialogButtonBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -213,6 +215,66 @@ def reset_settings_target(target: SettingsTarget) -> str:
     qsettings.clear()
     qsettings.sync()
     return "Registry entries cleared."
+
+
+class ConsoleOutputDialog(QDialog):
+    """Live view of stdout/stderr forwarded from every app this hub has
+    launched, most recent at the bottom, each line prefixed with which app
+    it came from.
+
+    Exists because there's normally no way to see this at all: the frozen
+    build has no attached console (see _console_write), and even running
+    from a terminal every launched app is spawned with CREATE_NO_WINDOW (see
+    _LAUNCH_CREATIONFLAGS). The "App exited unexpectedly" crash dialog only
+    ever shows the last 40 captured lines at the moment of a crash - this
+    keeps the full history for the whole hub session, so a crash mid-task
+    can still be traced back to what led up to it.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Console output")
+        self.resize(760, 480)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+
+        intro = QLabel(
+            "Output forwarded from every app launched from this hub this session, most recent "
+            "at the bottom. Cleared when the hub restarts."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self.text_view = QPlainTextEdit(self)
+        self.text_view.setReadOnly(True)
+        self.text_view.setFont(QFont("Consolas", 9))
+        self.text_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        layout.addWidget(self.text_view, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        clear_button = QPushButton("Clear", self)
+        clear_button.clicked.connect(self.text_view.clear)
+        buttons.addButton(clear_button, QDialogButtonBox.ButtonRole.ResetRole)
+        layout.addWidget(buttons)
+
+    def append_line(self, text: str) -> None:
+        at_bottom = self._is_scrolled_to_bottom()
+        self.text_view.appendPlainText(text)
+        if at_bottom:
+            self.text_view.moveCursor(QTextCursor.MoveOperation.End)
+
+    def set_lines(self, lines: list[str]) -> None:
+        self.text_view.setPlainText("\n".join(lines))
+        self.text_view.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _is_scrolled_to_bottom(self) -> bool:
+        # Don't yank the view down to the newest line if the user has
+        # scrolled up to read earlier output.
+        bar = self.text_view.verticalScrollBar()
+        return bar.value() >= bar.maximum() - 4
 
 
 class SettingsResetDialog(QDialog):
@@ -859,6 +921,7 @@ class MainWindow(QMainWindow):
     update_download_progress = pyqtSignal(int)
     update_download_finished = pyqtSignal(object, object)
     app_release_check_finished = pyqtSignal(str, object, object)
+    console_line_received = pyqtSignal(str, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -878,6 +941,9 @@ class MainWindow(QMainWindow):
         self.update_download_progress.connect(self._handle_update_download_progress)
         self.update_download_finished.connect(self._handle_update_download_finished)
         self.app_release_check_finished.connect(self._handle_app_release_check_finished)
+        self.console_line_received.connect(self._handle_console_line_received)
+        self._console_lines: deque[str] = deque(maxlen=5000)
+        self._console_dialog: ConsoleOutputDialog | None = None
         self._countdown_timer = QTimer(self)
         self._countdown_timer.setInterval(250)
         self._countdown_timer.timeout.connect(self._tick_auto_launch_countdown)
@@ -923,6 +989,15 @@ class MainWindow(QMainWindow):
         )
         self.update_button.clicked.connect(self._check_for_updates)
         title_row.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignRight)
+        self.console_button = QPushButton("Console")
+        self.console_button.setObjectName("SettingsHeaderButton")
+        self.console_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.console_button.setToolTip(
+            "Live output forwarded from every app launched from this hub - useful for seeing "
+            "what an app was doing right up to an unexpected exit."
+        )
+        self.console_button.clicked.connect(self._show_console_dialog)
+        title_row.addWidget(self.console_button, 0, Qt.AlignmentFlag.AlignRight)
         self.settings_button = QPushButton("Settings")
         self.settings_button.setObjectName("SettingsHeaderButton")
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1029,6 +1104,22 @@ class MainWindow(QMainWindow):
     def _open_settings_dialog(self) -> None:
         dialog = SettingsResetDialog(self)
         dialog.exec()
+
+    def _show_console_dialog(self) -> None:
+        if self._console_dialog is None:
+            self._console_dialog = ConsoleOutputDialog(self)
+            self._console_dialog.set_lines(list(self._console_lines))
+        self._console_dialog.show()
+        self._console_dialog.raise_()
+        self._console_dialog.activateWindow()
+
+    def _handle_console_line_received(self, target_key: str, line: str) -> None:
+        target = TARGETS_BY_KEY.get(target_key)
+        title = target.title if target is not None else target_key
+        entry = f"[{title}] {line}"
+        self._console_lines.append(entry)
+        if self._console_dialog is not None:
+            self._console_dialog.append_line(entry)
 
     def _running_launched_titles(self) -> list[str]:
         """Titles of apps this hub has launched that are still alive.
@@ -1378,7 +1469,13 @@ class MainWindow(QMainWindow):
                     f"{target.title} was already launched from this hub.",
                 )
                 return
-            extra_env = None
+            # Apps that support it (currently LSPRi eva - see its
+            # _configure_logging) stream their full DEBUG+ log to stdout
+            # instead of only writing it to their own log file, so this hub's
+            # Console dialog and the "App exited unexpectedly" crash tail
+            # actually have something in them - a no-op env var for apps that
+            # don't check it.
+            extra_env: dict[str, str] = {"LSPR_CONSOLE_LOG": "1"}
             if target.key == "slspr_acq":
                 diagnostics_profile = self._current_diagnostics_profile()
                 diagnostics_export_enabled = diagnostics_profile == "deep"
@@ -1388,14 +1485,18 @@ class MainWindow(QMainWindow):
                     "Configuring",
                     f"Configuring diagnostics and launch profile for {target.title}.",
                 )
-                extra_env = {
-                    LAUNCH_PROFILE_ENV_VAR: self._current_launch_profile_key(),
-                    "LSPR_DIAGNOSTICS_PROFILE": diagnostics_profile,
-                    "LSPR_QUIET_DIAGNOSTICS": "1" if diagnostics_profile == "off" else "0",
-                    "LSPR_SUPPRESS_DIAGNOSTIC_INFO_LOGS": "1" if diagnostics_profile == "off" else "0",
-                    "LSPR_DISABLE_DIAGNOSTIC_EXPORT": "0" if diagnostics_export_enabled else "1",
-                    "TOP_CONTENT_TRACE": os.environ.get("TOP_CONTENT_TRACE", "1" if diagnostics_profile == "deep" else "0"),
-                }
+                extra_env.update(
+                    {
+                        LAUNCH_PROFILE_ENV_VAR: self._current_launch_profile_key(),
+                        "LSPR_DIAGNOSTICS_PROFILE": diagnostics_profile,
+                        "LSPR_QUIET_DIAGNOSTICS": "1" if diagnostics_profile == "off" else "0",
+                        "LSPR_SUPPRESS_DIAGNOSTIC_INFO_LOGS": "1" if diagnostics_profile == "off" else "0",
+                        "LSPR_DISABLE_DIAGNOSTIC_EXPORT": "0" if diagnostics_export_enabled else "1",
+                        "TOP_CONTENT_TRACE": os.environ.get(
+                            "TOP_CONTENT_TRACE", "1" if diagnostics_profile == "deep" else "0"
+                        ),
+                    }
+                )
                 _console_write(
                     f"[suite_launcher] launching {target.title} | "
                     f"diagnostics={diagnostics_profile} | "
@@ -1510,11 +1611,16 @@ class MainWindow(QMainWindow):
                 self._processes_by_key[target.key] = alive
             else:
                 self._processes_by_key.pop(target.key, None)
-            for process in dead:
-                self._handle_process_exit(target, process)
             card = self.cards.get(target.key)
             if card is not None:
                 card.set_running(bool(alive))
+            # After the card already reflects reality - _handle_process_exit's
+            # crash dialog is modal (blocks this whole loop until dismissed),
+            # so showing it before updating the card left the card reading
+            # "Running" for as long as the dialog sat open, even though the
+            # process was already dead.
+            for process in dead:
+                self._handle_process_exit(target, process)
 
     def _handle_process_exit(self, target: AppTarget, process: subprocess.Popen[object]) -> None:
         """Surface an app that exited on its own shortly after this hub launched
@@ -1589,6 +1695,7 @@ class MainWindow(QMainWindow):
                         tail = self._process_output_tail.get(target.key)
                         if tail is not None:
                             tail.append(text)
+                        self.console_line_received.emit(target.key, text)
                     if _should_forward_line(line):
                         _console_write(f"[{target.title}] {line}")
             finally:

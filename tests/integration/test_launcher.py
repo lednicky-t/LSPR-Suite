@@ -217,6 +217,96 @@ class MainWindowLaunchTests(unittest.TestCase):
         self.assertEqual(popen_mock.call_args.kwargs["creationflags"], _LAUNCH_CREATIONFLAGS)
         self.assertEqual(popen_mock.call_args.kwargs["stdout"], subprocess.PIPE)
 
+    def test_launch_target_enables_console_logging_for_every_app(self) -> None:
+        # LSPR_CONSOLE_LOG makes an app (currently LSPRi eva - see its
+        # _configure_logging) stream its full DEBUG+ log to stdout instead
+        # of only its own log file, so the Console dialog and the "App exited
+        # unexpectedly" crash tail have something in them - must be set
+        # regardless of which app is launched, not just slspr_acq (which has
+        # its own, unrelated extra env vars).
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "launch.py").write_text("print('ok')\n", encoding="utf-8")
+            target = AppTarget(
+                key="demo",
+                title="Demo",
+                subtitle="Demo",
+                address="demo.py",
+                root_candidates=(root,),
+                script="launch.py",
+            )
+
+            mock_process = mock.Mock()
+            mock_process.stdout = mock.Mock()
+            mock_process.stdout.readline = mock.Mock(return_value="")
+            mock_process.poll.return_value = None
+
+            with mock.patch("suite_launcher.app.subprocess.Popen", return_value=mock_process) as popen_mock:
+                self.window._launch_target(target)
+
+        self.assertEqual(popen_mock.call_args.kwargs["env"]["LSPR_CONSOLE_LOG"], "1")
+
+    def test_card_shows_not_running_before_the_crash_dialog_blocks(self) -> None:
+        # _handle_process_exit's "App exited unexpectedly" QMessageBox is
+        # modal - it blocks _refresh_running_app_statuses's loop until
+        # dismissed. The card must already read "not running" by the time
+        # that dialog appears, not only after the user clicks OK.
+        target = TARGETS[0]
+        card = self.window.cards[target.key]
+        card.set_running(True)
+
+        dead_process = mock.Mock()
+        dead_process.poll.return_value = -1073741819
+        dead_process.returncode = -1073741819
+        self.window._processes_by_key[target.key] = [dead_process]
+        self.window._process_launch_started_at[target.key] = 0.0
+        self.window._process_output_tail[target.key] = []
+
+        seen_running_state_at_dialog_time = []
+
+        def _fake_critical(*_args, **_kwargs):
+            seen_running_state_at_dialog_time.append(card._running)
+
+        with mock.patch.object(QMessageBox, "critical", side_effect=_fake_critical) as critical_mock:
+            self.window._refresh_running_app_statuses()
+
+        critical_mock.assert_called_once()
+        self.assertEqual(seen_running_state_at_dialog_time, [False])
+        self.assertFalse(card._running)
+
+
+class ConsoleOutputTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.window = MainWindow()
+
+    def tearDown(self) -> None:
+        self.window.close()
+        self.window.deleteLater()
+
+    def test_console_line_received_buffers_with_app_title_prefix(self) -> None:
+        target = TARGETS[0]
+        self.window._handle_console_line_received(target.key, "hello from the app")
+        self.assertEqual(list(self.window._console_lines), [f"[{target.title}] hello from the app"])
+
+    def test_console_line_received_uses_raw_key_for_unknown_target(self) -> None:
+        self.window._handle_console_line_received("not_a_real_target", "line")
+        self.assertEqual(list(self.window._console_lines), ["[not_a_real_target] line"])
+
+    def test_show_console_dialog_prepopulates_buffered_history(self) -> None:
+        target = TARGETS[0]
+        self.window._handle_console_line_received(target.key, "earlier line")
+
+        self.window._show_console_dialog()
+
+        self.assertIsNotNone(self.window._console_dialog)
+        self.assertIn("earlier line", self.window._console_dialog.text_view.toPlainText())
+
+    def test_console_dialog_updates_live_while_open(self) -> None:
+        self.window._show_console_dialog()
+        self.window._handle_console_line_received(TARGETS[0].key, "a live line")
+        self.assertIn("a live line", self.window._console_dialog.text_view.toPlainText())
+
 
 class MainWindowUpdateCheckTests(unittest.TestCase):
     def setUp(self) -> None:
