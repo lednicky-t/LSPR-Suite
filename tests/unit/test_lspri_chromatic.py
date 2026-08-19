@@ -176,6 +176,41 @@ class TestEstimateChromaticModelsExclusion(unittest.TestCase):
         self.assertNotIn((0, 520.0), modeled_keys)
         self.assertIn((1, 520.0), modeled_keys)
 
+    def test_zero_nm_broadband_frame_is_never_selected_as_a_sample_wavelength(self) -> None:
+        # 0 nm is the broadband/no-filter frame some acquisitions capture
+        # alongside the narrowband wavelengths. ChromaticController.
+        # candidate_chromatic_wavelengths excludes it from what the GUI lets
+        # the user mark landmarks on (its illumination breaks landmark
+        # tracking), so the estimation task must exclude it from its own
+        # sample-wavelength candidates too -- otherwise it demands landmarks
+        # at 0 nm that the user could never have provided and raises a
+        # spurious "missing reference point" error (regression: it used to
+        # pick 0 nm here because only image-exclusions were filtered, not
+        # the 0 nm broadband frame).
+        wavelengths = [0.0, 500.0, 510.0, 520.0, 530.0, 540.0]
+        record_specs = [(0, wavelength, f"cube0_wl{int(wavelength)}.tif") for wavelength in wavelengths]
+        reference_key = (0, 500.0)
+        preprocessing = PreprocessingSettings(
+            chromatic_registration_mode="landmark_radial",
+            chromatic_sample_image_count=3,
+            chromatic_feature_count=2,
+        )
+        non_zero_candidates = [wl for wl in wavelengths if wl != 0.0]
+        sample_wavelengths = _sampled_wavelengths(non_zero_candidates, 3)
+        self.assertNotIn(0.0, sample_wavelengths)
+        # Landmarks are only ever provided for the non-zero sample wavelengths,
+        # matching what the GUI would actually let the user mark.
+        landmarks_payload = [
+            (feature_id, 0, wavelength, 10.0 * feature_id, 20.0 * feature_id)
+            for wavelength in sorted(set(sample_wavelengths) | {reference_key[1]})
+            for feature_id in (1, 2)
+        ]
+        models = _estimate_chromatic_models_task(record_specs, preprocessing, reference_key, landmarks_payload)
+        modeled_keys = {(model.spectral_cube_index, model.wavelength_nm) for model in models}
+        # 0 nm still gets a model (interpolated/extrapolated from the sampled
+        # wavelengths), it's just never required to have its own landmarks.
+        self.assertEqual(modeled_keys, {(cube, wavelength) for cube, wavelength, _path in record_specs})
+
 
 if __name__ == "__main__":
     unittest.main()

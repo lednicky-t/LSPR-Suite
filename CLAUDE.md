@@ -45,6 +45,31 @@ priority the change serves (see below) so the maintainer can judge it.
 
 ---
 
+## Usage Efficiency (read this too)
+
+The maintainer is usage-conscious and often clears the session and starts a fresh one specifically to
+control how much they spend. Respect that — be economical without sacrificing correctness:
+
+- **Don't re-run the full test suite after every small edit.** Run only the specific test file(s)
+  relevant to the change while iterating on a fix; run the full suite (`pytest tests/`) once, near the
+  end — right before calling the work done or before committing — not after each intermediate step.
+- **Don't re-read a file you just edited or wrote** "to confirm it worked." Edit/Write already fail
+  loudly if something went wrong; trust that.
+- **Batch verification to the end of a task.** Run tests once, review the diff once, summarize once —
+  rather than re-checking after every small change in a multi-step task.
+- **Keep tool output lean.** Prefer a targeted grep/read over a broad one; don't dump a full test-suite
+  log or a whole file into the conversation when a pass/fail count or a short excerpt would do.
+- **Avoid spawning subagents for work you can do directly** (see Agent Routing above). An agent call
+  re-derives context from scratch, which usually costs more than doing a small task inline.
+- **Proactively suggest clearing the session when it makes sense** — don't wait to be asked. Good
+  moments: a task is finished and about to be committed; the conversation has a lot of exploratory
+  back-and-forth (failed approaches, large file dumps, long research) that the next task won't need;
+  you're about to start something unrelated to what's been discussed. A short line is enough, e.g.
+  "This looks done — probably a good point to `/clear` before the next task, since none of this
+  investigation is needed going forward."
+
+---
+
 ## What This Repo Is
 
 Python scientific software suite for LSPR (Localized Surface Plasmon Resonance) measurements.
