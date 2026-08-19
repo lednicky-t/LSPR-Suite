@@ -12,6 +12,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 import numpy as np
+from scipy import ndimage
 
 from lspr_imaging_app.domain.models import AreaRoiDetectionSettings, PreprocessingSettings
 from lspr_imaging_app.processing.preprocess import (
@@ -20,6 +21,7 @@ from lspr_imaging_app.processing.preprocess import (
     flatten_background,
     raw_bounding_box_for_processed_box,
     resample_raw_patch_to_processed_box,
+    rotation_fill_pixel_mask,
     spatial_output_shape,
 )
 
@@ -100,6 +102,101 @@ class TestRoiScopedFastPathMatchesFullImage(unittest.TestCase):
     def test_dark_fill_mode_instead_of_nearest(self) -> None:
         settings = PreprocessingSettings(rotation_angle_deg=25.0, rotation_fill_dark=True)
         self._check_box_matches_full_image((80, 80), settings, (5, 5, 45, 45))
+
+
+class TestRotationFillPixelMask(unittest.TestCase):
+    """rotation_fill_pixel_mask marks pixels the rotate tool synthesized (no
+    source measurement behind them) in the same processed-image space
+    apply_spatial_preprocessing's output is in - the building block for
+    auto-excluding those pixels from stats/histogram without requiring the
+    user to hand-paint a mask over them (which the raw-space mask tools
+    can't represent anyway, since there's no raw pixel back there).
+    """
+
+    def test_no_rotation_returns_none(self) -> None:
+        settings = PreprocessingSettings()
+        self.assertIsNone(rotation_fill_pixel_mask((80, 60), settings))
+
+    def test_image_tools_disabled_returns_none_even_with_an_angle_set(self) -> None:
+        settings = PreprocessingSettings(rotation_angle_deg=33.0, image_tools_enabled=False)
+        self.assertIsNone(rotation_fill_pixel_mask((80, 60), settings))
+
+    def test_rotated_canvas_corners_are_marked_fill_and_center_is_not(self) -> None:
+        settings = PreprocessingSettings(rotation_angle_deg=33.0)
+        raw_shape = (80, 60)
+        mask = rotation_fill_pixel_mask(raw_shape, settings)
+        self.assertIsNotNone(mask)
+        out_shape = spatial_output_shape(raw_shape, settings)
+        self.assertEqual(mask.shape, out_shape)
+        self.assertTrue(bool(mask[0, 0]))  # reshape=True corner: always outside the rotated source
+        center = (out_shape[0] // 2, out_shape[1] // 2)
+        self.assertFalse(bool(mask[center]))
+
+    def test_same_regardless_of_rotation_fill_dark_toggle(self) -> None:
+        # The mask marks *synthetic* pixels - true whether the display fills
+        # them black (constant) or stretches the nearest edge pixel into them
+        # ("nearest", the default) - so both toggle states must agree.
+        raw_shape = (80, 60)
+        mask_dark = rotation_fill_pixel_mask(raw_shape, PreprocessingSettings(rotation_angle_deg=33.0, rotation_fill_dark=True))
+        mask_nearest = rotation_fill_pixel_mask(raw_shape, PreprocessingSettings(rotation_angle_deg=33.0, rotation_fill_dark=False))
+        np.testing.assert_array_equal(mask_dark, mask_nearest)
+
+    def test_matches_apply_spatial_mask_of_an_all_true_raw_mask_inverted(self) -> None:
+        # Cross-check against the existing, already-trusted apply_spatial_mask
+        # forward-transform (used for real user masks): transforming an
+        # all-True raw mask marks True everywhere real source data landed
+        # (constant/cval=0.0 fill leaves the padding False) - the inverse of
+        # "this pixel is synthetic fill".
+        from lspr_imaging_app.processing.preprocess import apply_spatial_mask
+
+        raw_shape = (80, 60)
+        settings = PreprocessingSettings(rotation_angle_deg=33.0)
+        all_true_raw = np.ones(raw_shape, dtype=bool)
+        is_real_data = apply_spatial_mask(all_true_raw, settings)
+        fill_mask = rotation_fill_pixel_mask(raw_shape, settings)
+        np.testing.assert_array_equal(fill_mask, ~is_real_data)
+
+
+class TestApplyPreprocessingExcludesRotationFillFromBackground(unittest.TestCase):
+    """Rotation-fill corners must not pull on the background estimate, even
+    with no user-painted mask involved at all - unlike ordinary mask
+    exclusion (gated behind flatten_background_exclude_mask), this is
+    unconditional: those pixels never had a real measurement, so there's no
+    toggle state where counting them is correct.
+    """
+
+    def _bumpy_image(self, height: int = 140, width: int = 140) -> np.ndarray:
+        yy, xx = np.indices((height, width), dtype=np.float32)
+        background = 500.0 + 1.5 * xx + 1.0 * yy
+        rng = np.random.default_rng(0)
+        noise = rng.normal(0.0, 5.0, size=(height, width)).astype(np.float32)
+        return np.clip(background + noise, 0.0, 65535.0).astype(np.float32)
+
+    def test_background_near_the_corners_is_unaffected_by_the_fill_dark_toggle(self) -> None:
+        # rotation_fill_dark changes what value fills the synthetic corners
+        # (constant 0 vs a "nearest"-stretched copy of real edge data) - very
+        # different raw content. If the background estimate correctly
+        # excludes those corners either way, real data away from them must
+        # come out identically regardless of which toggle state filled them;
+        # if the exclusion were missing, the constant-black corner would drag
+        # the nearby estimate down relative to the nearest-stretched one.
+        image = self._bumpy_image()
+        base_kwargs = dict(
+            rotation_angle_deg=33.0,
+            flatten_background_enabled=True,
+            flatten_background_exclude_mask=False,  # deliberately off - must not matter here
+            flatten_background_binning=1,
+            flatten_background_sigma_px=15.0,
+        )
+        result_dark = apply_preprocessing(image, PreprocessingSettings(rotation_fill_dark=True, **base_kwargs))
+        result_nearest = apply_preprocessing(image, PreprocessingSettings(rotation_fill_dark=False, **base_kwargs))
+
+        fill_mask = rotation_fill_pixel_mask(image.shape, PreprocessingSettings(rotation_angle_deg=33.0))
+        self.assertIsNotNone(fill_mask)
+        self.assertTrue(np.any(fill_mask))
+        interior_real = ndimage.binary_erosion(~fill_mask, iterations=8)
+        self.assertTrue(np.any(interior_real))
+        np.testing.assert_allclose(result_dark[interior_real], result_nearest[interior_real], atol=1.0)
 
 
 class TestFlattenBackgroundRegionScoping(unittest.TestCase):

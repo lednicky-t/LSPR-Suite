@@ -33,6 +33,7 @@ from lspr_imaging_app.processing.roi_detection import (
     _refine_detected_roi,
     _roi_circular_contrast_score,
     detect_rois,
+    ignored_pixel_mask,
 )
 
 
@@ -186,6 +187,49 @@ class TestDetectRoisIgnoreMask(unittest.TestCase):
         rois_mask_applied = detect_rois(image, settings_ignoring_on, external_mask=mask_covering_strong_disk)
         self.assertEqual(len(rois_mask_applied), 1)
         self.assertLess(hypot(rois_mask_applied[0].center_x - weak_center[0], rois_mask_applied[0].center_y - weak_center[1]), 3.0)
+
+
+class TestIgnoredPixelMaskRotationFill(unittest.TestCase):
+    """rotation_fill_mask (unlike external_mask) is not gated behind
+    ignore_marked_pixels: rotation-added padding never had a real measurement,
+    so there's no toggle state where counting it is correct - see the
+    docstring on ignored_pixel_mask.
+    """
+
+    def test_rotation_fill_mask_applies_even_when_ignore_marked_pixels_is_false(self) -> None:
+        image = np.zeros((10, 10), dtype=np.float32)
+        rotation_fill_mask = np.zeros((10, 10), dtype=bool)
+        rotation_fill_mask[0:3, 0:3] = True
+        settings = AreaRoiDetectionSettings(ignore_marked_pixels=False)
+
+        result = ignored_pixel_mask(image, settings, rotation_fill_mask=rotation_fill_mask)
+
+        np.testing.assert_array_equal(result, rotation_fill_mask)
+
+    def test_rotation_fill_mask_and_external_mask_combine_when_ignoring_is_on(self) -> None:
+        image = np.zeros((10, 10), dtype=np.float32)
+        rotation_fill_mask = np.zeros((10, 10), dtype=bool)
+        rotation_fill_mask[0:3, 0:3] = True
+        external_mask = np.zeros((10, 10), dtype=bool)
+        external_mask[7:10, 7:10] = True
+        settings = AreaRoiDetectionSettings(ignore_marked_pixels=True)
+
+        result = ignored_pixel_mask(image, settings, external_mask=external_mask, rotation_fill_mask=rotation_fill_mask)
+
+        np.testing.assert_array_equal(result, rotation_fill_mask | external_mask)
+
+    def test_detect_rois_never_places_a_center_inside_the_rotation_fill_mask(self) -> None:
+        # A disk straddling the fill boundary: without exclusion, detection
+        # could anchor on the flat, high-contrast fill/data edge itself.
+        image = _disks_image(60, [(15.0, 30.0, 8.0)])
+        rotation_fill_mask = np.zeros((60, 60), dtype=bool)
+        rotation_fill_mask[:, :20] = True  # covers the disk's true location
+        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0)
+
+        rois = detect_rois(image, settings, rotation_fill_mask=rotation_fill_mask)
+
+        for roi in rois:
+            self.assertFalse(bool(rotation_fill_mask[int(roi.center_y), int(roi.center_x)]))
 
 
 class TestDetectRoisGridFit(unittest.TestCase):
