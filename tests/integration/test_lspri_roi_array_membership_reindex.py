@@ -126,6 +126,31 @@ class TestRoiArrayMembershipReindex(unittest.TestCase):
                 expected_members = [expected_map[old_id] for old_id in [3, 1, 2]]
                 self.assertEqual(window._state.area_roi_arrays[0].member_area_roi_ids, expected_members)
 
+    def test_reordering_by_column_numbers_top_to_bottom_within_each_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                # A 2x2 grid, ids scrambled relative to position, so
+                # column-major numbering (top-to-bottom within a column,
+                # left column before right) actually changes the mapping and
+                # differs from what row-major would produce.
+                rois = [
+                    AreaRoi(area_roi_id=1, center_x=50.0, center_y=50.0, sample_radius_px=5.0),  # bottom-right
+                    AreaRoi(area_roi_id=2, center_x=10.0, center_y=50.0, sample_radius_px=5.0),  # bottom-left
+                    AreaRoi(area_roi_id=3, center_x=50.0, center_y=10.0, sample_radius_px=5.0),  # top-right
+                    AreaRoi(area_roi_id=4, center_x=10.0, center_y=10.0, sample_radius_px=5.0),  # top-left
+                ]
+                window._state.area_rois = rois
+                window._state.area_roi_settings.array_rows = 2
+                window._state.area_roi_settings.array_cols = 2
+
+                window._reorder_rois_by_position(column_major=True)
+
+                by_position = {(roi.center_x, roi.center_y): roi.area_roi_id for roi in window._state.area_rois}
+                self.assertEqual(by_position[(10.0, 10.0)], 1)  # left column, top
+                self.assertEqual(by_position[(10.0, 50.0)], 2)  # left column, bottom
+                self.assertEqual(by_position[(50.0, 10.0)], 3)  # right column, top
+                self.assertEqual(by_position[(50.0, 50.0)], 4)  # right column, bottom
+
 
 if __name__ == "__main__":
     unittest.main()
