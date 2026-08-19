@@ -41,6 +41,8 @@ from lspr_imaging_app.io.dataset import (  # noqa: E402
     discover_dataset_candidates,
     export_ome_zarr_dataset,
     load_dataset,
+    resolve_remembered_dataset_choice,
+    save_dataset_choice,
     summarize_dataset_candidate,
 )
 
@@ -201,6 +203,45 @@ class DatasetFolderDiscoveryTests(unittest.TestCase):
         self.assertEqual({candidate.folder for candidate in result.candidates}, {images_dir, zarr_destination})
         self.assertIsNotNone(result.acquisition_metadata)
         self.assertEqual(result.acquisition_metadata.source_format, SOURCE_FORMAT_LEGACY_MEASURING_TIMES_CSV)
+
+    def test_remembered_choice_is_auto_resolved_on_next_ambiguous_load(self) -> None:
+        # Mirrors the GUI flow: load_dataset returns a DatasetLoadChoice, the
+        # user picks the OME-Zarr candidate once (dataset_controller.py saves
+        # that via save_dataset_choice), and every later load of the same
+        # folder - notably the startup session-restore flow - should resolve
+        # straight to that candidate without prompting again.
+        parent = self.root / "dataset"
+        parent.mkdir()
+        _write_legacy_metadata_files(parent)
+        images_dir = parent / "images"
+        _write_tiff_stack(images_dir)
+        zarr_destination = _write_ome_zarr_export(parent, "myexport.ome.zarr")
+
+        choice = load_dataset(parent)
+        self.assertIsInstance(choice, DatasetLoadChoice)
+        self.assertIsNone(resolve_remembered_dataset_choice(choice))
+
+        save_dataset_choice(parent, zarr_destination.name)
+
+        second_choice = load_dataset(parent)
+        self.assertIsInstance(second_choice, DatasetLoadChoice)
+        resolved = resolve_remembered_dataset_choice(second_choice)
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.folder, zarr_destination)
+
+    def test_remembered_choice_falls_back_to_none_when_candidate_is_gone(self) -> None:
+        parent = self.root / "dataset"
+        parent.mkdir()
+        _write_legacy_metadata_files(parent)
+        images_dir = parent / "images"
+        _write_tiff_stack(images_dir)
+        _write_ome_zarr_export(parent, "myexport.ome.zarr")
+
+        save_dataset_choice(parent, "no_such_subfolder")
+
+        choice = load_dataset(parent)
+        self.assertIsInstance(choice, DatasetLoadChoice)
+        self.assertIsNone(resolve_remembered_dataset_choice(choice))
 
     def test_neither_format_found_raises_with_helpful_message(self) -> None:
         parent = self.root / "empty_dataset"
