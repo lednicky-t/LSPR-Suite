@@ -27,6 +27,9 @@ class _FakeAreaRoiSettings:
     def __init__(self) -> None:
         self.reference_inner_radius_px = 5.0
         self.reference_outer_radius_px = 10.0
+        self.reduction_method = "mean"
+        self.trimmed_mean_fraction = 0.10
+        self.formula_key = "absorbance"
 
 
 class _FakeState:
@@ -52,6 +55,18 @@ class _FakeWindow:
 
     def _preprocessing_signature(self, image_key):
         return ("preproc", image_key)
+
+    def _analysis_wavelength_range(self):
+        return None
+
+    def _analysis_fit_method_key(self):
+        return "poly"
+
+    def _analysis_metric_key(self):
+        return "centroid"
+
+    def _analysis_poly_order(self):
+        return 3
 
 
 class TestSensorgramSpectralCubeResultCache(unittest.TestCase):
@@ -89,6 +104,21 @@ class TestSensorgramSpectralCubeResultCache(unittest.TestCase):
         controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], object())
         self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (2,), ["roiB"]))
 
+    def test_different_reduction_method_is_a_miss(self) -> None:
+        """ROI's-math changes must invalidate the per-frame result cache -
+        otherwise switching Reduction method would keep showing values
+        computed under the old method."""
+        controller, window = self._make_controller()
+        controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], object())
+        window._state.area_roi_settings.reduction_method = "median"
+        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (1,), ["roiA"]))
+
+    def test_different_formula_key_is_a_miss(self) -> None:
+        controller, window = self._make_controller()
+        controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], object())
+        window._state.area_roi_settings.formula_key = "ratio"
+        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (1,), ["roiA"]))
+
     def test_lru_eviction_drops_least_recently_used(self) -> None:
         controller, window = self._make_controller(cache_size=2)
         r0, r1, r2 = object(), object(), object()
@@ -109,6 +139,43 @@ class TestSensorgramSpectralCubeResultCache(unittest.TestCase):
         controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], object())
         self.assertEqual(len(window._sensorgram_spectral_cube_result_cache), 0)
         self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (1,), ["roiA"]))
+
+
+class TestSensorgramSignatureForSelectionIncludesRoiMath(unittest.TestCase):
+    """Tier-B signature (fit-dependent, _sensorgram_signature_for_selection)
+    must also change when ROI's-math settings change - otherwise a stale
+    fitted sensorgram result could survive a Reduction/Formula change even
+    though the Tier-A per-frame cache above correctly invalidated. Guards the
+    exact bug described in AnalysisController._roi_math_signature_elements'
+    docstring."""
+
+    def _make_controller(self) -> tuple[AnalysisController, _FakeWindow]:
+        window = _FakeWindow()
+        return AnalysisController(window), window
+
+    def test_different_reduction_method_changes_signature(self) -> None:
+        controller, window = self._make_controller()
+        rois, roi_ids = ["roiA"], (1,)
+        before = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
+        window._state.area_roi_settings.reduction_method = "median"
+        after = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
+        self.assertNotEqual(before, after)
+
+    def test_different_formula_key_changes_signature(self) -> None:
+        controller, window = self._make_controller()
+        rois, roi_ids = ["roiA"], (1,)
+        before = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
+        window._state.area_roi_settings.formula_key = "ratio"
+        after = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
+        self.assertNotEqual(before, after)
+
+    def test_different_trimmed_mean_fraction_changes_signature(self) -> None:
+        controller, window = self._make_controller()
+        rois, roi_ids = ["roiA"], (1,)
+        before = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
+        window._state.area_roi_settings.trimmed_mean_fraction = 0.20
+        after = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
+        self.assertNotEqual(before, after)
 
 
 if __name__ == "__main__":
