@@ -169,7 +169,7 @@ io.py             — HDF5 / pump-plan file loading
 ```
 app.py            — entry point
 gui/              — Qt windows and controllers
-  main_window.py  — central window (~12k lines); delegates to controllers below
+  main_window.py  — central window (~6.8k lines); delegates to controllers below
   *_controller.py — dedicated controllers for dataset, image, analysis, ROI, etc.
 domain/           — models (ROI, image stack)
 processing/       — image analysis algorithms (ROI, chromatic, spot detection)
