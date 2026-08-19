@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from unittest import mock
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
 
@@ -18,10 +19,12 @@ from lspr_imaging_app.processing.chromatic import (
     apply_affine_to_points,
     compose_similarity_matrix,
     decompose_similarity_matrix,
+    estimate_affine_chromatic_transform,
     fit_affine_matrix,
     fit_similarity_matrix,
     identity_affine_matrix,
     invert_affine_matrix,
+    prepare_registration_image,
 )
 from lspr_imaging_app.domain.models import PreprocessingSettings
 from lspr_imaging_app.gui.analysis_tasks import _estimate_chromatic_models_task, _sampled_wavelengths
@@ -103,6 +106,39 @@ class TestSimilarityComposeDecompose(unittest.TestCase):
         self.assertAlmostEqual(angle, 0.0, places=8)
         self.assertAlmostEqual(shift_x, 0.0, places=8)
         self.assertAlmostEqual(shift_y, 0.0, places=8)
+
+
+class TestEstimateAffineChromaticTransformReferencePrepared(unittest.TestCase):
+    def test_reference_prepared_skips_recomputation_and_matches_the_default_path(self) -> None:
+        # Regression test for the perf fix in gui/analysis_tasks.py's chromatic
+        # loop: prepare_registration_image(reference_image) - two full-image
+        # Gaussian blurs + two Sobel passes - used to run again on every
+        # wavelength even though the reference image never changes within one
+        # "Estimate chromatic transforms" run. reference_prepared lets a caller
+        # supply that once. This confirms it actually avoids the recomputation
+        # (mocked_prepare.call_count) and that doing so doesn't change the result.
+        rng = np.random.default_rng(42)
+        reference = rng.normal(loc=500.0, scale=80.0, size=(220, 220)).astype(np.float32)
+        target = np.roll(reference, shift=(2, 3), axis=(0, 1))
+        kwargs = dict(mode="fast", tile_size_px=32, search_radius_px=8)
+
+        result_default = estimate_affine_chromatic_transform(reference, target, **kwargs)
+
+        prepared = prepare_registration_image(reference)
+        with mock.patch(
+            "lspr_imaging_app.processing.chromatic.prepare_registration_image", wraps=prepare_registration_image
+        ) as mocked_prepare:
+            result_with_prepared = estimate_affine_chromatic_transform(
+                reference, target, reference_prepared=prepared, **kwargs
+            )
+        # Only the target should be prepared inside the call - the reference
+        # was supplied pre-prepared, so it must not be re-derived.
+        self.assertEqual(mocked_prepare.call_count, 1)
+
+        np.testing.assert_array_equal(result_with_prepared.affine_matrix, result_default.affine_matrix)
+        self.assertEqual(result_with_prepared.tile_count, result_default.tile_count)
+        self.assertEqual(result_with_prepared.inlier_count, result_default.inlier_count)
+        self.assertEqual(result_with_prepared.rmse_px, result_default.rmse_px)
 
 
 class TestEstimateChromaticModelsExclusion(unittest.TestCase):
