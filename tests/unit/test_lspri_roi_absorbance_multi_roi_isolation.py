@@ -125,9 +125,9 @@ class TestMultiRoiAbsorbanceIsolation(unittest.TestCase):
             tmp_path = Path(tmp)
             result = _run_task(tmp_path, selected_roi_ids=(1, 2), roi_a=self.roi_a, roi_b=self.roi_b)
 
-            absorbance_a = float(result.area_roi_results[1].absorbance[0])
-            absorbance_b = float(result.area_roi_results[2].absorbance[0])
-            combined_absorbance = float(result.absorbance[0])
+            absorbance_a = float(result.area_roi_results[1].formula_values[0])
+            absorbance_b = float(result.area_roi_results[2].formula_values[0])
+            combined_absorbance = float(result.formula_values[0])
 
             self.assertTrue(np.isfinite(absorbance_a))
             self.assertTrue(np.isfinite(absorbance_b))

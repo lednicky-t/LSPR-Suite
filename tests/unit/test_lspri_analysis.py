@@ -105,7 +105,7 @@ class TestFitAbsorbanceCurve(unittest.TestCase):
         fit = fit_absorbance_curve(x, y, poly_order=2)
         self.assertIsNotNone(fit.peak_wavelength_nm)
         self.assertAlmostEqual(fit.peak_wavelength_nm, 600.0, places=3)
-        self.assertAlmostEqual(fit.peak_absorbance, 1.0, places=6)
+        self.assertAlmostEqual(fit.peak_value, 1.0, places=6)
         # A parabola sampled symmetrically about its own peak has its
         # area-weighted centroid exactly at the peak.
         self.assertIsNotNone(fit.centroid_nm)
@@ -132,7 +132,7 @@ class TestFitAbsorbanceCurve(unittest.TestCase):
         fit = fit_absorbance_curve(np.array([500.0]), np.array([0.5]))
         self.assertIsNone(fit.peak_wavelength_nm)
         self.assertIsNone(fit.centroid_nm)
-        self.assertIsNone(fit.peak_absorbance)
+        self.assertIsNone(fit.peak_value)
         self.assertEqual(fit.coefficients.size, 0)
 
 
@@ -147,7 +147,7 @@ class TestFitGaussianCurve(unittest.TestCase):
         fit = fit_gaussian_curve(x, y)
         self.assertIsNotNone(fit.peak_wavelength_nm)
         self.assertAlmostEqual(fit.peak_wavelength_nm, 610.0, places=2)
-        self.assertAlmostEqual(fit.peak_absorbance, 2.1, places=2)
+        self.assertAlmostEqual(fit.peak_value, 2.1, places=2)
 
     def test_centroid_matches_center_for_symmetric_peak(self) -> None:
         x, y = self._exact_gaussian(center=550.0, sigma=10.0)
@@ -175,7 +175,7 @@ class TestFitGaussianCurve(unittest.TestCase):
         fit = fit_gaussian_curve(np.array([500.0, 510.0, 520.0]), np.array([0.1, 0.5, 0.1]))
         self.assertIsNone(fit.peak_wavelength_nm)
         self.assertIsNone(fit.centroid_nm)
-        self.assertIsNone(fit.peak_absorbance)
+        self.assertIsNone(fit.peak_value)
         self.assertEqual(fit.coefficients.size, 0)
 
     def test_flat_noisy_data_does_not_crash(self) -> None:
@@ -223,14 +223,14 @@ class TestMetricValueFromFit(unittest.TestCase):
         fit = fit_absorbance_curve(x, y, poly_order=2)
         value, signal = metric_value_from_fit(fit, "maximum")
         self.assertAlmostEqual(value, fit.peak_wavelength_nm, places=9)
-        self.assertAlmostEqual(signal, fit.peak_absorbance, places=9)
+        self.assertAlmostEqual(signal, fit.peak_value, places=9)
 
     def test_centroid_metric_returns_centroid_and_interpolated_signal(self) -> None:
         x, y = TestFitAbsorbanceCurve()._symmetric_parabola()
         fit = fit_absorbance_curve(x, y, poly_order=2)
         value, signal = metric_value_from_fit(fit, "centroid")
         self.assertAlmostEqual(value, fit.centroid_nm, places=9)
-        expected_signal = float(np.interp(fit.centroid_nm, fit.fitted_wavelengths_nm, fit.fitted_absorbance))
+        expected_signal = float(np.interp(fit.centroid_nm, fit.fitted_wavelengths_nm, fit.fitted_values))
         self.assertAlmostEqual(signal, expected_signal, places=9)
 
     def test_unknown_metric_key_returns_none_none(self) -> None:
