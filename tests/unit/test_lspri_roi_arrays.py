@@ -75,7 +75,7 @@ class TestWorkspaceRoundTrip(unittest.TestCase):
         loaded = self._round_trip(area_rois, [array_group])
 
         loaded_area_rois = loaded[2]
-        loaded_area_roi_arrays = loaded[11]
+        loaded_area_roi_arrays = loaded[10]
         self.assertEqual(len(loaded_area_roi_arrays), 1)
         restored_group = loaded_area_roi_arrays[0]
         self.assertEqual(restored_group.array_id, "array_1")
@@ -96,7 +96,7 @@ class TestWorkspaceRoundTrip(unittest.TestCase):
             del payload["area_roi_arrays"]
             write_json_file(path, payload)
             loaded = load_processing_profile(path)
-        self.assertEqual(loaded[11], [])
+        self.assertEqual(loaded[10], [])
         # And the AreaRoi geometry fields fall back to defaults that reproduce
         # the exact pre-existing circle/annulus behavior.
         roi = loaded[2][0]

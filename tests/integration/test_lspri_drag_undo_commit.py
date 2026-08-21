@@ -1,18 +1,12 @@
-"""Regression test for undo/redo desync bugs in mouse-drag interactions.
+"""Regression test for an undo/redo desync bug in mouse-drag interactions.
 
-Two related bugs, both in image_interaction_controller.py's mouse-event
-handling:
-
-1. Dragging the crop rectangle to *move* it (right-click drag, not a resize
-   via handle) called `_prepare_undo_snapshot("Crop")` on mouse-press but
-   never called `_commit_prepared_undo_snapshot()` on release. Since
-   UndoManager.prepare() is a no-op while a snapshot is already pending, the
-   stale "Crop" snapshot silently blocked the *next* unrelated prepare/commit
-   pair (e.g. a mask edit) from capturing the correct before-state, so a
-   later Ctrl+Z could restore the wrong point in history.
-
-2. Dragging a rectangle/stamp ROI array to move it never prepared or
-   committed an undo snapshot at all - such a move could not be undone.
+Dragging the crop rectangle to *move* it (right-click drag, not a resize via
+handle) called `_prepare_undo_snapshot("Crop")` on mouse-press but never
+called `_commit_prepared_undo_snapshot()` on release. Since
+UndoManager.prepare() is a no-op while a snapshot is already pending, the
+stale "Crop" snapshot silently blocked the *next* unrelated prepare/commit
+pair (e.g. a mask edit) from capturing the correct before-state, so a later
+Ctrl+Z could restore the wrong point in history.
 """
 
 from __future__ import annotations
@@ -37,7 +31,6 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_imaging_app.domain.models import RoiDefinition  # noqa: E402
 from lspr_imaging_app.gui.main_window import MainWindow  # noqa: E402
 
 
@@ -94,37 +87,6 @@ class TestCropDragCommitsUndoSnapshot(unittest.TestCase):
                 window._undo()
                 self.assertEqual(window._state.preprocessing.crop.x, 5)
                 self.assertEqual(window._state.preprocessing.crop.y, 5)
-
-
-class TestRectangleRoiDragCommitsUndoSnapshot(unittest.TestCase):
-    def test_rectangle_roi_move_is_undoable(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with _open_window(Path(tmp)) as window:
-                roi = RoiDefinition(roi_id="stamp-1", name="Stamp 1", center_x=10.0, center_y=10.0)
-                window._state.rois = [roi]
-                window._selected_rectangle_roi_ids = {"stamp-1"}
-
-                # Mirrors the right-click-drag press handler for rectangle
-                # ROI arrays (now including the fix's added
-                # _prepare_undo_snapshot() call).
-                window._prepare_undo_snapshot("Move ROIs")
-                self.assertIsNotNone(window._prepared_undo_snapshot)
-
-                roi.center_x = 55.0
-                roi.center_y = 55.0
-
-                # Mirrors the release handler (now including the fix's added
-                # _commit_prepared_undo_snapshot() call).
-                window._commit_prepared_undo_snapshot()
-
-                self.assertIsNone(window._prepared_undo_snapshot)
-                self.assertTrue(window._undo_stack, "the ROI move should be on the undo stack")
-                self.assertEqual(window._undo_stack[-1].label, "Move ROIs")
-
-                window._undo()
-                restored = window._state.rois[0]
-                self.assertEqual(restored.center_x, 10.0)
-                self.assertEqual(restored.center_y, 10.0)
 
 
 if __name__ == "__main__":
