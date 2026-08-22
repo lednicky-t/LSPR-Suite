@@ -12,6 +12,16 @@ This file focuses on repo topology, commands, quick-reference maps, and **how to
 - For complex architecture decisions → handle in main session (opus/sonnet)
 - For writing tests → use the `test-writer` agent (haiku)
 
+## Abbreviations
+
+The maintainer uses shorthand in conversation. Recognize these; expand on first use in your own
+writing unless the maintainer clearly knows the term already. Add new ones here as they come up.
+
+| Abbrev | Meaning |
+|--------|---------|
+| CC | Chromatic correction |
+| wl | Wavelength |
+
 ## Who You're Working With (read this first)
 
 The maintainer of this project is a **scientist, not a professional software developer**.
