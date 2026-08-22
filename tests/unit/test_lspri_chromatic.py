@@ -24,9 +24,10 @@ from lspr_imaging_app.processing.chromatic import (
     fit_similarity_matrix,
     identity_affine_matrix,
     invert_affine_matrix,
+    populate_dense_roi_positions,
     prepare_registration_image,
 )
-from lspr_imaging_app.domain.models import PreprocessingSettings
+from lspr_imaging_app.domain.models import AreaRoi, PreprocessingSettings
 from lspr_imaging_app.gui.analysis_tasks import _estimate_chromatic_models_task, _sampled_wavelengths
 
 
@@ -62,6 +63,42 @@ class TestAffineFit(unittest.TestCase):
         empty = np.zeros((0, 2))
         result = apply_affine_to_points(empty, identity_affine_matrix())
         self.assertEqual(result.shape, (0, 2))
+
+
+class TestPopulateDenseRoiPositions(unittest.TestCase):
+    def setUp(self) -> None:
+        self.rois = [
+            AreaRoi(area_roi_id=1, center_x=10.0, center_y=20.0, sample_radius_px=5.0),
+            AreaRoi(area_roi_id=2, center_x=50.0, center_y=60.0, sample_radius_px=5.0),
+        ]
+        self.matrices = {
+            (0, 450.0): np.array([[1.0, 0.0, 3.0], [0.0, 1.0, -2.0]]),
+            (0, 550.0): identity_affine_matrix(),
+        }
+
+    def test_matches_apply_affine_to_points_per_key(self) -> None:
+        populate_dense_roi_positions(self.rois, list(self.matrices), self.matrices.get)
+        for roi in self.rois:
+            for key, matrix in self.matrices.items():
+                expected = apply_affine_to_points(np.array([[roi.center_x, roi.center_y]]), matrix)[0]
+                np.testing.assert_allclose(roi.per_wavelength[key], expected)
+
+    def test_overwrites_existing_entries_on_recall(self) -> None:
+        populate_dense_roi_positions(self.rois, list(self.matrices), self.matrices.get)
+        self.rois[0].per_wavelength[(0, 450.0)] = (999.0, 999.0)  # simulate a manual nudge
+        populate_dense_roi_positions(self.rois, list(self.matrices), self.matrices.get)
+        expected = apply_affine_to_points(np.array([[10.0, 20.0]]), self.matrices[(0, 450.0)])[0]
+        np.testing.assert_allclose(self.rois[0].per_wavelength[(0, 450.0)], expected)
+
+    def test_missing_affine_for_a_key_leaves_that_key_unpopulated(self) -> None:
+        populate_dense_roi_positions(self.rois, [(0, 450.0), (0, 999.0)], lambda key: self.matrices.get(key))
+        self.assertIn((0, 450.0), self.rois[0].per_wavelength)
+        self.assertNotIn((0, 999.0), self.rois[0].per_wavelength)
+
+    def test_empty_rois_or_keys_is_a_no_op(self) -> None:
+        populate_dense_roi_positions([], list(self.matrices), self.matrices.get)
+        populate_dense_roi_positions(self.rois, [], self.matrices.get)
+        self.assertIsNone(self.rois[0].per_wavelength)
 
 
 class TestSimilarityFit(unittest.TestCase):

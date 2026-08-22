@@ -97,6 +97,38 @@ class TestRoiTableJson(unittest.TestCase):
         self.assertEqual(restored.sample_mask.x0, 1)
         self.assertEqual(restored.sample_mask.y0, 1)
 
+    def test_per_wavelength_positions_round_trip(self) -> None:
+        roi = AreaRoi(
+            area_roi_id=3,
+            center_x=10.0,
+            center_y=20.0,
+            sample_radius_px=4.0,
+            per_wavelength={
+                (0, 450.0): (11.5, 19.0),
+                (0, 550.0): (10.0, 20.0),
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "roi_table.json"
+            save_roi_table(path, [roi])
+            loaded_rois, _groups, _arrays, _sample_color, _reference_color = load_roi_table(path)
+
+        restored = loaded_rois[0]
+        self.assertIsNotNone(restored.per_wavelength)
+        self.assertEqual(set(restored.per_wavelength.keys()), {(0, 450.0), (0, 550.0)})
+        self.assertAlmostEqual(restored.per_wavelength[(0, 450.0)][0], 11.5)
+        self.assertAlmostEqual(restored.per_wavelength[(0, 450.0)][1], 19.0)
+        self.assertAlmostEqual(restored.per_wavelength[(0, 550.0)][0], 10.0)
+        self.assertAlmostEqual(restored.per_wavelength[(0, 550.0)][1], 20.0)
+
+    def test_roi_without_per_wavelength_positions_decodes_to_none(self) -> None:
+        roi = AreaRoi(area_roi_id=4, center_x=1.0, center_y=2.0, sample_radius_px=3.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "roi_table.json"
+            save_roi_table(path, [roi])
+            loaded_rois, _groups, _arrays, _sample_color, _reference_color = load_roi_table(path)
+        self.assertIsNone(loaded_rois[0].per_wavelength)
+
     def test_empty_table_round_trips_to_empty_lists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "roi_table.json"
