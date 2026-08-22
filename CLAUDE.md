@@ -84,6 +84,14 @@ control how much they spend. Respect that — be economical without sacrificing 
   you're about to start something unrelated to what's been discussed. A short line is enough, e.g.
   "This looks done — probably a good point to `/clear` before the next task, since none of this
   investigation is needed going forward."
+- **Write a short reference doc after non-trivial exploration or design work.** If a task required
+  tracing a feature across many files, reverse-engineering an undocumented subsystem, or landed on a
+  non-obvious design decision (a new shared widget/pattern, a multi-file wiring scheme), save a short
+  summary as a markdown file in the relevant app's `docs/` folder (matching the existing
+  `apps/sLSPR/acq/docs/*.md` / `apps/LSPRi/eva/docs/*.md` convention) — what was learned, key
+  `file:line` pointers, and why the decision was made. A future session can then read one file instead
+  of re-deriving the same context via exploration, which is the expensive path. Skip this for small,
+  self-contained changes — the goal is avoiding repeated re-exploration, not documenting everything.
 
 ---
 
