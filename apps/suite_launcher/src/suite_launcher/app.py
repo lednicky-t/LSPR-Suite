@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -18,10 +19,12 @@ from typing import Callable
 
 from platformdirs import user_config_dir
 
-from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QTextCursor
+from PyQt6.QtCore import QLockFile, QSettings, QStandardPaths, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QPalette, QTextCursor
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -38,7 +41,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from lspr_ui import apply_base_app_theme, app_icon, get_active_theme
+from lspr_ui import APP_ID_SUITE_LAUNCHER, apply_base_app_theme, app_icon, get_active_theme, set_windows_app_user_model_id
 from lspr_core import (
     DEFAULT_LAUNCH_PROFILE,
     LAUNCH_PROFILE_ENV_VAR,
@@ -51,6 +54,7 @@ from lspr_core import (
 )
 
 from . import updater
+from .start_menu_shortcuts import refresh_start_menu_shortcuts
 from .targets import SUITE_ROOT, TARGETS, AppTarget
 from .version import APP_NAME, APP_VERSION
 
@@ -97,6 +101,96 @@ def _console_write(text: str) -> None:
         pass
 
 
+_SINGLE_INSTANCE_SERVER_NAME = "LSPRSuiteLauncherSingleInstance"
+
+
+def _instance_lock_path() -> Path:
+    app_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    base = Path(app_data) if app_data else (Path.cwd() / ".appdata")
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "lspr_suite_launcher.lock"
+
+
+def _instance_lock_owner_is_running(pid: int) -> bool:
+    # Mirrors apps/sLSPR/acq/src/lspr_app/app.py's _process_is_running: same
+    # "can we open a handle" check for the same reason (Windows only).
+    if pid <= 0 or os.name != "nt":
+        return False
+    kernel32 = ctypes.windll.kernel32
+    process_query_limited_information = 0x1000
+    synchronize = 0x00100000
+    handle = kernel32.OpenProcess(process_query_limited_information | synchronize, False, pid)
+    if handle:
+        kernel32.CloseHandle(handle)
+        return True
+    return kernel32.GetLastError() == 5
+
+
+def _recover_stale_instance_lock(lock: QLockFile) -> bool:
+    found, pid, host, _app_name = lock.getLockInfo()
+    if not found or pid <= 0:
+        return False
+    if host and host.lower() != socket.gethostname().lower():
+        return False
+    if _instance_lock_owner_is_running(pid):
+        return False
+    try:
+        lock.removeStaleLockFile()
+    except Exception:
+        pass
+    if lock.tryLock(0):
+        return True
+    try:
+        Path(lock.fileName()).unlink(missing_ok=True)
+    except OSError:
+        pass
+    return lock.tryLock(0)
+
+
+def _activate_running_instance() -> bool:
+    """Ask an already-running Suite Launcher to raise its window.
+
+    Returns True if one answered (meaning this process should exit rather
+    than start its own window - see main()). 500ms is generous for a
+    same-machine local-socket round trip; a launcher that's mid-startup and
+    hasn't opened its server yet just means this returns False and the new
+    process proceeds normally, same as if no instance were running at all.
+    """
+    client = QLocalSocket()
+    client.connectToServer(_SINGLE_INSTANCE_SERVER_NAME)
+    if not client.waitForConnected(500):
+        return False
+    client.write(b"activate")
+    client.waitForBytesWritten(500)
+    client.disconnectFromServer()
+    return True
+
+
+def _start_single_instance_server(window: "MainWindow") -> QLocalServer:
+    """Listen for _activate_running_instance() pings from later launches.
+
+    Removing any stale registration first matters after a crash: Qt's local
+    server implementation on some platforms leaves the named pipe/socket
+    registered if the previous process never called close(), which would
+    otherwise make listen() fail here even though nothing is really running.
+    """
+    QLocalServer.removeServer(_SINGLE_INSTANCE_SERVER_NAME)
+    server = QLocalServer()
+    server.listen(_SINGLE_INSTANCE_SERVER_NAME)
+
+    def _on_new_connection() -> None:
+        connection = server.nextPendingConnection()
+        if connection is not None:
+            connection.readyRead.connect(connection.readAll)
+            connection.disconnected.connect(connection.deleteLater)
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+
+    server.newConnection.connect(_on_new_connection)
+    return server
+
+
 def _settings_bool(settings: QSettings, key: str, default: bool = False) -> bool:
     raw = settings.value(key, None)
     if raw is None:
@@ -121,6 +215,7 @@ CARD_THEMES = [
 ]
 
 AUTO_LAUNCH_DELAY_MS = 3000
+SETTINGS_AUTO_LAUNCH_ENABLED_KEY = "autoLaunchEnabled"
 SETTINGS_LAST_TARGET_KEY = "lastTargetKey"
 SETTINGS_LAUNCH_PROFILE_KEY = "launchProfileKey"
 SETTINGS_DIAGNOSTICS_PROFILE_KEY = "diagnosticsProfileKey"
@@ -290,10 +385,31 @@ class SettingsResetDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings — Backup & Reset")
         self.setMinimumWidth(560)
+        self._settings = QSettings(SETTINGS_ORGANIZATION, SETTINGS_APPLICATION)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
+
+        startup_heading = QLabel("Startup behavior")
+        startup_heading.setObjectName("SettingsSectionHeading")
+        layout.addWidget(startup_heading)
+
+        self._auto_launch_checkbox = QCheckBox(
+            "Automatically launch the last-used app a few seconds after this window opens"
+        )
+        self._auto_launch_checkbox.setObjectName("AutoLaunchToggle")
+        self._auto_launch_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._auto_launch_checkbox.setChecked(
+            _settings_bool(self._settings, SETTINGS_AUTO_LAUNCH_ENABLED_KEY, True)
+        )
+        self._auto_launch_checkbox.toggled.connect(self._on_auto_launch_toggled)
+        layout.addWidget(self._auto_launch_checkbox)
+
+        divider = QFrame()
+        divider.setObjectName("SettingsDivider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
 
         intro = QLabel(
             "Each app below stores its own settings (window layout, last-used values, "
@@ -404,8 +520,15 @@ class SettingsResetDialog(QDialog):
                 font-weight: 600;
             }
             QPushButton#SettingsRowResetButton:hover { border-color: #d66d6d; background-color: rgba(255, 90, 90, 0.08); }
+            QLabel#SettingsSectionHeading { color: #f5f8ff; font-size: 12px; font-weight: 700; }
+            QCheckBox#AutoLaunchToggle { color: #c6d0df; font-size: 11px; }
+            QFrame#SettingsDivider { background-color: rgba(255, 255, 255, 0.08); border: none; }
             """
         )
+
+    def _on_auto_launch_toggled(self, checked: bool) -> None:
+        self._settings.setValue(SETTINGS_AUTO_LAUNCH_ENABLED_KEY, bool(checked))
+        self._settings.sync()
 
     def _timestamped_backup_dir(self) -> Path:
         return SETTINGS_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -611,7 +734,20 @@ class LaunchCard(QFrame):
         header_col.addWidget(address)
 
         local_version = target.resolve_local_version()
-        self.version_label = QLabel(f"v{local_version}" if local_version else "")
+        # Passing `self` (the card) as the parent here, instead of the usual
+        # bare QLabel(...) + later addWidget(), matters specifically because
+        # setVisible() is called on this label below: header_col/top_row are
+        # still bare, not-yet-attached QVBoxLayout/QHBoxLayout objects at
+        # this point (they only become part of self's real widget tree once
+        # layout.addLayout(top_row) runs further down), so addWidget() alone
+        # would NOT give this label a real parent widget yet. setVisible()
+        # on a still-parentless widget makes Qt briefly realize it as a
+        # genuine top-level OS window (default 640x480 geometry, actually
+        # shown) instead of just setting a property - confirmed via a live
+        # widget-event trace (_TemporaryStartupWidgetTracer), not guessed.
+        # Constructing with the parent already set sidesteps the whole
+        # layout-attachment-order question.
+        self.version_label = QLabel(f"v{local_version}" if local_version else "", self)
         self.version_label.setObjectName("CardVersion")
         self.version_label.setWordWrap(True)
         self.version_label.setVisible(bool(local_version))
@@ -925,6 +1061,17 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
+        # Windows paints a new native window's client area with the default
+        # system background (white) for the first frame or two, before Qt's
+        # own paint pass (the gradient background set via setStyleSheet()
+        # below) has run - visible as a brief white flash on every launch.
+        # Giving the window its own dark QPalette and turning on
+        # autoFillBackground makes Qt answer that very first native paint
+        # with the right color instead of white, so there's nothing to flash.
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#0d1320"))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
         self.settings = QSettings(SETTINGS_ORGANIZATION, SETTINGS_APPLICATION)
         self._countdown_remaining = 0
         self._countdown_elapsed_ms = 0
@@ -960,7 +1107,7 @@ class MainWindow(QMainWindow):
         self._process_poll_timer.setInterval(1000)
         self._process_poll_timer.timeout.connect(self._refresh_running_app_statuses)
 
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle("LSPR Suite")
         self.setMinimumSize(900, 560)
 
         root = QWidget()
@@ -1042,6 +1189,7 @@ class MainWindow(QMainWindow):
                 self._cycle_diagnostics_profile if target.key == "slspr_acq" else None,
                 self._diagnostics_profile_label if target.key == "slspr_acq" else None,
                 self._diagnostics_profile_tooltip if target.key == "slspr_acq" else None,
+                parent=self,
             )
             self.cards[target.key] = card
             grid.addWidget(card, index // 2, index % 2)
@@ -1104,6 +1252,16 @@ class MainWindow(QMainWindow):
     def _open_settings_dialog(self) -> None:
         dialog = SettingsResetDialog(self)
         dialog.exec()
+        # The dialog can be opened while a countdown is already running -
+        # if the user just turned auto-launch off in it, cancel that
+        # countdown immediately rather than letting it finish anyway.
+        auto_launch_enabled = _settings_bool(self.settings, SETTINGS_AUTO_LAUNCH_ENABLED_KEY, True)
+        if not auto_launch_enabled and self._auto_launch_target is not None:
+            self._clear_auto_launch()
+            self.countdown_label.setText(
+                "Automatic launch is turned off (Settings). Press Launch on a card to open an app."
+            )
+            self._set_launch_progress(None, 0, "Idle", "Automatic launch is turned off.")
 
     def _show_console_dialog(self) -> None:
         if self._console_dialog is None:
@@ -1306,6 +1464,12 @@ class MainWindow(QMainWindow):
         return target
 
     def _schedule_auto_launch(self) -> None:
+        if not _settings_bool(self.settings, SETTINGS_AUTO_LAUNCH_ENABLED_KEY, True):
+            self.countdown_label.setText(
+                "Automatic launch is turned off (Settings). Press Launch on a card to open an app."
+            )
+            self._set_launch_progress(None, 0, "Idle", "Automatic launch is turned off.")
+            return
         target = self._get_last_target()
         if target is None:
             self.countdown_label.setText("No recent app selected yet. Choose one to remember it for next time.")
@@ -1734,17 +1898,54 @@ def _apply_palette(app: QApplication) -> None:
 
 
 def main() -> None:
+    set_windows_app_user_model_id(APP_ID_SUITE_LAUNCHER)
     app = QApplication(sys.argv)
+
+    # Checked before any theme/icon/window work below: a second launch while
+    # one is already open should do as little as possible - ideally nothing
+    # more than asking the first instance to raise itself - rather than
+    # building (and briefly flashing) a UI of its own before exiting.
+    instance_lock = QLockFile(str(_instance_lock_path()))
+    if not instance_lock.tryLock(0) and not _recover_stale_instance_lock(instance_lock):
+        _activate_running_instance()
+        return
+    app.instance_lock = instance_lock
+
     app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName("LSPR Suite")
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(SETTINGS_ORGANIZATION)
     app.setOrganizationDomain("lspr.local")
     app.setStyle("Fusion")
     _apply_palette(app)
     app.setWindowIcon(app_icon())
+    refresh_start_menu_shortcuts()
     font = QFont("Segoe UI", 10)
     app.setFont(font)
     window = MainWindow()
+    # Without an explicit size, the window only grows to fit the card grid
+    # *after* Windows has already started showing it - so the native window
+    # goes through several visibly distinct in-between states (a tiny
+    # icon-and-titlebar-only window, then a resize, then paint catching up)
+    # instead of appearing once, already at its final size. Matches the
+    # "two visibly distinct show states" issue already diagnosed in
+    # lspr_imaging_app.app.main() - same fix: settle geometry before the
+    # single show() call.
+    window.resize(900, 560)
+    # Even with geometry already settled, show() makes the native window
+    # visible to Windows before Qt has actually painted the card grid's
+    # heavy stylesheet cascade into it - Windows composites whatever's
+    # already in the backing store (nothing yet) for a frame or more before
+    # Qt's own paint catches up. grab() forces that full paint to happen
+    # right now, while the window is still hidden, so by the time show()
+    # runs there's already-rendered content to display instead of a gap to
+    # fill live. Same root lesson as lspr_app.gui.main_window's deferred
+    # _complete_startup_show(): never reveal the window before its content
+    # is actually ready - just applied here via a forced paint instead of a
+    # splash screen, since this window's construction is already fully
+    # synchronous (no async data loading to wait on).
+    window.grab()
+    app.single_instance_server = _start_single_instance_server(window)
     window.show()
     sys.exit(app.exec())
 

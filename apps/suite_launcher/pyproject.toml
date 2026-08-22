@@ -15,6 +15,10 @@ dependencies = [
     "PyQt6-sip>=13.12.0",
     "lspr-ui>=0.1.0",
     "certifi",
+    # Used to stamp Start Menu shortcuts with each app's AppUserModelID, so
+    # the Windows taskbar right-click popup shows the app's real name/icon
+    # instead of "Python" - see start_menu_shortcuts.py.
+    "pywin32; sys_platform == 'win32'",
 ]
 
 [project.scripts]

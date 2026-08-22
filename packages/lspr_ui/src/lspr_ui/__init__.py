@@ -41,8 +41,19 @@ from .theme import (
 )
 from .ui_helpers import CompactWedgeSlider, DualHandleRangeSlider, create_status_dot_icon, make_compact_spinbox, make_info_button, make_sim_slider, make_window_button
 from .version import APP_NAME, APP_VERSION, __version__, version_string
+from .windows_taskbar import (
+    APP_ID_LSPRI_EVALUATION,
+    APP_ID_SLSPR_ACQUISITION,
+    APP_ID_SLSPR_EVALUATION,
+    APP_ID_SUITE_LAUNCHER,
+    set_windows_app_user_model_id,
+)
 
 __all__ = [
+    "APP_ID_LSPRI_EVALUATION",
+    "APP_ID_SLSPR_ACQUISITION",
+    "APP_ID_SLSPR_EVALUATION",
+    "APP_ID_SUITE_LAUNCHER",
     "APP_NAME",
     "APP_VERSION",
     "APP_THEME",
@@ -76,6 +87,7 @@ __all__ = [
     "residual_icon",
     "section_header_label_stylesheet",
     "set_active_theme",
+    "set_windows_app_user_model_id",
     "snowflake_icon",
     "standard_icon",
     "standard_push_button_stylesheet",
