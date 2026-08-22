@@ -122,12 +122,18 @@ class TestModelForImageKey(unittest.TestCase):
 class TestMaxShiftPx(unittest.TestCase):
     """ChromaticController.max_shift_px: for an affine map, |predicted(p) - p|
     over a rectangle is maximized at a corner - this is the number the CC
-    panel's Status row now shows instead of a per-model mean RMSE, since a
+    panel's status line now shows instead of a per-model mean RMSE, since a
     physical worst-case pixel displacement is far more directly interpretable
-    than an abstract fit-quality residual (see the 2026-08-22 conversation)."""
+    than an abstract fit-quality residual. Only the dataset's first and last
+    (non-0 nm) wavelengths are checked, not every sampled/interpolated one in
+    between - chromatic displacement grows with distance from the reference,
+    so the worst case is always at one of the two sweep extremes (see the
+    2026-08-22 conversation)."""
 
     @staticmethod
-    def _make_window(models, *, image_shape=(100, 200), chromatic_landmarks=()):
+    def _make_window(models, *, image_shape=(100, 200), wavelength_values=None, chromatic_landmarks=()):
+        if wavelength_values is None:
+            wavelength_values = sorted({float(model.wavelength_nm) for model in models})
         return SimpleNamespace(
             _state=SimpleNamespace(
                 chromatic_models=models,
@@ -135,6 +141,7 @@ class TestMaxShiftPx(unittest.TestCase):
                 preprocessing=SimpleNamespace(chromatic_feature_count=2),
             ),
             _current_processed_image=np.zeros(image_shape, dtype=np.float32),
+            _wavelength_values=list(wavelength_values),
         )
 
     def test_returns_none_without_an_image(self) -> None:
@@ -145,26 +152,39 @@ class TestMaxShiftPx(unittest.TestCase):
         self.assertIsNone(controller.max_shift_px())
 
     def test_returns_none_without_models(self) -> None:
-        window = self._make_window([])
+        window = self._make_window([], wavelength_values=[500.0])
         controller = ChromaticController(window)
         controller.sample_image_keys = lambda: []
         self.assertIsNone(controller.max_shift_px())
 
-    def test_finds_the_largest_corner_displacement_and_its_wavelength(self) -> None:
+    def test_returns_none_without_a_wavelength_range(self) -> None:
+        # Only 0 nm present (or nothing at all) -> no usable range once it's
+        # excluded.
+        models = [ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=0.0)]
+        window = self._make_window(models, wavelength_values=[0.0])
+        controller = ChromaticController(window)
+        controller.sample_image_keys = lambda: []
+        self.assertIsNone(controller.max_shift_px())
+
+    def test_finds_the_larger_of_first_and_last_wavelength_shifts(self) -> None:
         height, width = 100, 200
         # Pure x-translations, so |displacement| is the same at every corner -
-        # two different magnitudes make "the largest one" unambiguous.
-        small_shift = np.array([[1.0, 0.0, 3.0], [0.0, 1.0, 0.0]])
-        large_shift = np.array([[1.0, 0.0, 12.5], [0.0, 1.0, 0.0]])
+        # two different magnitudes make "the larger one" unambiguous. A
+        # middle wavelength (550 nm) has the largest matrix-implied shift of
+        # all three, but must be ignored: only 450 (first) and 650 (last)
+        # are ever checked.
+        first_shift = np.array([[1.0, 0.0, 3.0], [0.0, 1.0, 0.0]])
+        middle_shift = np.array([[1.0, 0.0, 99.0], [0.0, 1.0, 0.0]])
+        last_shift = np.array([[1.0, 0.0, 12.5], [0.0, 1.0, 0.0]])
         models = [
-            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=450.0, affine_matrix=small_shift.tolist()),
-            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=650.0, affine_matrix=large_shift.tolist()),
+            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=450.0, affine_matrix=first_shift.tolist()),
+            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=550.0, affine_matrix=middle_shift.tolist()),
+            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=650.0, affine_matrix=last_shift.tolist()),
             # A second spectral cube repeating 650 nm's matrix (every cube
-            # shares the same wavelength matrix) must not be double-counted
-            # or otherwise change the result.
-            ChromaticTransformModel(spectral_cube_index=1, wavelength_nm=650.0, affine_matrix=large_shift.tolist()),
+            # shares the same wavelength matrix) must not change the result.
+            ChromaticTransformModel(spectral_cube_index=1, wavelength_nm=650.0, affine_matrix=last_shift.tolist()),
         ]
-        window = self._make_window(models, image_shape=(height, width))
+        window = self._make_window(models, image_shape=(height, width), wavelength_values=[450.0, 550.0, 650.0])
         controller = ChromaticController(window)
         controller.sample_image_keys = lambda: []
         result = controller.max_shift_px()
@@ -174,11 +194,29 @@ class TestMaxShiftPx(unittest.TestCase):
         self.assertEqual(wavelength, 650.0)
         self.assertFalse(is_direct)  # no sample keys wired up -> nothing counts as directly fit here
 
+    def test_ignores_0nm_when_picking_the_first_wavelength(self) -> None:
+        height, width = 100, 200
+        dark_frame_shift = np.array([[1.0, 0.0, 99.0], [0.0, 1.0, 0.0]])  # must never be picked as "first"
+        first_shift = np.array([[1.0, 0.0, 3.0], [0.0, 1.0, 0.0]])
+        last_shift = np.array([[1.0, 0.0, 12.5], [0.0, 1.0, 0.0]])
+        models = [
+            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=0.0, affine_matrix=dark_frame_shift.tolist()),
+            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=450.0, affine_matrix=first_shift.tolist()),
+            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=650.0, affine_matrix=last_shift.tolist()),
+        ]
+        window = self._make_window(models, image_shape=(height, width), wavelength_values=[0.0, 450.0, 650.0])
+        controller = ChromaticController(window)
+        controller.sample_image_keys = lambda: []
+        shift_px, wavelength, _is_direct = controller.max_shift_px()
+        self.assertAlmostEqual(shift_px, 12.5, places=6)
+        self.assertEqual(wavelength, 650.0)
+
     def test_marks_a_directly_landmark_fit_wavelength_as_such(self) -> None:
         matrix = np.array([[1.0, 0.0, 5.0], [0.0, 1.0, 0.0]])
         models = [ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=500.0, affine_matrix=matrix.tolist())]
         window = self._make_window(
             models,
+            wavelength_values=[500.0],
             chromatic_landmarks=[
                 SimpleNamespace(landmark_id=1, spectral_cube_index=0, wavelength_nm=500.0, x_px=1.0, y_px=1.0),
                 SimpleNamespace(landmark_id=2, spectral_cube_index=0, wavelength_nm=500.0, x_px=2.0, y_px=2.0),
@@ -195,6 +233,7 @@ class TestMaxShiftPx(unittest.TestCase):
         models = [ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=500.0, affine_matrix=matrix.tolist())]
         window = self._make_window(
             models,
+            wavelength_values=[500.0],
             chromatic_landmarks=[
                 SimpleNamespace(landmark_id=1, spectral_cube_index=0, wavelength_nm=500.0, x_px=1.0, y_px=1.0),
                 # landmark 2 missing at 500nm -> not a complete sample.
