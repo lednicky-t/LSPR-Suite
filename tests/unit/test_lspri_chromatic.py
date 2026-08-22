@@ -18,6 +18,7 @@ import numpy as np
 from lspr_imaging_app.processing.chromatic import (
     affine_residuals,
     apply_affine_to_points,
+    compose_affine_matrices,
     compose_similarity_matrix,
     decompose_similarity_matrix,
     estimate_affine_chromatic_transform,
@@ -66,6 +67,22 @@ class TestAffineFit(unittest.TestCase):
         self.assertEqual(result.shape, (0, 2))
 
 
+class TestComposeAffineMatrices(unittest.TestCase):
+    def test_matches_applying_inner_then_outer(self) -> None:
+        outer = np.array([[1.1, 0.05, 3.0], [-0.02, 0.95, -1.5]])
+        inner = np.array([[0.9, -0.1, 2.0], [0.15, 1.05, 4.0]])
+        points = np.array([[10.0, 20.0], [-5.0, 30.0], [0.0, 0.0]])
+        composed = compose_affine_matrices(outer, inner)
+        direct = apply_affine_to_points(apply_affine_to_points(points, inner), outer)
+        via_composed = apply_affine_to_points(points, composed)
+        np.testing.assert_allclose(via_composed, direct, atol=1e-10)
+
+    def test_composing_with_its_own_inverse_is_identity(self) -> None:
+        matrix = np.array([[1.2, 0.1, 5.0], [-0.1, 0.8, -2.0]])
+        composed = compose_affine_matrices(matrix, invert_affine_matrix(matrix))
+        np.testing.assert_allclose(composed, identity_affine_matrix(), atol=1e-8)
+
+
 class TestModelForImageKey(unittest.TestCase):
     """ChromaticController.model_for_image_key looks up a model by
     (spectral_cube_index, wavelength_nm) through a dict cached on the
@@ -100,6 +117,94 @@ class TestModelForImageKey(unittest.TestCase):
         self.window._state.chromatic_models = new_models
         found = self.controller.model_for_image_key((0, 450.0))
         self.assertIs(found, new_models[0])
+
+
+class TestMaxShiftPx(unittest.TestCase):
+    """ChromaticController.max_shift_px: for an affine map, |predicted(p) - p|
+    over a rectangle is maximized at a corner - this is the number the CC
+    panel's Status row now shows instead of a per-model mean RMSE, since a
+    physical worst-case pixel displacement is far more directly interpretable
+    than an abstract fit-quality residual (see the 2026-08-22 conversation)."""
+
+    @staticmethod
+    def _make_window(models, *, image_shape=(100, 200), chromatic_landmarks=()):
+        return SimpleNamespace(
+            _state=SimpleNamespace(
+                chromatic_models=models,
+                chromatic_landmarks=list(chromatic_landmarks),
+                preprocessing=SimpleNamespace(chromatic_feature_count=2),
+            ),
+            _current_processed_image=np.zeros(image_shape, dtype=np.float32),
+        )
+
+    def test_returns_none_without_an_image(self) -> None:
+        window = self._make_window([ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=500.0)])
+        window._current_processed_image = None
+        controller = ChromaticController(window)
+        controller.sample_image_keys = lambda: []
+        self.assertIsNone(controller.max_shift_px())
+
+    def test_returns_none_without_models(self) -> None:
+        window = self._make_window([])
+        controller = ChromaticController(window)
+        controller.sample_image_keys = lambda: []
+        self.assertIsNone(controller.max_shift_px())
+
+    def test_finds_the_largest_corner_displacement_and_its_wavelength(self) -> None:
+        height, width = 100, 200
+        # Pure x-translations, so |displacement| is the same at every corner -
+        # two different magnitudes make "the largest one" unambiguous.
+        small_shift = np.array([[1.0, 0.0, 3.0], [0.0, 1.0, 0.0]])
+        large_shift = np.array([[1.0, 0.0, 12.5], [0.0, 1.0, 0.0]])
+        models = [
+            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=450.0, affine_matrix=small_shift.tolist()),
+            ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=650.0, affine_matrix=large_shift.tolist()),
+            # A second spectral cube repeating 650 nm's matrix (every cube
+            # shares the same wavelength matrix) must not be double-counted
+            # or otherwise change the result.
+            ChromaticTransformModel(spectral_cube_index=1, wavelength_nm=650.0, affine_matrix=large_shift.tolist()),
+        ]
+        window = self._make_window(models, image_shape=(height, width))
+        controller = ChromaticController(window)
+        controller.sample_image_keys = lambda: []
+        result = controller.max_shift_px()
+        self.assertIsNotNone(result)
+        shift_px, wavelength, is_direct = result
+        self.assertAlmostEqual(shift_px, 12.5, places=6)
+        self.assertEqual(wavelength, 650.0)
+        self.assertFalse(is_direct)  # no sample keys wired up -> nothing counts as directly fit here
+
+    def test_marks_a_directly_landmark_fit_wavelength_as_such(self) -> None:
+        matrix = np.array([[1.0, 0.0, 5.0], [0.0, 1.0, 0.0]])
+        models = [ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=500.0, affine_matrix=matrix.tolist())]
+        window = self._make_window(
+            models,
+            chromatic_landmarks=[
+                SimpleNamespace(landmark_id=1, spectral_cube_index=0, wavelength_nm=500.0, x_px=1.0, y_px=1.0),
+                SimpleNamespace(landmark_id=2, spectral_cube_index=0, wavelength_nm=500.0, x_px=2.0, y_px=2.0),
+            ],
+        )
+        controller = ChromaticController(window)
+        controller.sample_image_keys = lambda: [(0, 500.0)]
+        controller.expected_feature_ids = lambda: [1, 2]
+        _shift_px, _wavelength, is_direct = controller.max_shift_px()
+        self.assertTrue(is_direct)
+
+    def test_an_incompletely_marked_sample_wavelength_is_not_direct(self) -> None:
+        matrix = np.array([[1.0, 0.0, 5.0], [0.0, 1.0, 0.0]])
+        models = [ChromaticTransformModel(spectral_cube_index=0, wavelength_nm=500.0, affine_matrix=matrix.tolist())]
+        window = self._make_window(
+            models,
+            chromatic_landmarks=[
+                SimpleNamespace(landmark_id=1, spectral_cube_index=0, wavelength_nm=500.0, x_px=1.0, y_px=1.0),
+                # landmark 2 missing at 500nm -> not a complete sample.
+            ],
+        )
+        controller = ChromaticController(window)
+        controller.sample_image_keys = lambda: [(0, 500.0)]
+        controller.expected_feature_ids = lambda: [1, 2]
+        _shift_px, _wavelength, is_direct = controller.max_shift_px()
+        self.assertFalse(is_direct)
 
 
 class TestSimilarityFit(unittest.TestCase):
@@ -248,6 +353,73 @@ class TestEstimateChromaticModelsExclusion(unittest.TestCase):
         # 0 nm still gets a model (interpolated/extrapolated from the sampled
         # wavelengths), it's just never required to have its own landmarks.
         self.assertEqual(modeled_keys, {(cube, wavelength) for cube, wavelength, _path in record_specs})
+
+
+class TestEstimateChromaticModelsReferenceWithoutLandmarks(unittest.TestCase):
+    """Regression test for the 2026-08-22 investigation: the reference
+    wavelength need not itself be landmark-marked. The sampled/landmark-marked
+    wavelengths (chromatic_sample_image_count) are their own independent
+    evenly-spaced grid, unrelated to whatever the reference is set to - a
+    workflow that starts landmark-marking, then changes the reference to a
+    wavelength outside that grid, is the common case, not an edge case.
+
+    Previously, estimate_models() silently substituted a landmark-marked
+    wavelength for the true reference when they didn't match, leaving every
+    fitted transform correct relative to that substitute but wrong relative
+    to the reference actually shown in the GUI (which never changed) - the
+    substitute's own transform came out as identity, indistinguishable from
+    "no chromatic shift at all" at that wavelength.
+    """
+
+    @staticmethod
+    def _landmark_position(feature_id: int, wavelength: float) -> tuple[float, float]:
+        # An exact, pure-translation "chromatic shift" as a function of
+        # wavelength, so the true reference->wavelength transform is known
+        # analytically: translation = (wavelength - reference_wavelength) *
+        # (dx_per_nm, dy_per_nm). With no noise in the synthetic data, the
+        # fitted/composed result should reproduce it to floating precision
+        # regardless of which landmark-marked wavelength is picked as anchor.
+        base_x, base_y = 100.0 + feature_id, 100.0 + feature_id
+        dx_per_nm, dy_per_nm = 0.015, -0.02
+        return base_x + wavelength * dx_per_nm, base_y + wavelength * dy_per_nm
+
+    def test_reference_wavelength_gets_identity_and_correct_shift_elsewhere(self) -> None:
+        sample_wavelengths = [400.0, 450.0, 500.0, 550.0, 600.0]
+        reference_wavelength = 525.0  # not one of the sampled/landmark-marked wavelengths
+        feature_ids = (1, 2, 3)
+        record_specs = [
+            (0, wavelength, f"cube0_wl{int(wavelength)}.tif")
+            for wavelength in [*sample_wavelengths, reference_wavelength]
+        ]
+        landmarks_payload = [
+            (feature_id, 0, wavelength, *self._landmark_position(feature_id, wavelength))
+            for wavelength in sample_wavelengths
+            for feature_id in feature_ids
+        ]
+        preprocessing = PreprocessingSettings(
+            chromatic_registration_mode="landmark_radial",
+            chromatic_sample_image_count=len(sample_wavelengths),
+            chromatic_feature_count=len(feature_ids),
+        )
+        reference_key = (0, reference_wavelength)
+        models = _estimate_chromatic_models_task(record_specs, preprocessing, reference_key, landmarks_payload)
+        by_wavelength = {model.wavelength_nm: model for model in models}
+
+        reference_matrix = np.asarray(by_wavelength[reference_wavelength].affine_matrix)
+        np.testing.assert_allclose(reference_matrix, identity_affine_matrix(), atol=1e-6)
+
+        roi = np.array([[300.0, 400.0]])
+        for wavelength in sample_wavelengths:
+            matrix = np.asarray(by_wavelength[wavelength].affine_matrix)
+            predicted = apply_affine_to_points(roi, matrix)[0]
+            expected_shift = (wavelength - reference_wavelength) * np.array([0.015, -0.02])
+            np.testing.assert_allclose(predicted, roi[0] + expected_shift, atol=1e-4)
+
+        # The old bug's exact signature: a sampled wavelength's transform
+        # incorrectly collapsing onto the reference's identity matrix. 400 nm
+        # is 125 nm from the reference and must show a real, non-trivial shift.
+        near_matrix = np.asarray(by_wavelength[400.0].affine_matrix)
+        self.assertGreater(float(np.abs(near_matrix - identity_affine_matrix()).max()), 0.5)
 
 
 if __name__ == "__main__":

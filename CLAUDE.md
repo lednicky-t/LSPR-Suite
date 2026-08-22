@@ -49,6 +49,13 @@ This changes *how you should communicate*, not what the engineering standards ar
   function signatures, or anything you're genuinely unsure about.
 - *Never without explicit approval:* delete data/files, change saved data formats without a migration
   plan, rewrite git history, or commit app changes to the wrong repo (see Submodule Workflow).
+- *Ask before driving a GUI app yourself* (screenshots, pywinauto, or similar automation to click
+  through a Qt app and verify behavior). The maintainer can usually do this in seconds themselves,
+  and it costs meaningfully more of your effort than it saves — a blind screen-coordinate click can
+  also miss the target window entirely (e.g. hitting an unrelated app on another monitor) with no
+  easy way to undo it. Default to static verification (read the diff, run existing tests, reason
+  about the code) and offer to hand off manual/visual verification to the maintainer; only drive the
+  GUI yourself if they ask you to.
 
 When you finish, explain **what changed, where, and how to verify it**, and name which engineering
 priority the change serves (see below) so the maintainer can judge it.
