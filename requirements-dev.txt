@@ -2,3 +2,8 @@
 pre-commit
 pyflakes
 ruff
+radon
+pytest-cov
+vulture
+import-linter
+mypy

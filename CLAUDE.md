@@ -184,6 +184,46 @@ Use tolerances for floating-point assertions, not exact equality.
 
 ---
 
+## Code Quality / Maintainability Tools (advisory only)
+
+Five dev-only tools are installed (`requirements-dev.txt`) for periodic code-health checks:
+`radon`, `pytest-cov`, `vulture`, `import-linter`, `mypy`. They are **not** wired into pre-commit
+or CI — running them is manual, by design.
+
+**Rule for agents: never run these on your own initiative.** Instead, notice when a moment fits
+and *say so* — name the tool and why it's relevant — then wait for the maintainer to say go ahead.
+Don't run them just because a task touched code; only flag it when one of the situations below
+actually applies.
+
+| Tool | Checks | Command |
+|------|--------|---------|
+| `radon` | Cyclomatic complexity + maintainability index per file | `radon mi packages apps --min B` (files below A grade); `radon cc packages apps -s -a` (complexity detail) |
+| `pytest-cov` | Test coverage % | `pytest tests/unit --cov=packages --cov=apps --cov-report=term-missing` |
+| `vulture` | Dead code (unused functions/vars/imports) | `vulture packages apps --min-confidence 80` |
+| `import-linter` | Enforces the GUI/science-code separation rule (see Engineering Priority Order) as an automated check, config at `.importlinter` | `lint-imports --config .importlinter` |
+| `mypy` | Static type checking, run **per package/app root** (a combined multi-root run hits "Duplicate module named ..." because each app's `src/` has its own top-level `main.py`) | `mypy packages/lspr_core/src --ignore-missing-imports` (repeat per package/app dir) |
+
+Moments worth flagging (suggest, don't act):
+- After a refactor touching many files across one app/package → suggest `import-linter`, to confirm no layering rule broke.
+- When a GUI file keeps growing, or after splitting one further → suggest `radon mi`, to see if complexity actually improved.
+- Before a release, or after finishing a feature branch → suggest `pytest-cov`, to see if the new code is covered.
+- After deleting/renaming code (an old alias, a legacy fallback path) → suggest `vulture`, to check nothing was left behind.
+- After touching a dataclass/attribute contract shared across mixins or controllers → suggest `mypy` on that file, to catch stale type annotations like a field typed as the base Qt class instead of the actual custom subclass assigned to it.
+- When the maintainer directly asks about code quality, tech debt, or maintainability.
+
+Baseline as of 2026-08-23: unit-test coverage ~25%; `lspr_core`/`lspr_io` clean of GUI imports;
+`gui/main_window_*.py`-style files trend toward C-grade complexity (known, tracked via the
+existing split-file pattern, see Common Pitfalls). mypy baseline: `lspr_core`/`lspr_io` clean
+(0 errors), ~1,312 errors suite-wide, dominated (~66%) by two structural false-positive patterns
+rather than real bugs — (a) `attr-defined` from the mixin/controller-split architecture, where
+mypy checks each mixin class in isolation and doesn't know about attributes defined on sibling
+mixins composed into the same window at runtime, and (b) `union-attr` from PyQt6 stubs typing
+things as `X | None` conservatively even where Qt guarantees non-null in normal use. Real bugs are
+mixed in (e.g. a dataclass field mistyped as the base Qt widget class instead of a custom
+subclass with extra methods) — mypy output needs per-item triage, not a blanket fix or suppress.
+
+---
+
 ## Where Code Lives
 
 ### singleLSPR Acquisition (`apps/sLSPR/acq/src/lspr_app/`)

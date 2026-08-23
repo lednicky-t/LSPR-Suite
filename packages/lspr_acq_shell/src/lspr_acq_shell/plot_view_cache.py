@@ -25,7 +25,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from collections import OrderedDict, deque
 from collections.abc import Callable
-from pathlib import Path
 from time import perf_counter
 
 import numpy as np
@@ -1181,7 +1180,6 @@ class PlotViewCache:
         metric_names: set[str] | frozenset[str],
         *,
         target_points: int,
-        archive_path: Path | None = None,
     ) -> bool:
         metric_names = frozenset(str(name) for name in metric_names)
         refreshed = False

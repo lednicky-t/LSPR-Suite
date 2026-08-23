@@ -1,0 +1,26 @@
+[importlinter]
+root_packages =
+    lspr_core
+    lspr_io
+    lspr_ui
+include_external_packages = True
+
+[importlinter:contract:core-no-gui]
+name = lspr_core stays free of GUI/Qt dependencies
+type = forbidden
+source_modules =
+    lspr_core
+forbidden_modules =
+    PyQt6
+    PySide6
+    lspr_ui
+
+[importlinter:contract:io-no-gui]
+name = lspr_io stays free of GUI/Qt dependencies
+type = forbidden
+source_modules =
+    lspr_io
+forbidden_modules =
+    PyQt6
+    PySide6
+    lspr_ui
