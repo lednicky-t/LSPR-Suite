@@ -205,24 +205,24 @@ LSPR_EXPERIMENT_PLAN_SCHEMA_VERSION = 1
 class GuiTheme:
     # Text
     text_primary: str = "#f8fafc"
-    text_secondary: str = "#dbe5f3"
-    text_muted: str = "#cbd5e1"
-    text_dim: str = "#94a3b8"
+    text_secondary: str = "#d7dde7"
+    text_muted: str = "#b4bdc9"
+    text_dim: str = "#8b95a3"
     # Backgrounds
-    window_bg: str = "#11161f"
-    toolbar_bg: str = "#11161f"
-    toolbar_section_bg: str = "#18212f"
-    control_bg: str = "#243041"
-    control_bg_hover: str = "#304155"
-    control_border: str = "#324256"
-    control_border_hover: str = "#60a5fa"
+    window_bg: str = "#14161a"
+    toolbar_bg: str = "#14161a"
+    toolbar_section_bg: str = "#1b1f26"
+    control_bg: str = "#22262d"
+    control_bg_hover: str = "#2d333d"
+    control_border: str = "#3a4250"
+    control_border_hover: str = "#8b949e"
     # Status / accents
     accent_green: str = "#22c55e"
     accent_blue: str = "#38bdf8"
     accent_red: str = "#ef4444"
     accent_purple: str = "#a855f7"
     accent_gold: str = "#f59e0b"
-    # Domain-specific
+    # Domain-specific (deliberately identical across themes - see below)
     spot_color: str = "#22c55e"         # ROI sample disk
     ring_color: str = "#94a3b8"         # ROI reference ring
     mask_color: str = "#ef4444"
@@ -233,9 +233,20 @@ class GuiTheme:
     icon_button_inner: int = 24
     compact_icon_outer: int = 20
     compact_icon_inner: int = 16
+    is_light: bool = False
 
-BLUE_DARK_THEME = GuiTheme()        # default
-GRAY_DARK_THEME = GuiTheme(...)     # alternate
+GRAY_DARK_THEME = GuiTheme()        # default - just the dataclass defaults
+BRIGHT_THEME = GuiTheme(is_light=True, ...)  # light theme; only chrome fields
+                                              # (text/background/border) are
+                                              # overridden - accent_*/spot_color/
+                                              # mask_color/ring_color/highlight_color
+                                              # stay identical across themes on
+                                              # purpose (colorblind-legible ROI/
+                                              # data colors that shouldn't change
+                                              # meaning when the UI theme changes)
+```
+
+There used to be a `BLUE_DARK_THEME` (the original default palette) alongside `GRAY_DARK_THEME`; it was removed in favor of `GRAY_DARK_THEME` (renamed conceptually to just "Dark" in the UI) plus the new `BRIGHT_THEME` (light theme, "Bright" in the UI). Only LSPRimaging Evaluation actually calls `set_active_theme()`; other apps just run with whatever `GRAY_DARK_THEME` (the module-level default) gives them.
 
 def get_active_theme() -> GuiTheme
 def set_active_theme(theme: GuiTheme) -> None

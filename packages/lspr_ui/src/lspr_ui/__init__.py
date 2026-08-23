@@ -23,7 +23,7 @@ from .icons import (
 )
 from .theme import (
     APP_THEME,
-    BLUE_DARK_THEME,
+    BRIGHT_THEME,
     GRAY_DARK_THEME,
     GuiTheme,
     apply_base_app_theme,
@@ -57,7 +57,7 @@ __all__ = [
     "APP_NAME",
     "APP_VERSION",
     "APP_THEME",
-    "BLUE_DARK_THEME",
+    "BRIGHT_THEME",
     "GRAY_DARK_THEME",
     "GuiTheme",
     "__version__",

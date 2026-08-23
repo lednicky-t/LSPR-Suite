@@ -8,32 +8,42 @@ from PyQt6.QtWidgets import QApplication
 
 @dataclass(frozen=True)
 class GuiTheme:
+    # Defaults are the grayish dark theme's values (GRAY_DARK_THEME below is
+    # just `GuiTheme()`); BRIGHT_THEME overrides the chrome-related fields
+    # (text/background/border) for a light UI. accent_*/spot_color/mask_color/
+    # histogram_mask_color/figure_mask_color/ring_color/highlight_color are
+    # deliberately NOT overridden by BRIGHT_THEME: they're colorblind-legible
+    # against both a near-black and a white background, and keeping them
+    # identical across themes means ROI/data colors don't change out from
+    # under you when you switch theme - same idea as singleLSPR Acquisition's
+    # TRACE_METRIC_COLORS staying theme-independent (see
+    # apps/sLSPR/acq/src/lspr_app/gui/main_window.py).
     text_primary: str = "#f8fafc"
-    text_secondary: str = "#dbe5f3"
-    text_muted: str = "#cbd5e1"
-    text_dim: str = "#94a3b8"
-    window_bg: str = "#11161f"
-    toolbar_bg: str = "#11161f"
-    toolbar_section_bg: str = "#18212f"
-    toolbar_border: str = "#243041"
-    control_bg: str = "#243041"
-    control_bg_hover: str = "#304155"
-    control_bg_pressed: str = "#0b1220"
-    control_border: str = "#324256"
-    control_border_hover: str = "#60a5fa"
-    control_border_pressed: str = "#fbbf24"
-    control_disabled_bg: str = "#111827"
-    control_disabled_border: str = "#1f2937"
-    control_disabled_text: str = "#64748b"
+    text_secondary: str = "#d7dde7"
+    text_muted: str = "#b4bdc9"
+    text_dim: str = "#8b95a3"
+    window_bg: str = "#14161a"
+    toolbar_bg: str = "#14161a"
+    toolbar_section_bg: str = "#1b1f26"
+    toolbar_border: str = "#2a313b"
+    control_bg: str = "#22262d"
+    control_bg_hover: str = "#2d333d"
+    control_bg_pressed: str = "#0f1318"
+    control_border: str = "#3a4250"
+    control_border_hover: str = "#8b949e"
+    control_border_pressed: str = "#c0a46b"
+    control_disabled_bg: str = "#111317"
+    control_disabled_border: str = "#22262d"
+    control_disabled_text: str = "#67707d"
     accent_green: str = "#22c55e"
     accent_blue: str = "#38bdf8"
     accent_red: str = "#ef4444"
     accent_purple: str = "#a855f7"
     accent_gold: str = "#f59e0b"
-    primary_action_bg: str = "#1d4ed8"
-    primary_action_border: str = "#60a5fa"
+    primary_action_bg: str = "#334155"
+    primary_action_border: str = "#64748b"
     primary_action_checked_bg: str = "#15803d"
-    primary_action_checked_border: str = "#fef08a"
+    primary_action_checked_border: str = "#86efac"
     spot_color: str = "#22c55e"
     mask_color: str = "#ef4444"
     histogram_mask_color: str = "#f59e0b"
@@ -52,43 +62,41 @@ class GuiTheme:
     header_apply_outer_w: int = 24
     header_apply_outer_h: int = 24
     header_apply_inner: int = 20
+    # True when this theme's window_bg is light enough that widgets wanting
+    # "readable on either theme" black/white text (e.g. painted onto a
+    # colored badge) should pick black, not white. See text_on_accent().
+    is_light: bool = False
 
 
-BLUE_DARK_THEME = GuiTheme()
-GRAY_DARK_THEME = GuiTheme(
-    text_primary="#f8fafc",
-    text_secondary="#d7dde7",
-    text_muted="#b4bdc9",
-    text_dim="#8b95a3",
-    window_bg="#14161a",
-    toolbar_bg="#14161a",
-    toolbar_section_bg="#1b1f26",
-    toolbar_border="#2a313b",
-    control_bg="#22262d",
-    control_bg_hover="#2d333d",
-    control_bg_pressed="#0f1318",
-    control_border="#3a4250",
-    control_border_hover="#8b949e",
-    control_border_pressed="#c0a46b",
-    control_disabled_bg="#111317",
-    control_disabled_border="#22262d",
-    control_disabled_text="#67707d",
-    accent_green="#22c55e",
-    accent_blue="#38bdf8",
-    accent_red="#ef4444",
-    accent_purple="#a855f7",
-    accent_gold="#f59e0b",
-    primary_action_bg="#334155",
-    primary_action_border="#64748b",
-    primary_action_checked_bg="#15803d",
+GRAY_DARK_THEME = GuiTheme()
+# Light theme, calibrated like singleLSPR Acquisition's LIGHT_PALETTE
+# (apps/sLSPR/acq/src/lspr_app/gui/theme_palette.py) - a light theme is not
+# just the dark theme's colors inverted/lightened, since contrast needs
+# differ against near-black vs. near-white; see that module's docstring for
+# why "own tuned value, not a lighter/darker multiplier" matters here too.
+BRIGHT_THEME = GuiTheme(
+    text_primary="#1d2733",
+    text_secondary="#33404d",
+    text_muted="#57606e",
+    text_dim="#7a8291",
+    window_bg="#ffffff",
+    toolbar_bg="#ffffff",
+    toolbar_section_bg="#eef3f7",
+    toolbar_border="#d9e0e7",
+    control_bg="#eef3f7",
+    control_bg_hover="#e6edf3",
+    control_bg_pressed="#dde9f3",
+    control_border="#d9e0e7",
+    control_border_hover="#9dbbd4",
+    control_border_pressed="#9c6b08",
+    control_disabled_bg="#eef1f4",
+    control_disabled_border="#e2e8ee",
+    control_disabled_text="#a3acb8",
+    primary_action_bg="#2f80c1",
+    primary_action_border="#1c6fd6",
+    primary_action_checked_bg="#1f8a4c",
     primary_action_checked_border="#86efac",
-    spot_color="#22c55e",
-    mask_color="#ef4444",
-    histogram_mask_color="#f59e0b",
-    figure_mask_color="#8b5cf6",
-    ring_color="#94a3b8",
-    highlight_color="#38bdf8",
-    scale_bar_color="#000000",
+    is_light=True,
 )
 
 _ACTIVE_THEME = GRAY_DARK_THEME

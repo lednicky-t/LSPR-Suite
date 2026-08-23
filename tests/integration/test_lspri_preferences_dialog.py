@@ -84,7 +84,7 @@ class PreferencesDialogTests(unittest.TestCase):
         window = _FakeWindow(
             _FakeSettings(
                 {
-                    "ui/theme": "gray",
+                    "ui/theme": "dark",
                     "startup/restore_previous_session_timeout_s": 0,
                     "startup/log_panel_open": False,
                     "export/ome_zarr_adaptive_enabled": "false",
@@ -95,7 +95,7 @@ class PreferencesDialogTests(unittest.TestCase):
         parent = QtWidgets.QWidget()
         dialog = PreferencesDialog(window, parent=parent)
 
-        self.assertEqual(dialog.theme_combo.currentData(), "gray")
+        self.assertEqual(dialog.theme_combo.currentData(), "dark")
         self.assertEqual(dialog.startup_restore_combo.currentData(), 0)
         self.assertFalse(dialog.log_panel_open_check.isChecked())
         self.assertFalse(dialog.zarr_adaptive_enabled_check.isChecked())
@@ -112,7 +112,7 @@ class PreferencesDialogTests(unittest.TestCase):
         parent = QtWidgets.QWidget()
         dialog = PreferencesDialog(window, parent=parent)
 
-        dialog.theme_combo.setCurrentIndex(dialog.theme_combo.findData("gray"))
+        dialog.theme_combo.setCurrentIndex(dialog.theme_combo.findData("dark"))
         dialog.startup_restore_combo.setCurrentIndex(dialog.startup_restore_combo.findData(0))
         dialog.log_panel_open_check.setChecked(False)
         dialog.zarr_adaptive_enabled_check.setChecked(False)
@@ -120,7 +120,7 @@ class PreferencesDialogTests(unittest.TestCase):
 
         dialog.apply_changes()
 
-        self.assertEqual(window.theme_calls, ["gray"])
+        self.assertEqual(window.theme_calls, ["dark"])
         self.assertEqual(window.startup_restore_timeout_calls, [0])
         self.assertEqual(window.log_panel_open_calls, [False])
         self.assertEqual(window.zarr_adaptive_enabled_calls, [False])
