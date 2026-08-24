@@ -366,7 +366,7 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
                     for row in inventory_table[...]
                 ]
 
-        self.assertEqual(root_schema_version, "6.4")
+        self.assertEqual(root_schema_version, "6.5")
         self.assertEqual(details_columns, ["switch_port", "concentration", "concentration_unit", "notes"])
         self.assertEqual(details_rows, [["A", "10 mM", "mM", "prepared fresh"], ["B", "", "", ""]])
         self.assertEqual(inventory_group_attrs["schema_name"], "lspr_device_inventory")
@@ -442,6 +442,69 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
             self.assertTrue(sample_shuffle)
             self.assertEqual(int(sample_compression_opts), 4)
             self.assertEqual(wavelengths_compression, "gzip")
+
+    def test_rois_probe_index_mirrors_spectra_and_metrics_via_soft_link(self) -> None:
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            writer = HDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            )
+            spectrum = Spectrum(
+                wavelengths_nm=wavelengths,
+                values=np.asarray([1.0, 2.0, 3.0], dtype=np.float32),
+                y_label="counts",
+                acquired_at=datetime(2026, 1, 2, 3, 4, 6, tzinfo=timezone.utc),
+            )
+            writer.append_batch([spectrum], [0.0], [615.0])
+            writer.close()
+
+            with h5py.File(path, "r") as handle:
+                real_intensity = handle["data"]["spectra"]["sample"]["intensity"][...]
+                linked_intensity = handle["rois"]["probe"]["spectra"]["sample"]["intensity"][...]
+                definition_attrs = dict(handle["rois"]["probe"]["definition"].attrs.items())
+                spectra_link = handle.get("rois/probe/spectra", getlink=True)
+                metrics_link = handle.get("rois/probe/metrics", getlink=True)
+
+        np.testing.assert_array_equal(real_intensity, linked_intensity)
+        self.assertEqual(definition_attrs["name"], "Fiber probe")
+        self.assertEqual(definition_attrs["geometry_type"], "single_channel")
+        self.assertIsInstance(spectra_link, h5py.SoftLink)
+        self.assertEqual(spectra_link.path, "/data/spectra")
+        self.assertIsInstance(metrics_link, h5py.SoftLink)
+        self.assertEqual(metrics_link.path, "/processed/metrics")
+
+    def test_repack_preserves_rois_index_as_a_link_not_a_duplicate(self) -> None:
+        processing = ProcessingSettings()
+        wavelengths = np.asarray([610.0, 620.0, 630.0], dtype=np.float64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            writer = HDF5MeasurementWriter(
+                path,
+                "sample",
+                wavelengths,
+                processing,
+                experiment_name="demo",
+                started_at_utc=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                compression_enabled=True,
+            )
+            writer.close()
+
+            repack_measurement_hdf5_file(path)
+
+            with h5py.File(path, "r") as handle:
+                spectra_link = handle.get("rois/probe/spectra", getlink=True)
+                real_intensity = handle["data"]["spectra"]["sample"]["intensity"][...]
+                linked_intensity = handle["rois"]["probe"]["spectra"]["sample"]["intensity"][...]
+
+        self.assertIsInstance(spectra_link, h5py.SoftLink)
+        np.testing.assert_array_equal(real_intensity, linked_intensity)
 
     def test_async_writer_reports_failure_via_on_error_callback(self) -> None:
         processing = ProcessingSettings()

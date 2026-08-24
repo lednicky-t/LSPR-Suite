@@ -23,6 +23,7 @@ from .schema import (
     LSPR_MEASUREMENT_COLOR_PALETTE_ENTRIES_DATASET_NAME,
     LSPR_MEASUREMENT_FORMAT_NAME,
     LSPR_MEASUREMENT_FORMAT_VERSION,
+    LSPR_MEASUREMENT_ROI_DEFINITIONS_DATASET_NAME,
     LSPR_MEASUREMENT_SCHEMA_MAJOR,
     LSPR_MEASUREMENT_SCHEMA_MINOR,
     LSPR_MEASUREMENT_SCHEMA_NAME,
@@ -32,7 +33,11 @@ from .schema import (
     LSPR_MEASUREMENT_SWITCH_SOLUTION_MAP_DATASET_NAME,
     LSPR_MEASUREMENT_WAVELENGTHS_DATASET_NAME,
     LSPR_MEASUREMENT_VALVE_STATE_MAP_DATASET_NAME,
+    LSPR_PROCESSED_ABSORBANCE_SPECTRA_GROUP_NAME,
     LSPR_PROCESSED_METRICS_ACQUIRED_AT_UNIX_MS_DATASET_NAME,
+    LSPR_PROCESSED_SENSORGRAM_GROUP_NAME,
+    LSPR_ROI_DEFINITION_GROUP_NAME,
+    LSPR_ROIS_INDEX_GROUP_NAME,
     LSPR_PROCESSED_METRICS_CONFIG_GROUP_NAME,
     LSPR_PROCESSED_METRICS_FORMAT_NAME,
     LSPR_PROCESSED_METRICS_FORMAT_VERSION,
@@ -331,6 +336,111 @@ def upsert_table(
         **compression_kwargs,
     )
     dataset.attrs["columns"] = _string_array(columns)
+
+
+def create_roi_index_entry(
+    handle: h5py.File,
+    roi_id: str,
+    *,
+    definition_attrs: dict[str, Any] | None = None,
+    links: dict[str, str] | None = None,
+) -> h5py.Group:
+    """Create or refresh `/rois/<roi_id>/`, the schema-6.5 uniform ROI index.
+
+    `definition_attrs` are written as real HDF5 attrs on
+    `/rois/<roi_id>/definition` - small and descriptive, not linked.
+    Each `(name, target_path)` pair in `links` becomes `/rois/<roi_id>/<name>`
+    as an `h5py.SoftLink` to `target_path` - no data is copied, so bulk data
+    (raw spectra, processed metrics, per-ROI sensorgram/absorbance spectra)
+    stays exactly where it already lives; this is purely an additional,
+    ignorable browsing view over it. Safe to call again to refresh
+    `definition_attrs` or add/replace links (e.g. once a lazily-created
+    target group exists).
+    """
+    rois_index_group = handle.require_group(LSPR_ROIS_INDEX_GROUP_NAME)
+    roi_group = rois_index_group.require_group(str(roi_id))
+    definition_group = roi_group.require_group(LSPR_ROI_DEFINITION_GROUP_NAME)
+    for key, value in (definition_attrs or {}).items():
+        definition_group.attrs[key] = value
+    existing_names = set(roi_group.keys())
+    for name, target_path in (links or {}).items():
+        if name in existing_names:
+            del roi_group[name]
+        roi_group[name] = h5py.SoftLink(target_path)
+    return roi_group
+
+
+def read_roi_definitions(handle: h5py.File) -> list[dict[str, Any]]:
+    """Read `processed/roi_definitions` (schema 6.4+) into one dict per ROI,
+    keyed by column name. Tolerates older schema-6.4 files (only the
+    original 10 columns) as well as the schema-6.5-extended table, since
+    keys come from the dataset's own `columns` attr rather than a fixed list.
+    """
+    processed_group = handle.get("processed")
+    dataset = processed_group.get(LSPR_MEASUREMENT_ROI_DEFINITIONS_DATASET_NAME) if processed_group is not None else None
+    columns, rows = read_string_table_dataset(dataset)
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def read_roi_index_definition(handle: h5py.File, roi_id: str) -> dict[str, Any]:
+    """Read `/rois/<roi_id>/definition` attrs (schema 6.5+). Returns an empty
+    dict if the file predates schema 6.5 or has no entry for this roi_id."""
+    rois_index_group = handle.get(LSPR_ROIS_INDEX_GROUP_NAME)
+    roi_group = rois_index_group.get(str(roi_id)) if rois_index_group is not None else None
+    definition_group = roi_group.get(LSPR_ROI_DEFINITION_GROUP_NAME) if roi_group is not None else None
+    if definition_group is None:
+        return {}
+    return {
+        key: (value.decode("utf-8") if isinstance(value, bytes) else value)
+        for key, value in definition_group.attrs.items()
+    }
+
+
+def read_sensorgram(handle: h5py.File, roi_id: str) -> dict[str, Any]:
+    """Read `processed/sensorgram/<roi_id>` (schema 6.4+): the fixed
+    `timestamp_utc_ms`/`metric_value` columns, plus any group-level attrs
+    (e.g. `metric_name`, `formula_key`) a writer recorded alongside them.
+    Returns empty arrays (not an error) if the roi_id has no sensorgram yet.
+    """
+    processed_group = handle.get("processed")
+    sensorgram_root = processed_group.get(LSPR_PROCESSED_SENSORGRAM_GROUP_NAME) if processed_group is not None else None
+    group = sensorgram_root.get(str(roi_id)) if sensorgram_root is not None else None
+    if group is None:
+        return {
+            "timestamp_utc_ms": np.array([], dtype=np.int64),
+            "metric_value": np.array([], dtype=np.float64),
+        }
+    result: dict[str, Any] = {
+        "timestamp_utc_ms": group["timestamp_utc_ms"][...] if "timestamp_utc_ms" in group else np.array([], dtype=np.int64),
+        "metric_value": group["metric_value"][...] if "metric_value" in group else np.array([], dtype=np.float64),
+    }
+    for key, value in group.attrs.items():
+        result[key] = value.decode("utf-8") if isinstance(value, bytes) else value
+    return result
+
+
+def read_absorbance_spectra(handle: h5py.File, roi_id: str) -> dict[str, Any]:
+    """Read `processed/absorbance_spectra/<roi_id>` (schema 6.4+, extended in
+    6.5 with an optional `timestamp_utc_ms` column alongside `cube_index`).
+    Returns empty arrays (not an error) if the roi_id has no data yet.
+    """
+    processed_group = handle.get("processed")
+    absorbance_root = processed_group.get(LSPR_PROCESSED_ABSORBANCE_SPECTRA_GROUP_NAME) if processed_group is not None else None
+    group = absorbance_root.get(str(roi_id)) if absorbance_root is not None else None
+    if group is None:
+        return {
+            "wavelengths_nm": np.array([], dtype=np.float64),
+            "cube_index": np.array([], dtype=np.int64),
+            "absorbance": np.empty((0, 0), dtype=np.float32),
+        }
+    result: dict[str, Any] = {
+        "wavelengths_nm": group["wavelengths_nm"][...] if "wavelengths_nm" in group else np.array([], dtype=np.float64),
+        "cube_index": group["cube_index"][...] if "cube_index" in group else np.array([], dtype=np.int64),
+        "absorbance": group["absorbance"][...] if "absorbance" in group else np.empty((0, 0), dtype=np.float32),
+    }
+    if "timestamp_utc_ms" in group:
+        result["timestamp_utc_ms"] = group["timestamp_utc_ms"][...]
+    return result
 
 
 def _write_processing_settings_json(config_group: h5py.Group, payload: dict[str, Any]) -> None:

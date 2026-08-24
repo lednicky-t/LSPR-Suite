@@ -54,10 +54,33 @@ from __future__ import annotations
 # this bump. None of this is specific to a single-spectrometer measurement;
 # readers must tolerate all of it being absent, which every non-imaging file
 # (including every sLSPR acq file) will continue to be.
+#
+# 6.5 (2026-08-24): additive, compatible change - a uniform `/rois/<roi_id>/`
+# index, giving both sLSPR acq (exactly one roi_id, "probe") and LSPRi eva
+# (one roi_id per sample/reference ROI pair) the same roi-indexed browsing
+# shape without moving any existing data. `/rois/<roi_id>/definition` is a
+# small real group of descriptive attrs; `/rois/<roi_id>/<name>` entries
+# pointing at bulk data (spectra, metrics, sensorgram, absorbance_spectra)
+# are h5py soft links to wherever that data actually lives (data/spectra,
+# processed/metrics, processed/sensorgram/<roi_id>, etc.) - no duplication,
+# no path moved, so every existing reader (including sLSPR eva's heuristic
+# visititems-based one) keeps working unchanged; the new group is simply
+# ignorable, per hdf_standard.md's "unknown top-level groups may be ignored"
+# rule. See `create_roi_index_entry` in hdf5.py.
+#
+# Also 6.5: LSPR_MEASUREMENT_ROI_DEFINITIONS_COLUMNS gained new columns,
+# appended (not inserted) after the original 10 - old positional readers
+# (e.g. lspri_acq_app's read_imaging_session, which reads row[0]..row[9])
+# keep working unchanged. New columns cover LSPRi eva's richer AreaRoi
+# model (domain/models.py) - geometry types beyond circle/annulus, and
+# descriptive/array-membership fields LSPRi acq's simpler AreaRoi doesn't
+# have yet: sample_geometry_type, reference_geometry_type, label, notes,
+# created_by, array_group_id, array_row, array_col. Any new reader must look
+# these up by name via the table's `columns` attr, not by hardcoded index.
 LSPR_MEASUREMENT_SCHEMA_NAME = "lspr_measurement"
-LSPR_MEASUREMENT_SCHEMA_VERSION = "6.4"
+LSPR_MEASUREMENT_SCHEMA_VERSION = "6.5"
 LSPR_MEASUREMENT_SCHEMA_MAJOR = 6
-LSPR_MEASUREMENT_SCHEMA_MINOR = 4
+LSPR_MEASUREMENT_SCHEMA_MINOR = 5
 LSPR_MEASUREMENT_FORMAT_NAME = "experiment_run"
 LSPR_MEASUREMENT_FORMAT_VERSION = 6
 
@@ -130,10 +153,25 @@ LSPR_MEASUREMENT_ROI_DEFINITIONS_COLUMNS = [
     "reference_outer_diameter_px",
     "sample_color_hex",
     "reference_color_hex",
+    # appended in schema 6.5 - see that changelog entry above. Look these up
+    # by name (via the table's `columns` attr), not by hardcoded position.
+    "sample_geometry_type",
+    "reference_geometry_type",
+    "label",
+    "notes",
+    "created_by",
+    "array_group_id",
+    "array_row",
+    "array_col",
 ]
 LSPR_PROCESSED_ABSORBANCE_SPECTRA_GROUP_NAME = "absorbance_spectra"
 LSPR_PROCESSED_SENSORGRAM_GROUP_NAME = "sensorgram"
 LSPR_PROCESSED_SENSORGRAM_COLUMNS = ["timestamp_utc_ms", "metric_value"]
+
+# schema 6.5 - uniform /rois/<roi_id>/ index (see changelog entry above).
+LSPR_ROIS_INDEX_GROUP_NAME = "rois"
+LSPR_ROI_DEFINITION_GROUP_NAME = "definition"
+LSPR_SINGLE_CHANNEL_ROI_ID = "probe"
 LSPR_PROCESSED_METRICS_GROUP_NAME = "metrics"
 LSPR_PROCESSED_METRICS_CONFIG_GROUP_NAME = "config"
 LSPR_PROCESSED_METRICS_SCHEMA_NAME = "lspr_processed_metrics"

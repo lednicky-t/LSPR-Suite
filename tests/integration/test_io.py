@@ -14,9 +14,16 @@ from tests._paths import ensure_repo_paths
 ensure_repo_paths()
 
 from lspr_io import (
+    LSPR_MEASUREMENT_ROI_DEFINITIONS_COLUMNS,
+    create_roi_index_entry,
+    read_absorbance_spectra,
+    read_roi_definitions,
+    read_roi_index_definition,
     read_root_metadata,
     read_processing_settings_metadata,
+    read_sensorgram,
     standard_measurement_metadata,
+    upsert_table,
     validate_measurement_file,
     validate_measurement_metadata,
     write_measurement_manifest_metadata,
@@ -72,7 +79,7 @@ class IoMetadataTests(unittest.TestCase):
 
         self.assertEqual(metadata["schema_name"], "lspr_measurement")
         self.assertEqual(metadata["schema_major"], 6)
-        self.assertEqual(metadata["schema_minor"], 4)
+        self.assertEqual(metadata["schema_minor"], 5)
         self.assertEqual(metadata["app_name"], "Test App")
         self.assertEqual(metadata["app_version"], "9.8.7")
         self.assertEqual(metadata["started_at_utc"], "2026-01-02T03:04:05Z")
@@ -528,3 +535,163 @@ class IoMetadataTests(unittest.TestCase):
 
         self.assertFalse(validation.is_valid)
         self.assertTrue(any("newer than supported" in error.lower() for error in validation.errors))
+
+
+class RoiIndexTests(unittest.TestCase):
+    """Schema 6.5's uniform /rois/<roi_id>/ index: soft links over existing
+    data (no duplication), plus the extended roi_definitions columns."""
+
+    def test_soft_link_resolves_to_the_same_data_as_the_real_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            with h5py.File(path, "w") as handle:
+                data = handle.create_group("data")
+                spectra = data.create_group("spectra")
+                sample = spectra.create_group("sample")
+                sample.create_dataset("intensity", data=np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
+                processed = handle.create_group("processed")
+                metrics = processed.create_group("metrics")
+                metrics.create_dataset("acquired_at_unix_ms", data=np.asarray([100, 200], dtype=np.int64))
+
+                create_roi_index_entry(
+                    handle,
+                    "probe",
+                    definition_attrs={"name": "Fiber probe", "geometry_type": "single_channel"},
+                    links={"spectra": "/data/spectra", "metrics": "/processed/metrics"},
+                )
+
+            with h5py.File(path, "r") as handle:
+                linked_intensity = handle["rois"]["probe"]["spectra"]["sample"]["intensity"][...]
+                real_intensity = handle["data"]["spectra"]["sample"]["intensity"][...]
+                linked_metrics_timestamps = handle["rois"]["probe"]["metrics"]["acquired_at_unix_ms"][...]
+                definition = read_roi_index_definition(handle, "probe")
+
+        np.testing.assert_array_equal(linked_intensity, real_intensity)
+        np.testing.assert_array_equal(linked_metrics_timestamps, np.asarray([100, 200], dtype=np.int64))
+        self.assertEqual(definition["name"], "Fiber probe")
+        self.assertEqual(definition["geometry_type"], "single_channel")
+
+    def test_appending_to_the_real_group_is_visible_through_the_link(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            with h5py.File(path, "w") as handle:
+                processed = handle.create_group("processed")
+                metrics = processed.create_group("metrics")
+                dataset = metrics.create_dataset(
+                    "acquired_at_unix_ms", shape=(0,), maxshape=(None,), dtype=np.int64, chunks=True
+                )
+                create_roi_index_entry(handle, "probe", links={"metrics": "/processed/metrics"})
+
+                dataset.resize((1,))
+                dataset[0] = 42
+
+            with h5py.File(path, "r") as handle:
+                linked_values = handle["rois"]["probe"]["metrics"]["acquired_at_unix_ms"][...]
+
+        np.testing.assert_array_equal(linked_values, np.asarray([42], dtype=np.int64))
+
+    def test_read_roi_index_definition_returns_empty_dict_for_missing_roi(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            with h5py.File(path, "w") as handle:
+                pass
+            with h5py.File(path, "r") as handle:
+                self.assertEqual(read_roi_index_definition(handle, "does_not_exist"), {})
+
+    def test_extended_roi_definitions_columns_round_trip_by_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            with h5py.File(path, "w") as handle:
+                processed = handle.create_group("processed")
+                row = [
+                    "1",  # area_roi_id
+                    "",  # group_id
+                    "10.5",  # center_x
+                    "20.5",  # center_y
+                    "5.0",  # sample_radius_px
+                    "10.0",  # sample_diameter_px
+                    "12.0",  # reference_inner_diameter_px
+                    "18.0",  # reference_outer_diameter_px
+                    "#FF0000",  # sample_color_hex
+                    "#00FF00",  # reference_color_hex
+                    "circle",  # sample_geometry_type
+                    "annulus",  # reference_geometry_type
+                    "Spot A",  # label
+                    "prepared fresh",  # notes
+                    "user",  # created_by
+                    "array_1",  # array_group_id
+                    "0",  # array_row
+                    "2",  # array_col
+                ]
+                upsert_table(processed, "roi_definitions", [row], LSPR_MEASUREMENT_ROI_DEFINITIONS_COLUMNS)
+
+            with h5py.File(path, "r") as handle:
+                definitions = read_roi_definitions(handle)
+
+        self.assertEqual(len(definitions), 1)
+        definition = definitions[0]
+        self.assertEqual(definition["label"], "Spot A")
+        self.assertEqual(definition["sample_geometry_type"], "circle")
+        self.assertEqual(definition["array_group_id"], "array_1")
+        self.assertEqual(definition["array_row"], "0")
+        self.assertEqual(definition["array_col"], "2")
+
+    def test_read_roi_definitions_tolerates_old_ten_column_table(self) -> None:
+        """A schema-6.4 file (only the original 10 columns) must still be
+        readable by name after the 6.5 column extension - proves the reader
+        doesn't assume the extended columns are present."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            with h5py.File(path, "w") as handle:
+                processed = handle.create_group("processed")
+                original_columns = LSPR_MEASUREMENT_ROI_DEFINITIONS_COLUMNS[:10]
+                row = ["1", "", "10.5", "20.5", "5.0", "10.0", "12.0", "18.0", "#FF0000", "#00FF00"]
+                upsert_table(processed, "roi_definitions", [row], original_columns)
+
+            with h5py.File(path, "r") as handle:
+                definitions = read_roi_definitions(handle)
+
+        self.assertEqual(len(definitions), 1)
+        self.assertEqual(definitions[0]["sample_color_hex"], "#FF0000")
+        self.assertNotIn("label", definitions[0])
+
+    def test_read_sensorgram_and_absorbance_spectra_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "measurement.h5"
+            with h5py.File(path, "w") as handle:
+                processed = handle.create_group("processed")
+                sensorgram_group = processed.create_group("sensorgram").create_group("1")
+                sensorgram_group.create_dataset(
+                    "timestamp_utc_ms", data=np.asarray([100, 200, 300], dtype=np.int64)
+                )
+                sensorgram_group.create_dataset(
+                    "metric_value", data=np.asarray([0.1, 0.2, 0.3], dtype=np.float64)
+                )
+                sensorgram_group.attrs["metric_name"] = "centroid"
+                sensorgram_group.attrs["formula_key"] = "absorbance"
+
+                absorbance_group = processed.create_group("absorbance_spectra").create_group("1")
+                absorbance_group.create_dataset(
+                    "wavelengths_nm", data=np.asarray([600.0, 650.0], dtype=np.float64)
+                )
+                absorbance_group.create_dataset(
+                    "cube_index", data=np.asarray([0, 1], dtype=np.int64)
+                )
+                absorbance_group.create_dataset(
+                    "absorbance", data=np.asarray([[0.1, 0.2], [0.15, 0.25]], dtype=np.float32)
+                )
+
+            with h5py.File(path, "r") as handle:
+                sensorgram = read_sensorgram(handle, "1")
+                absorbance = read_absorbance_spectra(handle, "1")
+                missing_sensorgram = read_sensorgram(handle, "does_not_exist")
+
+        np.testing.assert_array_equal(sensorgram["timestamp_utc_ms"], np.asarray([100, 200, 300], dtype=np.int64))
+        np.testing.assert_array_equal(sensorgram["metric_value"], np.asarray([0.1, 0.2, 0.3], dtype=np.float64))
+        self.assertEqual(sensorgram["metric_name"], "centroid")
+        self.assertEqual(sensorgram["formula_key"], "absorbance")
+        np.testing.assert_array_equal(absorbance["wavelengths_nm"], np.asarray([600.0, 650.0], dtype=np.float64))
+        np.testing.assert_array_equal(
+            absorbance["absorbance"], np.asarray([[0.1, 0.2], [0.15, 0.25]], dtype=np.float32)
+        )
+        self.assertEqual(missing_sensorgram["timestamp_utc_ms"].size, 0)
