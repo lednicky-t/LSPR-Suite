@@ -1,4 +1,4 @@
-﻿# singleLSPR Acquisition
+# singleLSPR Acquisition
 
 This folder documents the acquisition app moved from the standalone `LSPR` repository.
 

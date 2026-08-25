@@ -1,4 +1,4 @@
-﻿# LSPRimaging Evaluation
+# LSPRimaging Evaluation
 
 This folder now hosts the evaluation app moved from the standalone `LSPRimaging` repository.
 

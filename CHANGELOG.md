@@ -1,25 +1,15 @@
 # Changelog
 
-## Unreleased
+This umbrella repo doesn't keep its own changelog. The authoritative history
+lives in two places:
 
-### Milestone
-
-- Sensorgram and launcher workflow milestone:
-  - rolling sensorgram compression now follows the selected window and keeps the display bounded
-  - the rolling-window toggle no longer skips values on click
-  - metric selector controls now support custom colors, clearer labels, and a stable primary selector
-  - the sensogram settings window was reorganized into clearer live/preview tabs with mode-aware tooltips
-  - launcher diagnostics were consolidated into a single selector and documented in the launcher README
-
-### Added
-
-- Root-level unit tests for core models, HDF metadata helpers, and launcher registry behavior.
-- A GitHub Actions workflow to run the repository test suite.
-
-### Changed
-
-- The suite launcher no longer depends on a hardcoded personal desktop fallback path for the singleLSPR acquisition workspace.
-
-### Notes
-
-- Repository governance is still being expanded to better match the compatibility policy documented under `docs/`.
+- **Per-app changes** — each app tracks its own history in its own repo:
+  - [`apps/sLSPR/acq/CHANGELOG.md`](apps/sLSPR/acq/CHANGELOG.md) — singleLSPR Acquisition
+  - [`apps/LSPRi/eva/CHANGELOG.md`](apps/LSPRi/eva/CHANGELOG.md) — LSPRimaging Evaluation
+  - (`apps/sLSPR/eva` and the reserved `apps/LSPRi/acq` don't have one yet)
+- **Suite bundle releases** — every push to `main` that touches `apps/**`,
+  `packages/**`, or `requirements.txt` is auto-tagged and published as a
+  GitHub Release (see `.github/workflows/auto-release.yml`); the release
+  notes are auto-generated from the commits in that release. See the
+  [Releases page](https://github.com/lednicky-t/LSPR-Suite/releases) for the
+  actual version history of the portable Suite bundle.

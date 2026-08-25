@@ -120,6 +120,7 @@ Four apps, three as git submodules, one (suite launcher) living directly in this
 | `lspr-core` | `packages/lspr_core` | Domain models, schema identity, experiment plan steps, units |
 | `lspr-io` | `packages/lspr_io` | HDF5/session file helpers, schema stamping, version readers |
 | `lspr-ui` | `packages/lspr_ui` | Qt theme tokens, icon helpers, app bootstrap utilities |
+| `lspr-acq-shell` | `packages/lspr_acq_shell` | Shared live-acquisition shell (fluidics device framework, experiment-control plan editing/execution, session/HDF5-writer plumbing) being extracted out of `apps/sLSPR/acq` for reuse by both acquisition apps |
 
 Add cross-app logic here, not inside individual app packages.
 

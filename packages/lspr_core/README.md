@@ -1,4 +1,4 @@
-﻿# lspr-core
+# lspr-core
 
 Shared domain models and utilities for the LSPR Suite.
 

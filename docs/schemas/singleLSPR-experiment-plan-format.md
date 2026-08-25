@@ -1,4 +1,4 @@
-﻿# LSPR Experiment Control Plan Format
+# LSPR Experiment Control Plan Format
 
 This document describes the native text format for editable LSPR experiment-control plans.
 

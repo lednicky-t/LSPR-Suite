@@ -1,4 +1,4 @@
-﻿# Schema Reference
+# Schema Reference
 
 This folder is the canonical reference for shared file and data formats in the LSPR Suite.
 

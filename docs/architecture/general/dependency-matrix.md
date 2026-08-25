@@ -1,4 +1,4 @@
-﻿# Suite Dependency Map
+# Suite Dependency Map
 
 This note captures the current recommended split for the LSPR Suite.
 

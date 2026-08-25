@@ -29,10 +29,12 @@ Shared logic lives in the `packages/` tree:
 - `packages/lspr_core` for common flow and domain primitives
 - `packages/lspr_ui` for shared Qt styling and icon helpers
 - `packages/lspr_io` for HDF and file-format rules
+- `packages/lspr_acq_shell` for the shared live-acquisition shell (fluidics
+  device framework, experiment control, session/HDF5-writer plumbing) used by
+  the acquisition apps
 
-Architecture notes live in `docs/architecture/`.
-Schema documents live in `docs/schemas/`.
-Legacy references are kept in `references/`.
+See [`docs/README.md`](docs/README.md) for the full documentation map
+(architecture notes, schema documents, decisions, and workflows).
 
 ## Local Setup
 

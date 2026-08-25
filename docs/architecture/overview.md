@@ -7,7 +7,7 @@ For per-subsystem details follow the links below.
 
 ## Ecosystem Map
 
-The suite is an umbrella repository containing four applications and three shared packages.
+The suite is an umbrella repository containing four applications and four shared packages.
 
 ```
 LSPR Suite

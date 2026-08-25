@@ -154,6 +154,32 @@ that baseline honest for free, without turning it into a merge blocker.
 
 ## 4. Documentation & project hygiene
 
+> **Status update (2026-08-26): deeper pass completed for the active repos**
+> (umbrella + `apps/sLSPR/acq` + `apps/LSPRi/eva`). Beyond the items below,
+> a closer read turned up doc drift that was actively misleading rather than
+> just missing:
+> - Root `README.md` pointed at a `references/` folder that doesn't exist —
+>   removed, and the package list there (and in `CLAUDE.md`) now includes
+>   `packages/lspr_acq_shell`, which was missing from both.
+> - Root `CHANGELOG.md` had drifted from the actual auto-tagged release
+>   history (the per-app `CHANGELOG.md`s are properly maintained; the root
+>   one wasn't) — retired in favor of pointing at the per-app logs and the
+>   GitHub Releases page.
+> - **16 tracked files carried a stray UTF-8 BOM** (`apps/sLSPR/acq/docs/*`,
+>   several `docs/architecture/**`, `packages/lspr_core/README.md`, one test
+>   file) — a recurring problem (`sLSPR/acq`'s own git log already shows one
+>   prior manual fix for this). Stripped, and added the `fix-byte-order-marker`
+>   pre-commit hook (already available from the `pre-commit-hooks` repo
+>   already in use here) plus a root `.editorconfig` in all three repos so it
+>   doesn't come back.
+> - `packages/lspr_ui/README.md` was 3 lines with no usage example and no
+>   link to its own `ICONS.md` — expanded.
+> - Added `docs/README.md` as an index for the `docs/` tree.
+>
+> **Still open:** LICENSE rollout (below) — holding on citation-details input
+> before adding `CITATION.cff` alongside it. README badges and
+> Dependabot/Renovate remain deferred, unchanged from the original pass.
+
 ### [moderate] No LICENSE at the umbrella-repo level
 
 `apps/sLSPR/acq` has its own MIT `LICENSE` file, but the umbrella
