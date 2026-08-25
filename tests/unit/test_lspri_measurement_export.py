@@ -183,6 +183,44 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
 
         np.testing.assert_array_equal(trace["timestamp_utc_ms"], np.asarray([100, 200, 300], dtype=np.int64))
 
+    def test_export_snapshot_creates_independent_readable_copy(self) -> None:
+        """Snapshot exported while the writer is still open must be
+        readable on its own and must not disturb further appends to the
+        live file - this is what the "Export Results..." button relies on."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            snapshot_path = Path(temp_dir) / "snapshot.h5"
+            writer = ImagingMeasurementExportWriter(path)
+            writer.append_sensorgram_point(1, timestamp_utc_ms=100, metric_value=0.5)
+            writer.export_snapshot(snapshot_path)
+            writer.append_sensorgram_point(1, timestamp_utc_ms=200, metric_value=0.6)
+            writer.close()
+
+            snapshot_trace = read_sensorgram_trace(snapshot_path, 1)
+            live_trace = read_sensorgram_trace(path, 1)
+
+        np.testing.assert_array_equal(snapshot_trace["metric_value"], np.asarray([0.5]))
+        np.testing.assert_array_equal(live_trace["metric_value"], np.asarray([0.5, 0.6]))
+
+    def test_set_sensorgram_metric_records_combined_roi_ids(self) -> None:
+        """A multi-ROI combined-selection sensorgram trace is written under
+        a synthetic roi_id (see gui/analysis_controller.py's
+        _backup_sensorgram_point) with the real member ROI ids recorded as
+        an attr, so it stays self-describing without a dedicated ROI
+        definition row."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                writer.set_sensorgram_metric(
+                    "combined_1_2", metric_name="centroid", formula_key="absorbance", combined_roi_ids="1,2"
+                )
+                writer.append_sensorgram_point("combined_1_2", timestamp_utc_ms=100, metric_value=0.3)
+
+            trace = read_sensorgram_trace(path, "combined_1_2")
+
+        self.assertEqual(trace["metric_name"], "centroid")
+        self.assertEqual(trace["combined_roi_ids"], "1,2")
+
     def test_missing_roi_returns_empty_traces_not_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "export.h5"
