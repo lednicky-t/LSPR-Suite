@@ -8,8 +8,10 @@ description = "Shared core models and utilities for the LSPR Suite."
 readme = "README.md"
 requires-python = ">=3.12"
 dynamic = ["version"]
+# Version bounds follow the pinning policy in CLAUDE.md ("Dependency Pinning"):
+# floor = currently tested version, ceiling = next breaking-change boundary.
 dependencies = [
-    "pydantic>=2",
+    "pydantic>=2,<3",
 ]
 
 [tool.setuptools]

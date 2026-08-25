@@ -8,9 +8,11 @@ description = "Shared HDF5/session IO helpers for the LSPR Suite."
 readme = "README.md"
 requires-python = ">=3.12"
 dynamic = ["version"]
+# Version bounds follow the pinning policy in CLAUDE.md ("Dependency Pinning"):
+# floor = currently tested version, ceiling = next breaking-change boundary.
 dependencies = [
-    "h5py",
-    "numpy",
+    "h5py>=3.16,<4",
+    "numpy>=2.4,<3",
     "lspr-core>=0.1.0",
 ]
 

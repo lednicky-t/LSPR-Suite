@@ -8,15 +8,19 @@ description = "Shared live-acquisition shell (fluidics device framework, experim
 readme = "README.md"
 requires-python = ">=3.12"
 dynamic = ["version"]
+# Version bounds follow the pinning policy in CLAUDE.md ("Dependency Pinning"):
+# floor = currently tested version, ceiling = next breaking-change boundary.
+# pyqtgraph is pre-1.0 (API can break on any minor release), hence the tight
+# "<0.15" ceiling instead of "<1".
 dependencies = [
-    "h5py",
-    "PyQt6",
+    "h5py>=3.16,<4",
+    "PyQt6>=6.11,<7",
     # See apps/LSPRi/eva/pyproject.toml for why - PyQt6-sip 13.11.1 has a
     # reproducible access-violation crash on Python 3.14, fixed in 13.12.0.
     "PyQt6-sip>=13.12.0",
-    "pyqtgraph",
-    "pyserial",
-    "PyYAML",
+    "pyqtgraph>=0.14,<0.15",
+    "pyserial>=3.5,<4",
+    "PyYAML>=6.0,<7",
     "lspr-ui>=0.1.0",
     "lspr-core>=0.1.0",
     "lspr-io>=0.1.0",

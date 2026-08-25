@@ -8,8 +8,10 @@ description = "Shared Qt theme and icon helpers for the LSPR Suite."
 readme = "README.md"
 requires-python = ">=3.12"
 dynamic = ["version"]
+# Version bounds follow the pinning policy in CLAUDE.md ("Dependency Pinning"):
+# floor = currently tested version, ceiling = next breaking-change boundary.
 dependencies = [
-    "PyQt6",
+    "PyQt6>=6.11,<7",
     # See apps/LSPRi/eva/pyproject.toml for why - PyQt6-sip 13.11.1 has a
     # reproducible access-violation crash on Python 3.14, fixed in 13.12.0.
     "PyQt6-sip>=13.12.0",
