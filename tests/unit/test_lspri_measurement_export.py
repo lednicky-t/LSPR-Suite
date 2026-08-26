@@ -292,6 +292,27 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             trace = read_sensorgram_trace(path, 1)
         np.testing.assert_array_equal(trace["metric_value"], np.asarray([0.1, 0.2]))
 
+    def test_sensorgram_metric_index_keeps_latest_row_per_cube(self) -> None:
+        """sensorgram_metric_index() is the read-side counterpart of
+        existing_sensorgram_keys() used to skip recomputation (see
+        analysis_pipeline_redesign.md §4c item 3): it must return the
+        actual metric_value, and when a cube_index has been recomputed under
+        a new signature_hash (appended, never overwritten in place - §4d),
+        the *later* row must win, not the first one."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.1, signature_hash="hash-a")
+                writer.append_sensorgram_point(1, cube_index=1, timestamp_utc_ms=200, metric_value=0.2, signature_hash="hash-a")
+                # Cube 0 recomputed later under a different signature (e.g. an
+                # ROI moved) - the writer appends rather than overwriting.
+                writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=300, metric_value=0.15, signature_hash="hash-b")
+
+                index = writer.sensorgram_metric_index("1")
+                self.assertEqual(index, {0: ("hash-b", 0.15), 1: ("hash-a", 0.2)})
+                # No rows for an ROI/combined-key that was never backed up.
+                self.assertEqual(writer.sensorgram_metric_index("2"), {})
+
     def test_reopening_legacy_group_backfills_new_columns_row_aligned(self) -> None:
         """A sensorgram group written before cube_index/signature_hash
         existed (only timestamp_utc_ms/metric_value) must, once reopened and
