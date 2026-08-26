@@ -176,11 +176,17 @@ that baseline honest for free, without turning it into a merge blocker.
 >   link to its own `ICONS.md` — expanded.
 > - Added `docs/README.md` as an index for the `docs/` tree.
 >
-> **Still open:** LICENSE rollout (below) — holding on citation-details input
-> before adding `CITATION.cff` alongside it. README badges and
+> **Status update (2026-08-26): LICENSE + CITATION.cff done.** The same MIT
+> `LICENSE` (same copyright line) is now in the umbrella repo,
+> `apps/LSPRi/eva`, and all four `packages/*`. A `CITATION.cff` was added at
+> the umbrella repo root — MIT already covers code reuse/derivation via its
+> copyright-notice requirement; `CITATION.cff` separately gives GitHub's
+> "Cite this repository" button something to work from for anyone citing
+> this software in a publication. `apps/sLSPR/eva` remains unlicensed (out
+> of scope, same as the rest of this pass). README badges and
 > Dependabot/Renovate remain deferred, unchanged from the original pass.
 
-### [moderate] No LICENSE at the umbrella-repo level
+### [moderate] No LICENSE at the umbrella-repo level (RESOLVED for the active repos)
 
 `apps/sLSPR/acq` has its own MIT `LICENSE` file, but the umbrella
 `LSPR-Suite` repo itself — and the other three app repos and all three
