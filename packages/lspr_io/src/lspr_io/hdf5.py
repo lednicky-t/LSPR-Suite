@@ -398,7 +398,8 @@ def read_roi_index_definition(handle: h5py.File, roi_id: str) -> dict[str, Any]:
 
 def read_sensorgram(handle: h5py.File, roi_id: str) -> dict[str, Any]:
     """Read `processed/sensorgram/<roi_id>` (schema 6.4+): the fixed
-    `timestamp_utc_ms`/`metric_value` columns, plus any group-level attrs
+    `timestamp_utc_ms`/`metric_value` columns (plus `cube_index`, if the
+    writer recorded it), plus any group-level attrs
     (e.g. `metric_name`, `formula_key`) a writer recorded alongside them.
     Returns empty arrays (not an error) if the roi_id has no sensorgram yet.
     """
@@ -414,6 +415,10 @@ def read_sensorgram(handle: h5py.File, roi_id: str) -> dict[str, Any]:
         "timestamp_utc_ms": group["timestamp_utc_ms"][...] if "timestamp_utc_ms" in group else np.array([], dtype=np.int64),
         "metric_value": group["metric_value"][...] if "metric_value" in group else np.array([], dtype=np.float64),
     }
+    if "cube_index" in group:
+        result["cube_index"] = group["cube_index"][...]
+    if "signature_hash" in group:
+        result["signature_hash"] = group["signature_hash"][...]
     for key, value in group.attrs.items():
         result[key] = value.decode("utf-8") if isinstance(value, bytes) else value
     return result
@@ -440,6 +445,8 @@ def read_absorbance_spectra(handle: h5py.File, roi_id: str) -> dict[str, Any]:
     }
     if "timestamp_utc_ms" in group:
         result["timestamp_utc_ms"] = group["timestamp_utc_ms"][...]
+    if "signature_hash" in group:
+        result["signature_hash"] = group["signature_hash"][...]
     return result
 
 

@@ -36,6 +36,7 @@ class _FakeState:
     def __init__(self) -> None:
         self.dataset = SimpleNamespace(folder="dataset_folder")
         self.area_roi_settings = _FakeAreaRoiSettings()
+        self.image_exclusions: list = []
 
 
 class _FakeWindow:

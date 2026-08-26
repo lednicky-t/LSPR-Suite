@@ -77,10 +77,25 @@ from __future__ import annotations
 # have yet: sample_geometry_type, reference_geometry_type, label, notes,
 # created_by, array_group_id, array_row, array_col. Any new reader must look
 # these up by name via the table's `columns` attr, not by hardcoded index.
+# 6.6 (2026-08-26): additive, compatible change - two new optional columns on
+# processed/sensorgram/{roi_id} and processed/absorbance_spectra/{roi_id}, part
+# of LSPRi eva's analysis-result-caching redesign (see apps/LSPRi/eva/docs/
+# analysis_pipeline_redesign.md). `cube_index` (sensorgram group only - the
+# absorbance group already had it): sensorgram previously stored only
+# timestamp_utc_ms, which isn't reliably invertible back to a cube index, so a
+# reopened backup couldn't tell which cubes were already recorded without it.
+# `signature_hash` (both groups): a sha256 of the same preprocessing/
+# chromatic/ROI-geometry/exclusion cache signature already computed in-memory
+# for the RAM result caches, letting a reopened session tell whether an
+# on-disk row is still valid under the current settings before trusting it as
+# a cache hit, instead of only being usable as a write-only backup. Readers
+# must tolerate both columns' absence in older files - ImagingMeasurementExportWriter
+# never overwrites a row in place when a signature changes; it appends a new
+# one, so a superseded row is simply the one whose hash no longer matches.
 LSPR_MEASUREMENT_SCHEMA_NAME = "lspr_measurement"
-LSPR_MEASUREMENT_SCHEMA_VERSION = "6.5"
+LSPR_MEASUREMENT_SCHEMA_VERSION = "6.6"
 LSPR_MEASUREMENT_SCHEMA_MAJOR = 6
-LSPR_MEASUREMENT_SCHEMA_MINOR = 5
+LSPR_MEASUREMENT_SCHEMA_MINOR = 6
 LSPR_MEASUREMENT_FORMAT_NAME = "experiment_run"
 LSPR_MEASUREMENT_FORMAT_VERSION = 6
 

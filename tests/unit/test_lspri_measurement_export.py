@@ -93,7 +93,7 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             path = Path(temp_dir) / "export.h5"
             with ImagingMeasurementExportWriter(path) as writer:
                 writer.write_roi_definitions(rois, groups, arrays)
-                writer.append_sensorgram_point(1, timestamp_utc_ms=100, metric_value=0.5)
+                writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.5)
                 writer.append_absorbance_spectrum(
                     1,
                     wavelengths_nm=np.asarray([600.0, 650.0]),
@@ -120,12 +120,13 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             path = Path(temp_dir) / "export.h5"
             with ImagingMeasurementExportWriter(path) as writer:
                 writer.set_sensorgram_metric(1, metric_name="centroid", formula_key="absorbance")
-                writer.append_sensorgram_point(1, timestamp_utc_ms=100, metric_value=0.10)
-                writer.append_sensorgram_point(1, timestamp_utc_ms=200, metric_value=0.15)
-                writer.append_sensorgram_point(1, timestamp_utc_ms=300, metric_value=0.22)
+                writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.10)
+                writer.append_sensorgram_point(1, cube_index=1, timestamp_utc_ms=200, metric_value=0.15)
+                writer.append_sensorgram_point(1, cube_index=2, timestamp_utc_ms=300, metric_value=0.22)
 
             trace = read_sensorgram_trace(path, 1)
 
+        np.testing.assert_array_equal(trace["cube_index"], np.asarray([0, 1, 2], dtype=np.int64))
         np.testing.assert_array_equal(trace["timestamp_utc_ms"], np.asarray([100, 200, 300], dtype=np.int64))
         np.testing.assert_allclose(trace["metric_value"], np.asarray([0.10, 0.15, 0.22]))
         self.assertEqual(trace["metric_name"], "centroid")
@@ -173,10 +174,10 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "export.h5"
             writer = ImagingMeasurementExportWriter(path)
-            writer.append_sensorgram_point(1, timestamp_utc_ms=100, metric_value=0.1)
-            writer.append_sensorgram_point(1, timestamp_utc_ms=200, metric_value=0.2)
+            writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.1)
+            writer.append_sensorgram_point(1, cube_index=1, timestamp_utc_ms=200, metric_value=0.2)
             writer.flush()
-            writer.append_sensorgram_point(1, timestamp_utc_ms=300, metric_value=0.3)
+            writer.append_sensorgram_point(1, cube_index=2, timestamp_utc_ms=300, metric_value=0.3)
             writer.close()
 
             trace = read_sensorgram_trace(path, 1)
@@ -191,9 +192,9 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             path = Path(temp_dir) / "export.h5"
             snapshot_path = Path(temp_dir) / "snapshot.h5"
             writer = ImagingMeasurementExportWriter(path)
-            writer.append_sensorgram_point(1, timestamp_utc_ms=100, metric_value=0.5)
+            writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.5)
             writer.export_snapshot(snapshot_path)
-            writer.append_sensorgram_point(1, timestamp_utc_ms=200, metric_value=0.6)
+            writer.append_sensorgram_point(1, cube_index=1, timestamp_utc_ms=200, metric_value=0.6)
             writer.close()
 
             snapshot_trace = read_sensorgram_trace(snapshot_path, 1)
@@ -214,12 +215,116 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
                 writer.set_sensorgram_metric(
                     "combined_1_2", metric_name="centroid", formula_key="absorbance", combined_roi_ids="1,2"
                 )
-                writer.append_sensorgram_point("combined_1_2", timestamp_utc_ms=100, metric_value=0.3)
+                writer.append_sensorgram_point("combined_1_2", cube_index=0, timestamp_utc_ms=100, metric_value=0.3)
 
             trace = read_sensorgram_trace(path, "combined_1_2")
 
         self.assertEqual(trace["metric_name"], "centroid")
         self.assertEqual(trace["combined_roi_ids"], "1,2")
+
+    def test_reopening_existing_backup_preserves_data_and_recovers_keys(self) -> None:
+        """Regression test: reopening a backup file that already exists (the
+        normal case when re-loading a dataset analyzed in a previous
+        session) must append to it, not truncate it - and the reopened
+        writer must recognize which (roi_id, cube_index) pairs are already
+        on disk, so a caller doesn't append duplicate rows for cubes backed
+        up before the app was closed."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            writer = ImagingMeasurementExportWriter(path)
+            writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.1)
+            writer.append_absorbance_spectrum(
+                1,
+                wavelengths_nm=np.asarray([600.0, 650.0]),
+                formula_values=np.asarray([0.1, 0.2]),
+                sample_mean=np.asarray([1000.0, 1100.0]),
+                reference_mean=np.asarray([2000.0, 2100.0]),
+                cube_index=0,
+                timestamp_utc_ms=100,
+            )
+            writer.close()
+
+            reopened = ImagingMeasurementExportWriter(path)
+            try:
+                self.assertEqual(reopened.existing_sensorgram_keys(), {("1", 0, "")})
+                self.assertEqual(reopened.existing_absorbance_keys(), {(1, 0, "")})
+                reopened.append_sensorgram_point(1, cube_index=1, timestamp_utc_ms=200, metric_value=0.2)
+            finally:
+                reopened.close()
+
+            trace = read_sensorgram_trace(path, 1)
+
+        np.testing.assert_array_equal(trace["cube_index"], np.asarray([0, 1], dtype=np.int64))
+        np.testing.assert_array_equal(trace["timestamp_utc_ms"], np.asarray([100, 200], dtype=np.int64))
+
+    def test_signature_hash_is_recorded_and_distinguishes_recomputed_rows(self) -> None:
+        """A row backed up with one signature_hash and a later row for the
+        same cube_index under a *different* hash (e.g. after an ROI moved)
+        must both be recognized as distinct entries by existing_*_keys() -
+        the point of storing the hash is that a changed value supersedes by
+        appending, never by being mistaken for an already-current
+        duplicate."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.1, signature_hash="hash-a")
+                writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=150, metric_value=0.2, signature_hash="hash-b")
+                writer.append_absorbance_spectrum(
+                    1,
+                    wavelengths_nm=np.asarray([600.0, 650.0]),
+                    formula_values=np.asarray([0.1, 0.2]),
+                    sample_mean=np.asarray([1000.0, 1100.0]),
+                    reference_mean=np.asarray([2000.0, 2100.0]),
+                    cube_index=0,
+                    timestamp_utc_ms=100,
+                    signature_hash="hash-a",
+                )
+
+            reopened = ImagingMeasurementExportWriter(path)
+            try:
+                self.assertEqual(
+                    reopened.existing_sensorgram_keys(), {("1", 0, "hash-a"), ("1", 0, "hash-b")}
+                )
+                self.assertEqual(reopened.existing_absorbance_keys(), {(1, 0, "hash-a")})
+            finally:
+                reopened.close()
+
+            trace = read_sensorgram_trace(path, 1)
+        np.testing.assert_array_equal(trace["metric_value"], np.asarray([0.1, 0.2]))
+
+    def test_reopening_legacy_group_backfills_new_columns_row_aligned(self) -> None:
+        """A sensorgram group written before cube_index/signature_hash
+        existed (only timestamp_utc_ms/metric_value) must, once reopened and
+        appended to, end up with every column the same length - not a new
+        column starting at length 0 next to already-populated siblings."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with h5py.File(path, "w") as handle:
+                processed = handle.create_group("processed")
+                sensorgram_root = processed.create_group("sensorgram")
+                legacy_group = sensorgram_root.create_group("1")
+                legacy_group.create_dataset(
+                    "timestamp_utc_ms", data=np.asarray([100, 200], dtype=np.int64), maxshape=(None,), chunks=True
+                )
+                legacy_group.create_dataset(
+                    "metric_value", data=np.asarray([0.1, 0.2], dtype=np.float64), maxshape=(None,), chunks=True
+                )
+
+            writer = ImagingMeasurementExportWriter(path)
+            try:
+                writer.append_sensorgram_point(1, cube_index=2, timestamp_utc_ms=300, metric_value=0.3, signature_hash="hash-c")
+            finally:
+                writer.close()
+
+            with h5py.File(path, "r") as handle:
+                group = handle["processed"]["sensorgram"]["1"]
+                lengths = {name: group[name].shape[0] for name in ("timestamp_utc_ms", "metric_value", "cube_index", "signature_hash")}
+                cube_index_values = group["cube_index"][...]
+                hash_values = [value.decode("utf-8") if isinstance(value, bytes) else value for value in group["signature_hash"][...]]
+
+        self.assertEqual(lengths, {"timestamp_utc_ms": 3, "metric_value": 3, "cube_index": 3, "signature_hash": 3})
+        np.testing.assert_array_equal(cube_index_values, np.asarray([-1, -1, 2], dtype=np.int64))
+        self.assertEqual(hash_values, ["", "", "hash-c"])
 
     def test_missing_roi_returns_empty_traces_not_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
