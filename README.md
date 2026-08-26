@@ -98,3 +98,9 @@ When you work in this checkout:
 - edit app-specific code inside the corresponding submodule repositories
 - commit app changes in the app repo first, then update the suite submodule
   pointer in this umbrella repo
+
+## Citing this software
+
+If you use LSPR Suite, or code derived from it, to produce results in a
+publication, please cite it — see the "Cite this repository" button on this
+repo's GitHub page, or [`CITATION.cff`](CITATION.cff) directly.

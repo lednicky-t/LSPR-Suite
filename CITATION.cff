@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "LSPR Suite"
+type: software
+authors:
+  - family-names: "Lednický"
+    given-names: "Tomáš"
+    orcid: "https://orcid.org/0000-0003-0564-1862"
+repository-code: "https://github.com/lednicky-t/LSPR-Suite"
+license: MIT
+version: "0.2.57"
+date-released: "2026-08-25"
+keywords:
+  - LSPR
+  - localized surface plasmon resonance
+  - spectroscopy
+  - nano-optics
+  - plasmonics
