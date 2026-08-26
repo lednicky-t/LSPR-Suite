@@ -1,5 +1,7 @@
 # LSPR Suite
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22111890.svg)](https://doi.org/10.5281/zenodo.22111890)
+
 This repository is the umbrella for the LSPR application suite.
 
 It now connects several separate app repositories through Git submodules:

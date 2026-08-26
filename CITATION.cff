@@ -8,8 +8,12 @@ authors:
     orcid: "https://orcid.org/0000-0003-0564-1862"
 repository-code: "https://github.com/lednicky-t/LSPR-Suite"
 license: MIT
-version: "0.2.57"
-date-released: "2026-08-25"
+version: "0.2.60"
+date-released: "2026-08-26"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.22111890"
+    description: "Concept DOI - always resolves to the latest archived version on Zenodo."
 keywords:
   - LSPR
   - localized surface plasmon resonance
