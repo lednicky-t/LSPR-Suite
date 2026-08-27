@@ -104,6 +104,56 @@ class SensorgramStopDuringPrepTests(unittest.TestCase):
         self.assertFalse(result.cancelled)
         self.assertEqual(result.spectral_cube_indices.size, len(spectral_cubes))
 
+    def test_cancelling_during_prep_does_not_make_the_finish_batch_unstoppable(self) -> None:
+        """Regression test for a follow-on bug: the fix above (exempting a
+        prep-time cancel from re-triggering) was originally implemented as a
+        blanket exemption for the rest of the run, not just enough to avoid
+        returning an empty result - so Stop pressed during prep correctly
+        stopped prep, but the "finish what's already loaded" batch that
+        followed could never be stopped afterward, no matter how many cubes
+        were still queued in it. Fixed by only exempting cube #1 of that
+        batch from the cancel check; cube #2 onward must still honor Stop.
+        """
+        spectral_cubes = list(range(12))
+        cancel_event = threading.Event()
+        lock = threading.Lock()
+        loaded_count = 0
+
+        def builder(spectral_cube_index: int):
+            nonlocal loaded_count
+            with lock:
+                loaded_count += 1
+                # Let a larger batch (5 cubes) finish loading before Stop is
+                # noticed, so there is real "already loaded" work for the
+                # fit loop to potentially (and wrongly) keep grinding through.
+                if loaded_count >= 5:
+                    cancel_event.set()
+            return (spectral_cube_index,)
+
+        fit_task_call_count = 0
+
+        def fake_fit_task(spectral_cube_index, *, cancel_event=None, progress_callback=None, reduction_method=None, trimmed_mean_fraction=None, formula_key=None):
+            nonlocal fit_task_call_count
+            fit_task_call_count += 1
+            return _FakeSpectrum(spectral_cube_index)
+
+        result = _sensorgram_metric_task(
+            spectral_cubes,
+            poly_order=1,
+            metric_key="centroid",
+            cancel_event=cancel_event,
+            spectral_cube_payload_builder=builder,
+            task_fn=fake_fit_task,
+            fit_method_key="none",
+        )
+
+        self.assertTrue(result.cancelled)
+        # Exactly one cube - the one exempted to avoid an empty result -
+        # should ever reach the fit task, even though several more were
+        # already loaded and available to (wrongly) keep processing.
+        self.assertEqual(fit_task_call_count, 1)
+        self.assertEqual(result.spectral_cube_indices.size, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
