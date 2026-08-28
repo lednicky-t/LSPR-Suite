@@ -78,8 +78,8 @@ class ChromaticSeedPreservesAnalysisCacheTests(unittest.TestCase):
         fake_result = FormulaSpectrumResult(
             wavelengths_nm=np.asarray([500.0, 550.0]),
             formula_values=np.asarray([0.1, 0.2]),
-            sample_mean=np.asarray([10.0, 11.0]),
-            reference_mean=np.asarray([20.0, 21.0]),
+            sample_reduced_value=np.asarray([10.0, 11.0]),
+            reference_reduced_value=np.asarray([20.0, 21.0]),
             sample_pixel_count=np.asarray([50, 50], dtype=np.int32),
             reference_pixel_count=np.asarray([200, 200], dtype=np.int32),
         )

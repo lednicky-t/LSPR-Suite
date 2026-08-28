@@ -70,7 +70,6 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
     def test_roi_math_fields_round_trip_on_area_roi_settings(self) -> None:
         area_roi_settings = AreaRoiDetectionSettings(
             reduction_method="median",
-            trimmed_mean_fraction=0.2,
             formula_key="ratio",
         )
         with tempfile.TemporaryDirectory() as tmp:
@@ -79,7 +78,6 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
             loaded = load_processing_profile(path)
         loaded_area_roi_settings = loaded[1]
         self.assertEqual(loaded_area_roi_settings.reduction_method, "median")
-        self.assertAlmostEqual(loaded_area_roi_settings.trimmed_mean_fraction, 0.2, places=9)
         self.assertEqual(loaded_area_roi_settings.formula_key, "ratio")
 
     def test_roi_math_fields_default_when_missing_from_payload(self) -> None:
@@ -87,13 +85,11 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
             path = Path(tmp) / "profile.json"
             payload = build_processing_profile_payload(PreprocessingSettings(), AreaRoiDetectionSettings(), [])
             del payload["area_roi_settings"]["reduction_method"]
-            del payload["area_roi_settings"]["trimmed_mean_fraction"]
             del payload["area_roi_settings"]["formula_key"]
             path.write_text(json.dumps(payload), encoding="utf-8")
             loaded = load_processing_profile(path)
         loaded_area_roi_settings = loaded[1]
         self.assertEqual(loaded_area_roi_settings.reduction_method, "mean")
-        self.assertAlmostEqual(loaded_area_roi_settings.trimmed_mean_fraction, 0.10, places=9)
         self.assertEqual(loaded_area_roi_settings.formula_key, "absorbance")
 
 

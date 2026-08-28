@@ -100,7 +100,7 @@ class TestMultiRoiFormulaSpectrumIsolation(unittest.TestCase):
         # or A's value gets pulled way up toward B's brightness (5000).
         with tempfile.TemporaryDirectory() as tmp:
             together = _run_task(Path(tmp), selected_roi_ids=(1, 2), roi_a=self.roi_a, roi_b=self.roi_b)
-            reference_mean_a = float(together.area_roi_results[1].reference_mean[0])
+            reference_mean_a = float(together.area_roi_results[1].reference_reduced_value[0])
             self.assertAlmostEqual(reference_mean_a, BACKGROUND_VALUE, delta=1.0)
 
     def test_roi_a_reference_mean_matches_a_clean_image_once_roi_b_is_selected(self) -> None:
@@ -116,8 +116,8 @@ class TestMultiRoiFormulaSpectrumIsolation(unittest.TestCase):
             )
             together = _run_task(tmp_path, selected_roi_ids=(1, 2), roi_a=self.roi_a, roi_b=self.roi_b)
 
-            reference_mean_clean = float(clean_baseline.area_roi_results[1].reference_mean[0])
-            reference_mean_together = float(together.area_roi_results[1].reference_mean[0])
+            reference_mean_clean = float(clean_baseline.area_roi_results[1].reference_reduced_value[0])
+            reference_mean_together = float(together.area_roi_results[1].reference_reduced_value[0])
             self.assertAlmostEqual(reference_mean_clean, reference_mean_together, delta=1.0)
 
     def test_combined_formula_spectrum_is_the_average_of_per_roi_formula_spectra_not_pooled_pixels(self) -> None:
