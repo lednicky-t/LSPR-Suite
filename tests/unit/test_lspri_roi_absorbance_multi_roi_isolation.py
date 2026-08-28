@@ -39,7 +39,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_imaging_app.domain.models import AreaRoi, AreaRoiDetectionSettings, PreprocessingSettings  # noqa: E402
-from lspr_imaging_app.gui.analysis_tasks import _absorbance_spectrum_task  # noqa: E402
+from lspr_imaging_app.gui.analysis_tasks import _formula_spectrum_task  # noqa: E402
 
 IMAGE_SHAPE = (60, 80)  # (rows, cols) -> (height, width)
 BACKGROUND_VALUE = 100.0
@@ -70,7 +70,7 @@ def _run_task(
     source_rois = [roi_a, roi_b]
     measurement_payload = [(500.0, str(image_path), source_rois, None, False, None)]
 
-    return _absorbance_spectrum_task(
+    return _formula_spectrum_task(
         measurement_payload,
         preprocessing,
         None,
@@ -87,7 +87,7 @@ def _run_task(
     )
 
 
-class TestMultiRoiAbsorbanceIsolation(unittest.TestCase):
+class TestMultiRoiFormulaSpectrumIsolation(unittest.TestCase):
     def setUp(self) -> None:
         self.roi_a = AreaRoi(area_roi_id=1, center_x=30.0, center_y=30.0, sample_radius_px=5.0)
         self.roi_b = AreaRoi(area_roi_id=2, center_x=48.0, center_y=30.0, sample_radius_px=5.0)
@@ -120,18 +120,18 @@ class TestMultiRoiAbsorbanceIsolation(unittest.TestCase):
             reference_mean_together = float(together.area_roi_results[1].reference_mean[0])
             self.assertAlmostEqual(reference_mean_clean, reference_mean_together, delta=1.0)
 
-    def test_combined_absorbance_is_the_average_of_per_roi_absorbances_not_pooled_pixels(self) -> None:
+    def test_combined_formula_spectrum_is_the_average_of_per_roi_formula_spectra_not_pooled_pixels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             result = _run_task(tmp_path, selected_roi_ids=(1, 2), roi_a=self.roi_a, roi_b=self.roi_b)
 
-            absorbance_a = float(result.area_roi_results[1].formula_values[0])
-            absorbance_b = float(result.area_roi_results[2].formula_values[0])
-            combined_absorbance = float(result.formula_values[0])
+            formula_spectrum_a = float(result.area_roi_results[1].formula_values[0])
+            formula_spectrum_b = float(result.area_roi_results[2].formula_values[0])
+            combined_formula_spectrum = float(result.formula_values[0])
 
-            self.assertTrue(np.isfinite(absorbance_a))
-            self.assertTrue(np.isfinite(absorbance_b))
-            self.assertAlmostEqual(combined_absorbance, (absorbance_a + absorbance_b) / 2.0, places=6)
+            self.assertTrue(np.isfinite(formula_spectrum_a))
+            self.assertTrue(np.isfinite(formula_spectrum_b))
+            self.assertAlmostEqual(combined_formula_spectrum, (formula_spectrum_a + formula_spectrum_b) / 2.0, places=6)
 
 
 if __name__ == "__main__":

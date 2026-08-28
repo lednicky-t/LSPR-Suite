@@ -44,7 +44,7 @@ if str(APP_SRC) not in sys.path:
 import numpy as np
 import unittest
 
-from lspr_imaging_app.domain.models import AbsorbanceSpectrumResult, ChromaticTransformModel  # noqa: E402
+from lspr_imaging_app.domain.models import FormulaSpectrumResult, ChromaticTransformModel  # noqa: E402
 from lspr_imaging_app.gui.main_window import MainWindow  # noqa: E402
 
 
@@ -58,7 +58,7 @@ class ChromaticSeedPreservesAnalysisCacheTests(unittest.TestCase):
         self.window.close()
         self.window.deleteLater()
 
-    def test_seeding_default_landmarks_does_not_clear_absorbance_cache_or_fitted_model(self) -> None:
+    def test_seeding_default_landmarks_does_not_clear_formula_spectrum_cache_or_fitted_model(self) -> None:
         window = self.window
         controller = window._chromatic_controller
 
@@ -75,7 +75,7 @@ class ChromaticSeedPreservesAnalysisCacheTests(unittest.TestCase):
 
         # A cached spectrum for some other cube, standing in for real
         # analysis work already done this session - must survive.
-        fake_result = AbsorbanceSpectrumResult(
+        fake_result = FormulaSpectrumResult(
             wavelengths_nm=np.asarray([500.0, 550.0]),
             formula_values=np.asarray([0.1, 0.2]),
             sample_mean=np.asarray([10.0, 11.0]),
@@ -84,7 +84,7 @@ class ChromaticSeedPreservesAnalysisCacheTests(unittest.TestCase):
             reference_pixel_count=np.asarray([200, 200], dtype=np.int32),
         )
         fake_signature = ("fake-cube-signature",)
-        window._roi_absorbance_cache[fake_signature] = fake_result
+        window._roi_formula_spectrum_cache[fake_signature] = fake_result
 
         controller.sample_image_keys = lambda: [image_key]
         window._reference_image_key = lambda: None
@@ -93,7 +93,7 @@ class ChromaticSeedPreservesAnalysisCacheTests(unittest.TestCase):
 
         self.assertIn(
             fake_signature,
-            window._roi_absorbance_cache,
+            window._roi_formula_spectrum_cache,
             "seeding a default chromatic landmark for a newly-viewed image must not clear "
             "already-cached absorbance spectra for other cubes",
         )

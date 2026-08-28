@@ -16,7 +16,7 @@ import numpy as np
 
 from lspr_imaging_app.processing.analysis import (
     absorbance_from_means,
-    fit_absorbance_curve,
+    fit_polynomial_curve,
     fit_curve_for_method,
     fit_gaussian_curve,
     formula_value,
@@ -94,7 +94,7 @@ class TestFormulaValue(unittest.TestCase):
             self.assertTrue(math.isfinite(result_negative), msg=f"formula={key}")
 
 
-class TestFitAbsorbanceCurve(unittest.TestCase):
+class TestFitPolynomialCurve(unittest.TestCase):
     def _symmetric_parabola(self, center: float = 600.0, half_width: float = 100.0, height: float = 1.0, n: int = 81):
         x = np.linspace(center - half_width, center + half_width, n)
         y = height - ((x - center) / half_width) ** 2
@@ -102,7 +102,7 @@ class TestFitAbsorbanceCurve(unittest.TestCase):
 
     def test_recovers_peak_and_centroid_of_exact_quadratic(self) -> None:
         x, y = self._symmetric_parabola(center=600.0, half_width=100.0, height=1.0)
-        fit = fit_absorbance_curve(x, y, poly_order=2)
+        fit = fit_polynomial_curve(x, y, poly_order=2)
         self.assertIsNotNone(fit.peak_wavelength_nm)
         self.assertAlmostEqual(fit.peak_wavelength_nm, 600.0, places=3)
         self.assertAlmostEqual(fit.peak_value, 1.0, places=6)
@@ -113,8 +113,8 @@ class TestFitAbsorbanceCurve(unittest.TestCase):
 
     def test_wl_window_excludes_points_outside_range(self) -> None:
         x, y = self._symmetric_parabola(center=600.0, half_width=100.0, height=1.0)
-        fit_full = fit_absorbance_curve(x, y, poly_order=2)
-        fit_windowed = fit_absorbance_curve(x, y, poly_order=2, wl_min=550.0, wl_max=650.0)
+        fit_full = fit_polynomial_curve(x, y, poly_order=2)
+        fit_windowed = fit_polynomial_curve(x, y, poly_order=2, wl_min=550.0, wl_max=650.0)
         self.assertAlmostEqual(fit_windowed.fitted_wavelengths_nm.min(), 550.0, places=6)
         self.assertAlmostEqual(fit_windowed.fitted_wavelengths_nm.max(), 650.0, places=6)
         # Still recovers the same peak since the window is symmetric about it.
@@ -125,11 +125,11 @@ class TestFitAbsorbanceCurve(unittest.TestCase):
         y = y.copy()
         y[3] = np.nan
         y[10] = np.inf
-        fit = fit_absorbance_curve(x, y, poly_order=2)
+        fit = fit_polynomial_curve(x, y, poly_order=2)
         self.assertAlmostEqual(fit.peak_wavelength_nm, 600.0, places=2)
 
     def test_too_few_points_returns_empty_result(self) -> None:
-        fit = fit_absorbance_curve(np.array([500.0]), np.array([0.5]))
+        fit = fit_polynomial_curve(np.array([500.0]), np.array([0.5]))
         self.assertIsNone(fit.peak_wavelength_nm)
         self.assertIsNone(fit.centroid_nm)
         self.assertIsNone(fit.peak_value)
@@ -198,10 +198,10 @@ class TestFitGaussianCurve(unittest.TestCase):
 
 
 class TestFitCurveForMethod(unittest.TestCase):
-    def test_poly_key_dispatches_to_fit_absorbance_curve(self) -> None:
-        x, y = TestFitAbsorbanceCurve()._symmetric_parabola()
+    def test_poly_key_dispatches_to_fit_polynomial_curve(self) -> None:
+        x, y = TestFitPolynomialCurve()._symmetric_parabola()
         via_dispatch = fit_curve_for_method(x, y, "poly", poly_order=2)
-        direct = fit_absorbance_curve(x, y, poly_order=2)
+        direct = fit_polynomial_curve(x, y, poly_order=2)
         self.assertAlmostEqual(via_dispatch.peak_wavelength_nm, direct.peak_wavelength_nm, places=9)
 
     def test_gaussian_key_dispatches_to_fit_gaussian_curve(self) -> None:
@@ -211,38 +211,76 @@ class TestFitCurveForMethod(unittest.TestCase):
         self.assertAlmostEqual(via_dispatch.peak_wavelength_nm, direct.peak_wavelength_nm, places=9)
 
     def test_unknown_key_falls_back_to_poly(self) -> None:
-        x, y = TestFitAbsorbanceCurve()._symmetric_parabola()
+        x, y = TestFitPolynomialCurve()._symmetric_parabola()
         via_dispatch = fit_curve_for_method(x, y, "not_a_real_method", poly_order=2)
-        direct = fit_absorbance_curve(x, y, poly_order=2)
+        direct = fit_polynomial_curve(x, y, poly_order=2)
         self.assertAlmostEqual(via_dispatch.peak_wavelength_nm, direct.peak_wavelength_nm, places=9)
+
+    def test_repeated_calls_are_bit_identical(self) -> None:
+        """Regression test for the assumption behind
+        gui/plot_manager.py's compute_spectrum_series_data /
+        gui/analysis_worker_mixin.py's _compute_formula_spectrum_result:
+        the curve fit used to be computed twice for a single-ROI spectrum
+        (once to draw the curve, once again for the metric value) and was
+        deduplicated to a single call whose result is reused for both. That
+        dedup is only safe if fit_curve_for_method is a pure, deterministic
+        function of its inputs - not, say, a solver with an internal random
+        seed or floating-point evaluation-order sensitivity. Asserts EXACT
+        (not approximate) equality between two independent calls with
+        identical inputs, for both the "poly" and "gaussian" fit methods,
+        since exact reproduction is the actual claim being relied on."""
+        x, y = TestFitPolynomialCurve()._symmetric_parabola()
+        poly_a = fit_curve_for_method(x, y, "poly", poly_order=3)
+        poly_b = fit_curve_for_method(x, y, "poly", poly_order=3)
+        np.testing.assert_array_equal(poly_a.fitted_wavelengths_nm, poly_b.fitted_wavelengths_nm)
+        np.testing.assert_array_equal(poly_a.fitted_values, poly_b.fitted_values)
+        np.testing.assert_array_equal(poly_a.coefficients, poly_b.coefficients)
+        self.assertEqual(poly_a.peak_wavelength_nm, poly_b.peak_wavelength_nm)
+        self.assertEqual(poly_a.peak_value, poly_b.peak_value)
+        self.assertEqual(poly_a.centroid_nm, poly_b.centroid_nm)
+
+        gx, gy = TestFitGaussianCurve()._exact_gaussian(center=620.0, sigma=12.0)
+        gauss_a = fit_curve_for_method(gx, gy, "gaussian")
+        gauss_b = fit_curve_for_method(gx, gy, "gaussian")
+        np.testing.assert_array_equal(gauss_a.fitted_wavelengths_nm, gauss_b.fitted_wavelengths_nm)
+        np.testing.assert_array_equal(gauss_a.fitted_values, gauss_b.fitted_values)
+        np.testing.assert_array_equal(gauss_a.coefficients, gauss_b.coefficients)
+        self.assertEqual(gauss_a.peak_wavelength_nm, gauss_b.peak_wavelength_nm)
+        self.assertEqual(gauss_a.centroid_nm, gauss_b.centroid_nm)
+
+        # And the actual metric-value pipeline built on top, since that's
+        # what the GUI code reuses the fit object for.
+        metric_a = metric_value_from_fit(poly_a, "maximum")
+        metric_b = metric_value_from_fit(poly_b, "maximum")
+        self.assertEqual(metric_a, metric_b)
 
 
 class TestMetricValueFromFit(unittest.TestCase):
     def test_maximum_metric_returns_peak(self) -> None:
-        x, y = TestFitAbsorbanceCurve()._symmetric_parabola()
-        fit = fit_absorbance_curve(x, y, poly_order=2)
+        x, y = TestFitPolynomialCurve()._symmetric_parabola()
+        fit = fit_polynomial_curve(x, y, poly_order=2)
         value, signal = metric_value_from_fit(fit, "maximum")
         self.assertAlmostEqual(value, fit.peak_wavelength_nm, places=9)
         self.assertAlmostEqual(signal, fit.peak_value, places=9)
 
     def test_centroid_metric_returns_centroid_and_interpolated_signal(self) -> None:
-        x, y = TestFitAbsorbanceCurve()._symmetric_parabola()
-        fit = fit_absorbance_curve(x, y, poly_order=2)
+        x, y = TestFitPolynomialCurve()._symmetric_parabola()
+        fit = fit_polynomial_curve(x, y, poly_order=2)
         value, signal = metric_value_from_fit(fit, "centroid")
         self.assertAlmostEqual(value, fit.centroid_nm, places=9)
         expected_signal = float(np.interp(fit.centroid_nm, fit.fitted_wavelengths_nm, fit.fitted_values))
         self.assertAlmostEqual(signal, expected_signal, places=9)
 
     def test_unknown_metric_key_returns_none_none(self) -> None:
-        x, y = TestFitAbsorbanceCurve()._symmetric_parabola()
-        fit = fit_absorbance_curve(x, y, poly_order=2)
+        x, y = TestFitPolynomialCurve()._symmetric_parabola()
+        fit = fit_polynomial_curve(x, y, poly_order=2)
         value, signal = metric_value_from_fit(fit, "not_a_real_metric")
         self.assertIsNone(value)
         self.assertIsNone(signal)
 
     def test_metric_key_is_case_and_whitespace_insensitive(self) -> None:
-        x, y = TestFitAbsorbanceCurve()._symmetric_parabola()
-        fit = fit_absorbance_curve(x, y, poly_order=2)
+        x, y = TestFitPolynomialCurve()._symmetric_parabola()
+        fit = fit_polynomial_curve(x, y, poly_order=2)
         value, _ = metric_value_from_fit(fit, "  Maximum  ")
         self.assertAlmostEqual(value, fit.peak_wavelength_nm, places=9)
 
@@ -303,8 +341,8 @@ class TestMetricValueFromSpectrum(unittest.TestCase):
         # Sanity cross-check: on data smooth enough for a quadratic fit to
         # reproduce almost exactly, the fit-free and fit-based metrics should
         # land on essentially the same peak/centroid.
-        x, y = TestFitAbsorbanceCurve()._symmetric_parabola(n=401)
-        fit = fit_absorbance_curve(x, y, poly_order=2)
+        x, y = TestFitPolynomialCurve()._symmetric_parabola(n=401)
+        fit = fit_polynomial_curve(x, y, poly_order=2)
         fit_value, _ = metric_value_from_fit(fit, "maximum")
         raw_value, _ = metric_value_from_spectrum(x, y, "maximum")
         self.assertAlmostEqual(raw_value, fit_value, places=1)

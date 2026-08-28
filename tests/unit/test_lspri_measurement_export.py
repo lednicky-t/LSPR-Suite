@@ -19,7 +19,7 @@ import numpy as np
 from lspr_imaging_app.domain.models import AreaRoi, AreaRoiGroup, RoiArrayGroup, RoiMask
 from lspr_imaging_app.storage.measurement_export import (
     ImagingMeasurementExportWriter,
-    read_absorbance_spectra_trace,
+    read_formula_spectra_trace,
     read_roi_definition_records,
     read_sensorgram_trace,
 )
@@ -94,7 +94,7 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             with ImagingMeasurementExportWriter(path) as writer:
                 writer.write_roi_definitions(rois, groups, arrays)
                 writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.5)
-                writer.append_absorbance_spectrum(
+                writer.append_formula_spectrum(
                     1,
                     wavelengths_nm=np.asarray([600.0, 650.0]),
                     formula_values=np.asarray([0.1, 0.2]),
@@ -107,12 +107,12 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             with h5py.File(path, "r") as handle:
                 definition_attrs = dict(handle["rois"]["1"]["definition"].attrs.items())
                 sensorgram_link = handle.get("rois/1/sensorgram", getlink=True)
-                absorbance_link = handle.get("rois/1/absorbance_spectra", getlink=True)
+                formula_spectrum_link = handle.get("rois/1/absorbance_spectra", getlink=True)
                 linked_metric = handle["rois"]["1"]["sensorgram"]["metric_value"][...]
 
         self.assertEqual(definition_attrs["name"], "Spot A")
         self.assertIsInstance(sensorgram_link, h5py.SoftLink)
-        self.assertIsInstance(absorbance_link, h5py.SoftLink)
+        self.assertIsInstance(formula_spectrum_link, h5py.SoftLink)
         np.testing.assert_array_equal(linked_metric, np.asarray([0.5]))
 
     def test_sensorgram_append_and_reload_round_trip(self) -> None:
@@ -132,12 +132,12 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
         self.assertEqual(trace["metric_name"], "centroid")
         self.assertEqual(trace["formula_key"], "absorbance")
 
-    def test_absorbance_spectrum_append_and_reload_round_trip(self) -> None:
+    def test_formula_spectrum_append_and_reload_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "export.h5"
             wavelengths = np.asarray([600.0, 620.0, 640.0])
             with ImagingMeasurementExportWriter(path) as writer:
-                writer.append_absorbance_spectrum(
+                writer.append_formula_spectrum(
                     1,
                     wavelengths_nm=wavelengths,
                     formula_values=np.asarray([0.1, 0.2, 0.3]),
@@ -146,7 +146,7 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
                     cube_index=0,
                     timestamp_utc_ms=1000,
                 )
-                writer.append_absorbance_spectrum(
+                writer.append_formula_spectrum(
                     1,
                     wavelengths_nm=wavelengths,
                     formula_values=np.asarray([0.11, 0.21, 0.31]),
@@ -156,7 +156,7 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
                     timestamp_utc_ms=2000,
                 )
 
-            trace = read_absorbance_spectra_trace(path, 1)
+            trace = read_formula_spectra_trace(path, 1)
 
         np.testing.assert_array_equal(trace["wavelengths_nm"], wavelengths)
         np.testing.assert_array_equal(trace["cube_index"], np.asarray([0, 1], dtype=np.int64))
@@ -233,7 +233,7 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             path = Path(temp_dir) / "export.h5"
             writer = ImagingMeasurementExportWriter(path)
             writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.1)
-            writer.append_absorbance_spectrum(
+            writer.append_formula_spectrum(
                 1,
                 wavelengths_nm=np.asarray([600.0, 650.0]),
                 formula_values=np.asarray([0.1, 0.2]),
@@ -247,7 +247,7 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             reopened = ImagingMeasurementExportWriter(path)
             try:
                 self.assertEqual(reopened.existing_sensorgram_keys(), {("1", 0, "")})
-                self.assertEqual(reopened.existing_absorbance_keys(), {(1, 0, "")})
+                self.assertEqual(reopened.existing_formula_spectrum_keys(), {(1, 0, "")})
                 reopened.append_sensorgram_point(1, cube_index=1, timestamp_utc_ms=200, metric_value=0.2)
             finally:
                 reopened.close()
@@ -269,7 +269,7 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
             with ImagingMeasurementExportWriter(path) as writer:
                 writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.1, signature_hash="hash-a")
                 writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=150, metric_value=0.2, signature_hash="hash-b")
-                writer.append_absorbance_spectrum(
+                writer.append_formula_spectrum(
                     1,
                     wavelengths_nm=np.asarray([600.0, 650.0]),
                     formula_values=np.asarray([0.1, 0.2]),
@@ -285,7 +285,7 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
                 self.assertEqual(
                     reopened.existing_sensorgram_keys(), {("1", 0, "hash-a"), ("1", 0, "hash-b")}
                 )
-                self.assertEqual(reopened.existing_absorbance_keys(), {(1, 0, "hash-a")})
+                self.assertEqual(reopened.existing_formula_spectrum_keys(), {(1, 0, "hash-a")})
             finally:
                 reopened.close()
 
@@ -354,10 +354,10 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
                 pass
 
             sensorgram = read_sensorgram_trace(path, 999)
-            absorbance = read_absorbance_spectra_trace(path, 999)
+            formula_spectrum = read_formula_spectra_trace(path, 999)
 
         self.assertEqual(sensorgram["timestamp_utc_ms"].size, 0)
-        self.assertEqual(absorbance["wavelengths_nm"].size, 0)
+        self.assertEqual(formula_spectrum["wavelengths_nm"].size, 0)
 
 
 if __name__ == "__main__":
