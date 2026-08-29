@@ -16,6 +16,8 @@ if str(APP_SRC) not in sys.path:
 import h5py
 import numpy as np
 
+import json
+
 from lspr_imaging_app.domain.models import AreaRoi, AreaRoiGroup, RoiArrayGroup, RoiMask
 from lspr_imaging_app.storage.measurement_export import (
     ImagingMeasurementExportWriter,
@@ -358,6 +360,134 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
 
         self.assertEqual(sensorgram["timestamp_utc_ms"].size, 0)
         self.assertEqual(formula_spectrum["wavelengths_nm"].size, 0)
+
+
+class ReducedValuesByMethodTests(unittest.TestCase):
+    """Schema 6.7: every Reduction method actually computed alongside a row
+    (see processing/roi_math.py's reduce_sample_and_reference_all_methods)
+    is written into its own reduced_values/<method>/ subgroup, so any of
+    them can be recovered later without re-reading pixels - see
+    processing/analysis.py's project_reduction_result. The existing flat
+    sample_mean/reference_mean/absorbance columns are unaffected."""
+
+    def _write_row(self, writer: ImagingMeasurementExportWriter, *, cube_index: int, reduced_values_by_method=None) -> None:
+        writer.append_formula_spectrum(
+            1,
+            wavelengths_nm=np.asarray([600.0, 650.0]),
+            formula_values=np.asarray([0.1, 0.2]),
+            sample_mean=np.asarray([1000.0, 1100.0]),
+            reference_mean=np.asarray([2000.0, 2100.0]),
+            cube_index=cube_index,
+            timestamp_utc_ms=100 * (cube_index + 1),
+            formula_key="absorbance",
+            reduction_method="mean",
+            signature_hash=f"hash-{cube_index}",
+            reduced_values_by_method=reduced_values_by_method,
+        )
+
+    def test_all_methods_round_trip_through_formula_spectrum_index(self) -> None:
+        reduced_values_by_method = {
+            "mean": (np.asarray([1000.0, 1100.0]), np.asarray([2000.0, 2100.0])),
+            "median": (np.asarray([999.0, 1099.0]), np.asarray([1999.0, 2099.0])),
+            "trimmed_mean": (np.asarray([1000.5, 1100.5]), np.asarray([2000.5, 2100.5])),
+            "plane_fit": (np.asarray([1000.0, 1100.0]), np.asarray([1998.0, 2098.0])),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                self._write_row(writer, cube_index=0, reduced_values_by_method=reduced_values_by_method)
+                trace = writer.formula_spectrum_index(1)
+
+        self.assertIsNotNone(trace)
+        stored_hash, by_method = trace.by_cube[0]
+        self.assertEqual(stored_hash, "hash-0")
+        self.assertEqual(set(by_method.keys()), {"mean", "median", "trimmed_mean", "plane_fit"})
+        np.testing.assert_allclose(by_method["median"][0], [999.0, 1099.0], atol=1e-3)
+        np.testing.assert_allclose(by_method["median"][1], [1999.0, 2099.0], atol=1e-3)
+        np.testing.assert_allclose(by_method["plane_fit"][1], [1998.0, 2098.0], atol=1e-3)
+        # The active method's pair matches the flat legacy columns exactly.
+        np.testing.assert_allclose(by_method["mean"][0], [1000.0, 1100.0], atol=1e-3)
+
+    def test_none_reduced_values_writes_only_legacy_columns(self) -> None:
+        """Optional/backward-compatible: a caller that never passes
+        reduced_values_by_method (e.g. a future caller that only computes
+        one method) must not create a reduced_values/ group at all - the
+        row still round-trips via the flat columns exactly as pre-6.7."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                self._write_row(writer, cube_index=0, reduced_values_by_method=None)
+                trace = writer.formula_spectrum_index(1)
+
+        stored_hash, by_method = trace.by_cube[0]
+        self.assertEqual(stored_hash, "hash-0")
+        self.assertEqual(set(by_method.keys()), {"mean"})
+
+    def test_reduced_values_backfilled_for_rows_that_predate_the_feature(self) -> None:
+        """Two rows written the old way (no reduced_values_by_method), then
+        a third written the new way. The new method's subgroup must be
+        row-aligned with cube_index (backfilled for rows 0-1), and
+        reduced_values_start_row must mark row 2 as the first trustworthy
+        one - formula_spectrum_index must NOT report "median" as available
+        for rows 0-1 even though the (NaN) array technically has entries
+        there."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                self._write_row(writer, cube_index=0, reduced_values_by_method=None)
+                self._write_row(writer, cube_index=1, reduced_values_by_method=None)
+                self._write_row(
+                    writer,
+                    cube_index=2,
+                    reduced_values_by_method={
+                        "mean": (np.asarray([1000.0, 1100.0]), np.asarray([2000.0, 2100.0])),
+                        "median": (np.asarray([777.0, 888.0]), np.asarray([1777.0, 1888.0])),
+                    },
+                )
+
+                with h5py.File(path, "r") as handle:
+                    group = handle["processed"]["absorbance_spectra"]["1"]
+                    self.assertEqual(int(group.attrs["reduced_values_start_row"]), 2)
+                    self.assertEqual(group["reduced_values"]["median"]["sample_mean"].shape[0], 3)
+                    backfilled_rows = group["reduced_values"]["median"]["sample_mean"][0:2]
+                    self.assertTrue(np.all(np.isnan(backfilled_rows)))
+
+                trace = writer.formula_spectrum_index(1)
+
+        for cube_index in (0, 1):
+            _, by_method = trace.by_cube[cube_index]
+            self.assertEqual(set(by_method.keys()), {"mean"}, msg=f"cube {cube_index} should not see the backfilled median entry")
+        _, by_method_row2 = trace.by_cube[2]
+        self.assertEqual(set(by_method_row2.keys()), {"mean", "median"})
+        np.testing.assert_allclose(by_method_row2["median"][0], [777.0, 888.0], atol=1e-3)
+
+    def test_method_and_formula_definitions_are_stamped_and_stable(self) -> None:
+        """Reproducibility catalog (see _stamp_method_definitions): written
+        once as JSON attrs on the parent group, and never overwritten by a
+        later append (so a newer app version's catalog text never silently
+        replaces what was actually true when the file's data was written)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                self._write_row(writer, cube_index=0, reduced_values_by_method=None)
+                with h5py.File(path, "r") as handle:
+                    parent = handle["processed"]["absorbance_spectra"]
+                    reduction_definitions = json.loads(parent.attrs["reduction_method_definitions"])
+                    formula_definitions = json.loads(parent.attrs["formula_key_definitions"])
+                self.assertEqual(set(reduction_definitions.keys()), {"mean", "median", "trimmed_mean", "plane_fit"})
+                self.assertEqual(set(formula_definitions.keys()), {"absorbance", "ratio", "relative_change", "mod_absorbance"})
+                self.assertIn("plane", reduction_definitions["plane_fit"].lower())
+
+                # Tamper with the stamped value, then append again - a real
+                # append must not restamp/overwrite it.
+                with h5py.File(path, "a") as handle:
+                    handle["processed"]["absorbance_spectra"].attrs["reduction_method_definitions"] = json.dumps({"custom": "value"})
+                self._write_row(writer, cube_index=1, reduced_values_by_method=None)
+                with h5py.File(path, "r") as handle:
+                    self.assertEqual(
+                        json.loads(handle["processed"]["absorbance_spectra"].attrs["reduction_method_definitions"]),
+                        {"custom": "value"},
+                    )
 
 
 if __name__ == "__main__":

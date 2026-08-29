@@ -70,7 +70,7 @@ class TestEnsureDiskFormulaSpectrumTraceCached(unittest.TestCase):
         return AnalysisController(window), window
 
     def test_real_hit_gets_cached(self) -> None:
-        trace = _make_trace({0: ("h0", np.zeros(2), np.zeros(2), np.zeros(2))})
+        trace = _make_trace({0: ("h0", {"mean": (np.zeros(2), np.zeros(2))})})
         writer = _FakeWriter({1: trace})
         controller, window = self._make_controller(writer)
         roi = SimpleNamespace(area_roi_id=1)
@@ -95,7 +95,7 @@ class TestEnsureDiskFormulaSpectrumTraceCached(unittest.TestCase):
         self.assertNotIn(1, window._formula_spectrum_disk_trace_cache)
 
     def test_already_cached_roi_is_not_reread(self) -> None:
-        trace = _make_trace({0: ("h0", np.zeros(2), np.zeros(2), np.zeros(2))})
+        trace = _make_trace({0: ("h0", {"mean": (np.zeros(2), np.zeros(2))})})
         writer = _FakeWriter({1: trace})
         controller, window = self._make_controller(writer)
         window._formula_spectrum_disk_trace_cache[1] = trace
@@ -123,7 +123,7 @@ class TestFormulaSpectrumSignatureSavedOnDisk(unittest.TestCase):
         controller = self._make_controller()
         signature = (1, "roi", "some", "signature")
         stored_hash = controller._signature_hash(signature)
-        trace = _make_trace({7: (stored_hash, np.zeros(2), np.zeros(2), np.zeros(2))})
+        trace = _make_trace({7: (stored_hash, {"mean": (np.zeros(2), np.zeros(2))})})
 
         self.assertTrue(
             controller._formula_spectrum_signature_saved_on_disk(1, 7, signature, {1: trace})
@@ -135,7 +135,7 @@ class TestFormulaSpectrumSignatureSavedOnDisk(unittest.TestCase):
         valid for the *current* signature, so it must not count as cached."""
         controller = self._make_controller()
         signature = (1, "roi", "some", "signature")
-        trace = _make_trace({7: ("stale-hash", np.zeros(2), np.zeros(2), np.zeros(2))})
+        trace = _make_trace({7: ("stale-hash", {"mean": (np.zeros(2), np.zeros(2))})})
 
         self.assertFalse(
             controller._formula_spectrum_signature_saved_on_disk(1, 7, signature, {1: trace})
@@ -145,7 +145,7 @@ class TestFormulaSpectrumSignatureSavedOnDisk(unittest.TestCase):
         controller = self._make_controller()
         signature = (1, "roi", "some", "signature")
         stored_hash = controller._signature_hash(signature)
-        trace = _make_trace({7: (stored_hash, np.zeros(2), np.zeros(2), np.zeros(2))})
+        trace = _make_trace({7: (stored_hash, {"mean": (np.zeros(2), np.zeros(2))})})
 
         self.assertFalse(
             controller._formula_spectrum_signature_saved_on_disk(1, 8, signature, {1: trace})

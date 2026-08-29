@@ -366,7 +366,7 @@ class Hdf5AcquisitionWriterTests(unittest.TestCase):
                     for row in inventory_table[...]
                 ]
 
-        self.assertEqual(root_schema_version, "6.5")
+        self.assertEqual(root_schema_version, "6.7")
         self.assertEqual(details_columns, ["switch_port", "concentration", "concentration_unit", "notes"])
         self.assertEqual(details_rows, [["A", "10 mM", "mM", "prepared fresh"], ["B", "", "", ""]])
         self.assertEqual(inventory_group_attrs["schema_name"], "lspr_device_inventory")

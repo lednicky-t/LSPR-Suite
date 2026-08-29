@@ -92,10 +92,34 @@ from __future__ import annotations
 # must tolerate both columns' absence in older files - ImagingMeasurementExportWriter
 # never overwrites a row in place when a signature changes; it appends a new
 # one, so a superseded row is simply the one whose hash no longer matches.
+# 6.7 (2026-08-29): additive, compatible change - new optional `reduced_values/
+# <reduction_method>/{sample_mean, reference_mean}` subgroups under
+# processed/absorbance_spectra/{roi_id}, part of LSPRi eva's Reduction/Formula
+# decoupling (see apps/LSPRi/eva/docs/imaging_measurement_export_format.md).
+# Every reduction method (mean/median/trimmed_mean/plane_fit) actually
+# computed for a row is written here, not just whichever was active - see
+# processing/roi_math.py's reduce_sample_and_reference_all_methods - so any of
+# them can be recovered later without re-reading pixels (processing/analysis.py's
+# project_reduction_result). The existing flat `sample_mean`/`reference_mean`/
+# `absorbance` columns and `formula_key`/`reduction_method` attrs are
+# unchanged and keep meaning exactly what they did before - readers that don't
+# know about `reduced_values/` still see a fully valid, complete file. New
+# group attrs: `reduced_values_start_row` (row index before which no
+# `reduced_values/` entry should be trusted - rows before it predate this
+# feature and are NaN-backfilled purely to keep column lengths aligned, not
+# because they were computed) and, on the parent processed/absorbance_spectra
+# group, `reduction_method_definitions`/`formula_key_definitions` (JSON-string
+# catalogs of what each method/formula key actually computes, for
+# reproducibility without needing this app's source). Also as of this
+# version, `signature_hash` on processed/absorbance_spectra rows is computed
+# from a reduction-independent signature (a row can now carry every reduction
+# method's values, so its validity must not depend on which one was active
+# when it was written) - readers must not assume it's directly comparable to
+# a pre-6.7 file's hash for the same settings.
 LSPR_MEASUREMENT_SCHEMA_NAME = "lspr_measurement"
-LSPR_MEASUREMENT_SCHEMA_VERSION = "6.6"
+LSPR_MEASUREMENT_SCHEMA_VERSION = "6.7"
 LSPR_MEASUREMENT_SCHEMA_MAJOR = 6
-LSPR_MEASUREMENT_SCHEMA_MINOR = 6
+LSPR_MEASUREMENT_SCHEMA_MINOR = 7
 LSPR_MEASUREMENT_FORMAT_NAME = "experiment_run"
 LSPR_MEASUREMENT_FORMAT_VERSION = 6
 
