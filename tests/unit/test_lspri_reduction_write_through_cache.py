@@ -164,16 +164,31 @@ def _make_disk_trace(
     reduction_method: str = "mean",
     formula_key: str = "absorbance",
     stale: bool = False,
+    legacy: bool = False,
 ) -> FormulaSpectrumTraceIndex:
     """A FormulaSpectrumTraceIndex whose stored signature_hash actually
     matches what _roi_disk_signature_for_cube computes for this roi/cube -
     exactly what a real HDF5-backed reader would hand back after a schema
-    6.7 row was written and re-read."""
+    6.7 row was written and re-read.
+
+    `legacy=True` instead simulates a row written BEFORE schema 6.7: its
+    hash was computed with the actual reduction method baked in (via
+    `_roi_formula_spectrum_signature_for_cube`, no override), not today's
+    reduction-independent placeholder - see
+    `_formula_spectrum_signature_matches_legacy_hash`."""
     reduced_values_by_method = {
         method: (np.asarray([s, s]), np.asarray([r, r])) for method, (s, r) in methods.items()
     }
-    disk_signature = controller._roi_disk_signature_for_cube(roi, spectral_cube_index)
-    stored_hash = "stale-hash" if stale else controller._signature_hash(disk_signature)
+    if stale:
+        stored_hash = "stale-hash"
+    elif legacy:
+        legacy_signature = controller._roi_formula_spectrum_signature_for_cube(
+            roi, spectral_cube_index, reduction_method_override=reduction_method
+        )
+        stored_hash = controller._signature_hash(legacy_signature)
+    else:
+        disk_signature = controller._roi_disk_signature_for_cube(roi, spectral_cube_index)
+        stored_hash = controller._signature_hash(disk_signature)
     return FormulaSpectrumTraceIndex(
         wavelengths_nm=np.asarray([500.0, 510.0]),
         formula_key=formula_key,
@@ -198,7 +213,7 @@ class TestFormulaSpectrumResultFromDiskRow(unittest.TestCase):
         trace = _make_disk_trace(controller, roi, 0, methods)
         disk_signature = controller._roi_disk_signature_for_cube(roi, 0)
 
-        result = controller._formula_spectrum_result_from_disk_row(1, 0, disk_signature, {1: trace})
+        result = controller._formula_spectrum_result_from_disk_row(roi, 0, disk_signature, {1: trace})
 
         self.assertIsNotNone(result)
         self.assertEqual(result.reduction_method, "mean")
@@ -212,7 +227,7 @@ class TestFormulaSpectrumResultFromDiskRow(unittest.TestCase):
         trace = _make_disk_trace(controller, roi, 0, {"mean": (10.0, 20.0)}, stale=True)
         disk_signature = controller._roi_disk_signature_for_cube(roi, 0)
 
-        result = controller._formula_spectrum_result_from_disk_row(1, 0, disk_signature, {1: trace})
+        result = controller._formula_spectrum_result_from_disk_row(roi, 0, disk_signature, {1: trace})
 
         self.assertIsNone(result)
 
@@ -221,9 +236,29 @@ class TestFormulaSpectrumResultFromDiskRow(unittest.TestCase):
         roi = AreaRoi(area_roi_id=1, center_x=10.0, center_y=10.0, sample_radius_px=5.0)
         disk_signature = controller._roi_disk_signature_for_cube(roi, 0)
 
-        result = controller._formula_spectrum_result_from_disk_row(1, 0, disk_signature, {})
+        result = controller._formula_spectrum_result_from_disk_row(roi, 0, disk_signature, {})
 
         self.assertIsNone(result)
+
+    def test_pre_6_7_legacy_hash_is_still_a_hit(self) -> None:
+        """Rows written before the schema-6.7 migration have signature_hash
+        computed with the actual reduction method baked in, not today's
+        reduction-independent placeholder (_roi_disk_signature_for_cube) -
+        without the legacy fallback, every previously-saved cube would read
+        as "never calculated" the moment the app is upgraded to schema 6.7,
+        which also breaks the disk-resume shortcut and the backup writer's
+        dedup check (duplicate rows). Regression coverage for that fix."""
+        controller, _ = self._make_controller()
+        roi = AreaRoi(area_roi_id=1, center_x=10.0, center_y=10.0, sample_radius_px=5.0)
+        trace = _make_disk_trace(controller, roi, 0, {"mean": (10.0, 20.0)}, legacy=True)
+        disk_signature = controller._roi_disk_signature_for_cube(roi, 0)
+
+        result = controller._formula_spectrum_result_from_disk_row(roi, 0, disk_signature, {1: trace})
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.reduction_method, "mean")
+        self.assertAlmostEqual(float(result.sample_reduced_value[0]), 10.0, places=9)
+        self.assertAlmostEqual(float(result.reference_reduced_value[0]), 20.0, places=9)
 
 
 class TestCombinedResultsDiskResumeProjection(unittest.TestCase):

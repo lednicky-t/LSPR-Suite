@@ -62,6 +62,13 @@ class _FakeWindow:
     def __init__(self, writer=None) -> None:
         self._measurement_export_writer = writer
         self._formula_spectrum_disk_trace_cache: dict = {}
+        # Empty (not missing): the legacy-hash fallback in
+        # _formula_spectrum_signature_matches_legacy_hash calls
+        # _roi_formula_spectrum_signature_for_cube, which reads this and
+        # bails out to None on empty - exactly what these tests want, since
+        # they exercise the hash-comparison shortcut, not full signature
+        # reconstruction from real ROI geometry.
+        self._wavelength_values: list[float] = []
 
 
 class TestEnsureDiskFormulaSpectrumTraceCached(unittest.TestCase):
@@ -121,42 +128,50 @@ class TestFormulaSpectrumSignatureSavedOnDisk(unittest.TestCase):
 
     def test_matching_hash_is_a_hit(self) -> None:
         controller = self._make_controller()
+        roi = SimpleNamespace(area_roi_id=1)
         signature = (1, "roi", "some", "signature")
         stored_hash = controller._signature_hash(signature)
         trace = _make_trace({7: (stored_hash, {"mean": (np.zeros(2), np.zeros(2))})})
 
         self.assertTrue(
-            controller._formula_spectrum_signature_saved_on_disk(1, 7, signature, {1: trace})
+            controller._formula_spectrum_signature_saved_on_disk(roi, 7, signature, {1: trace})
         )
 
     def test_stale_hash_is_a_miss(self) -> None:
         """Settings changed since this cube was saved (e.g. a different
         Reduction/Formula/chromatic setting) - the saved row is no longer
-        valid for the *current* signature, so it must not count as cached."""
+        valid for the *current* signature, so it must not count as cached.
+        Also exercises the pre-6.7 legacy-hash fallback: with no wavelengths
+        configured on the fake window, that fallback can't reconstruct a
+        legacy signature either, so this must stay a miss rather than
+        raising."""
         controller = self._make_controller()
+        roi = SimpleNamespace(area_roi_id=1)
         signature = (1, "roi", "some", "signature")
         trace = _make_trace({7: ("stale-hash", {"mean": (np.zeros(2), np.zeros(2))})})
 
         self.assertFalse(
-            controller._formula_spectrum_signature_saved_on_disk(1, 7, signature, {1: trace})
+            controller._formula_spectrum_signature_saved_on_disk(roi, 7, signature, {1: trace})
         )
 
     def test_missing_cube_is_a_miss(self) -> None:
         controller = self._make_controller()
+        roi = SimpleNamespace(area_roi_id=1)
         signature = (1, "roi", "some", "signature")
         stored_hash = controller._signature_hash(signature)
         trace = _make_trace({7: (stored_hash, {"mean": (np.zeros(2), np.zeros(2))})})
 
         self.assertFalse(
-            controller._formula_spectrum_signature_saved_on_disk(1, 8, signature, {1: trace})
+            controller._formula_spectrum_signature_saved_on_disk(roi, 8, signature, {1: trace})
         )
 
     def test_missing_roi_is_a_miss(self) -> None:
         controller = self._make_controller()
+        roi = SimpleNamespace(area_roi_id=1)
         signature = (1, "roi", "some", "signature")
 
         self.assertFalse(
-            controller._formula_spectrum_signature_saved_on_disk(1, 7, signature, {})
+            controller._formula_spectrum_signature_saved_on_disk(roi, 7, signature, {})
         )
 
 
