@@ -490,5 +490,242 @@ class ReducedValuesByMethodTests(unittest.TestCase):
                     )
 
 
+class BatchWriteEquivalenceTests(unittest.TestCase):
+    """append_formula_spectrum_batch / append_sensorgram_point_batch exist
+    purely as a performance optimization (see gui/analysis_worker_mixin.py's
+    measurement_backup_batch_size preference) - one bulk resize+write per
+    dataset instead of one per row. They must produce byte-identical
+    results to the equivalent sequence of single-row append_* calls, since
+    append_formula_spectrum/append_sensorgram_point are themselves now thin
+    wrappers around the batch methods with a length-1 list."""
+
+    def test_formula_spectrum_batch_matches_sequential_single_row_calls(self) -> None:
+        from lspr_imaging_app.storage.measurement_export import FormulaSpectrumBackupRow
+
+        wavelengths = np.asarray([600.0, 620.0, 640.0])
+        reduced_values_by_method = {
+            "mean": (np.asarray([1000.0, 1010.0, 1020.0]), np.asarray([2000.0, 2010.0, 2020.0])),
+            "median": (np.asarray([999.0, 1009.0, 1019.0]), np.asarray([1999.0, 2009.0, 2019.0])),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sequential_path = Path(temp_dir) / "sequential.h5"
+            with ImagingMeasurementExportWriter(sequential_path) as writer:
+                for i in range(3):
+                    writer.append_formula_spectrum(
+                        1,
+                        wavelengths_nm=wavelengths,
+                        formula_values=np.asarray([0.1, 0.2, 0.3]) + i,
+                        sample_mean=np.asarray([1000.0, 1010.0, 1020.0]) + i,
+                        reference_mean=np.asarray([2000.0, 2010.0, 2020.0]) + i,
+                        cube_index=i,
+                        timestamp_utc_ms=1000 * (i + 1),
+                        reduction_method="mean",
+                        signature_hash=f"hash-{i}",
+                        reduced_values_by_method=reduced_values_by_method,
+                    )
+
+            batched_path = Path(temp_dir) / "batched.h5"
+            with ImagingMeasurementExportWriter(batched_path) as writer:
+                rows = [
+                    FormulaSpectrumBackupRow(
+                        wavelengths_nm=wavelengths,
+                        formula_values=np.asarray([0.1, 0.2, 0.3]) + i,
+                        sample_mean=np.asarray([1000.0, 1010.0, 1020.0]) + i,
+                        reference_mean=np.asarray([2000.0, 2010.0, 2020.0]) + i,
+                        cube_index=i,
+                        timestamp_utc_ms=1000 * (i + 1),
+                        reduction_method="mean",
+                        signature_hash=f"hash-{i}",
+                        reduced_values_by_method=reduced_values_by_method,
+                    )
+                    for i in range(3)
+                ]
+                writer.append_formula_spectrum_batch(1, rows)
+
+            sequential_trace = read_formula_spectra_trace(sequential_path, 1)
+            batched_trace = read_formula_spectra_trace(batched_path, 1)
+
+            for key in ("cube_index", "timestamp_utc_ms"):
+                np.testing.assert_array_equal(sequential_trace[key], batched_trace[key])
+            for key in ("absorbance", "sample_mean", "reference_mean"):
+                np.testing.assert_allclose(sequential_trace[key], batched_trace[key], atol=1e-6)
+
+            with ImagingMeasurementExportWriter(sequential_path) as reopened:
+                sequential_index = reopened.formula_spectrum_index(1)
+            with ImagingMeasurementExportWriter(batched_path) as reopened:
+                batched_index = reopened.formula_spectrum_index(1)
+            for cube_index in range(3):
+                seq_hash, seq_methods = sequential_index.by_cube[cube_index]
+                batch_hash, batch_methods = batched_index.by_cube[cube_index]
+                self.assertEqual(seq_hash, batch_hash)
+                self.assertEqual(set(seq_methods.keys()), set(batch_methods.keys()))
+                for method in seq_methods:
+                    np.testing.assert_allclose(seq_methods[method][0], batch_methods[method][0], atol=1e-3)
+                    np.testing.assert_allclose(seq_methods[method][1], batch_methods[method][1], atol=1e-3)
+
+    def test_formula_spectrum_batch_backfills_nan_for_row_missing_a_method(self) -> None:
+        """One row in the batch has both mean and median; another only has
+        mean. The batch write must not crash or drop the median column for
+        the row that HAS it - the row missing it gets a NaN entry there
+        instead, keeping every row of that method's columns aligned with
+        cube_index, same as _ensure_matrix_column's existing backfill for
+        rows that predate a method being tracked at all."""
+        from lspr_imaging_app.storage.measurement_export import FormulaSpectrumBackupRow
+
+        wavelengths = np.asarray([600.0, 650.0])
+        row_with_median = FormulaSpectrumBackupRow(
+            wavelengths_nm=wavelengths,
+            formula_values=np.asarray([0.1, 0.2]),
+            sample_mean=np.asarray([1000.0, 1100.0]),
+            reference_mean=np.asarray([2000.0, 2100.0]),
+            cube_index=0,
+            timestamp_utc_ms=100,
+            reduced_values_by_method={
+                "mean": (np.asarray([1000.0, 1100.0]), np.asarray([2000.0, 2100.0])),
+                "median": (np.asarray([999.0, 1099.0]), np.asarray([1999.0, 2099.0])),
+            },
+        )
+        row_without_median = FormulaSpectrumBackupRow(
+            wavelengths_nm=wavelengths,
+            formula_values=np.asarray([0.3, 0.4]),
+            sample_mean=np.asarray([1001.0, 1101.0]),
+            reference_mean=np.asarray([2001.0, 2101.0]),
+            cube_index=1,
+            timestamp_utc_ms=200,
+            reduced_values_by_method={
+                "mean": (np.asarray([1001.0, 1101.0]), np.asarray([2001.0, 2101.0])),
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                writer.append_formula_spectrum_batch(1, [row_with_median, row_without_median])
+                trace = writer.formula_spectrum_index(1)
+
+        _, methods_row0 = trace.by_cube[0]
+        _, methods_row1 = trace.by_cube[1]
+        np.testing.assert_allclose(methods_row0["median"][0], [999.0, 1099.0], atol=1e-3)
+        self.assertTrue(np.all(np.isnan(methods_row1["median"][0])))
+        self.assertTrue(np.all(np.isnan(methods_row1["median"][1])))
+
+    def test_sensorgram_point_batch_matches_sequential_single_row_calls(self) -> None:
+        from lspr_imaging_app.storage.measurement_export import SensorgramPointBackupRow
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sequential_path = Path(temp_dir) / "sequential.h5"
+            with ImagingMeasurementExportWriter(sequential_path) as writer:
+                for i in range(4):
+                    writer.append_sensorgram_point(
+                        1, cube_index=i, timestamp_utc_ms=100 * (i + 1), metric_value=0.1 * i, signature_hash=f"hash-{i}"
+                    )
+
+            batched_path = Path(temp_dir) / "batched.h5"
+            with ImagingMeasurementExportWriter(batched_path) as writer:
+                rows = [
+                    SensorgramPointBackupRow(
+                        cube_index=i, timestamp_utc_ms=100 * (i + 1), metric_value=0.1 * i, signature_hash=f"hash-{i}"
+                    )
+                    for i in range(4)
+                ]
+                writer.append_sensorgram_point_batch(1, rows)
+
+            sequential_trace = read_sensorgram_trace(sequential_path, 1)
+            batched_trace = read_sensorgram_trace(batched_path, 1)
+
+        for key in ("cube_index", "timestamp_utc_ms", "signature_hash"):
+            np.testing.assert_array_equal(sequential_trace[key], batched_trace[key])
+        np.testing.assert_allclose(sequential_trace["metric_value"], batched_trace["metric_value"], atol=1e-9)
+
+    def test_empty_batch_is_a_safe_no_op(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                writer.append_formula_spectrum_batch(1, [])
+                writer.append_sensorgram_point_batch(1, [])
+            trace = read_sensorgram_trace(path, 1)
+        self.assertEqual(trace["timestamp_utc_ms"].size, 0)
+
+
+class CompactTests(unittest.TestCase):
+    """compact() rewrites the backup file in place to reset accumulated
+    HDF5 resize-history cost (see its docstring) - the one hard
+    requirement is that it must be perfectly lossless and the writer must
+    stay fully usable (readable AND still appendable to) afterward."""
+
+    def test_compact_preserves_all_data_and_writer_stays_usable(self) -> None:
+        wavelengths = np.asarray([600.0, 650.0])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            rois, groups, arrays = _sample_rois()
+            writer = ImagingMeasurementExportWriter(path)
+            writer.write_roi_definitions(rois, groups, arrays)
+            for i in range(3):
+                writer.append_formula_spectrum(
+                    1,
+                    wavelengths_nm=wavelengths,
+                    formula_values=np.asarray([0.1, 0.2]) + i,
+                    sample_mean=np.asarray([1000.0, 1100.0]) + i,
+                    reference_mean=np.asarray([2000.0, 2100.0]) + i,
+                    cube_index=i,
+                    timestamp_utc_ms=100 * (i + 1),
+                    signature_hash=f"hash-{i}",
+                )
+                writer.append_sensorgram_point(
+                    1, cube_index=i, timestamp_utc_ms=100 * (i + 1), metric_value=0.1 * i, signature_hash=f"hash-{i}"
+                )
+            trace_before = read_formula_spectra_trace(path, 1)
+            sensorgram_before = read_sensorgram_trace(path, 1)
+            roi_defs_before = read_roi_definition_records(path)
+
+            size_before, size_after = writer.compact()
+            self.assertGreater(size_before, 0)
+            self.assertGreater(size_after, 0)
+            # No temp file left behind, and the compacted file replaced the
+            # original at the same path (not a new/second file).
+            self.assertFalse((Path(temp_dir) / "export.h5.compacting.tmp").exists())
+            self.assertTrue(path.exists())
+
+            # A 4th row appended AFTER compacting must land correctly - the
+            # writer's internal handle/group caches must be the freshly
+            # reopened ones, not stale references into the closed file.
+            writer.append_formula_spectrum(
+                1,
+                wavelengths_nm=wavelengths,
+                formula_values=np.asarray([0.4, 0.5]),
+                sample_mean=np.asarray([1003.0, 1103.0]),
+                reference_mean=np.asarray([2003.0, 2103.0]),
+                cube_index=3,
+                timestamp_utc_ms=400,
+                signature_hash="hash-3",
+            )
+            writer.close()
+
+            trace_after = read_formula_spectra_trace(path, 1)
+            sensorgram_after = read_sensorgram_trace(path, 1)
+            roi_defs_after = read_roi_definition_records(path)
+
+        np.testing.assert_array_equal(trace_before["cube_index"], trace_after["cube_index"][:3])
+        np.testing.assert_allclose(trace_before["absorbance"], trace_after["absorbance"][:3], atol=1e-6)
+        np.testing.assert_array_equal(trace_after["cube_index"], np.asarray([0, 1, 2, 3], dtype=np.int64))
+        np.testing.assert_allclose(trace_after["absorbance"][3], [0.4, 0.5], atol=1e-6)
+
+        np.testing.assert_array_equal(sensorgram_before["cube_index"], sensorgram_after["cube_index"])
+        np.testing.assert_allclose(sensorgram_before["metric_value"], sensorgram_after["metric_value"], atol=1e-9)
+
+        self.assertEqual(len(roi_defs_before), len(roi_defs_after))
+        self.assertEqual({r.area_roi_id for r in roi_defs_before}, {r.area_roi_id for r in roi_defs_after})
+
+    def test_compact_on_empty_file_is_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            writer = ImagingMeasurementExportWriter(path)
+            size_before, size_after = writer.compact()
+            writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.5)
+            writer.close()
+            trace = read_sensorgram_trace(path, 1)
+        self.assertGreater(size_before, 0)
+        np.testing.assert_array_equal(trace["cube_index"], np.asarray([0], dtype=np.int64))
+
+
 if __name__ == "__main__":
     unittest.main()
