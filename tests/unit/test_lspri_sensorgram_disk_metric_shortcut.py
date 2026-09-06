@@ -41,7 +41,7 @@ class SensorgramDiskMetricShortcutTests(unittest.TestCase):
         def builder(spectral_cube_index: int):
             return (spectral_cube_index,)
 
-        def fake_fit_task(spectral_cube_index, *, cancel_event=None, progress_callback=None, reduction_method=None, trimmed_mean_fraction=None, formula_key=None):
+        def fake_fit_task(spectral_cube_index, *, cancel_event=None, progress_callback=None, reduction_method=None, trimmed_mean_fraction=None, formula_key=None, compute_all_reduction_methods=None):
             fit_task_calls.append(spectral_cube_index)
             return _FakeSpectrum(spectral_cube_index)
 
@@ -97,7 +97,7 @@ class SensorgramDiskMetricShortcutTests(unittest.TestCase):
         def builder(spectral_cube_index: int):
             return (spectral_cube_index,)
 
-        def fake_fit_task(spectral_cube_index, *, cancel_event=None, progress_callback=None, reduction_method=None, trimmed_mean_fraction=None, formula_key=None):
+        def fake_fit_task(spectral_cube_index, *, cancel_event=None, progress_callback=None, reduction_method=None, trimmed_mean_fraction=None, formula_key=None, compute_all_reduction_methods=None):
             return _FakeSpectrum(spectral_cube_index)
 
         result = _sensorgram_metric_task(

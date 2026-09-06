@@ -56,7 +56,23 @@ class TestRoiScopedFastPathMatchesFullImage(unittest.TestCase):
     is the entire point of the optimization. These lock in the geometry so a
     future change can't silently make the fast path wrong while the full
     path still looks fine.
+
+    Tolerance note: resample_raw_patch_to_processed_box's "nearest" fill
+    mode routes through cv2.warpAffine (a ~70x speedup on real ROI-sized
+    reads - see docs/roi_scoped_resample_cv2_fast_path.md), while
+    apply_spatial_preprocessing (the "full image" reference computed as
+    `expected` below) always uses scipy's ndimage.rotate. The two are
+    different bilinear implementations - cv2 rounds the sub-pixel offset to
+    one of 32 discrete steps internally where scipy computes it continuously
+    - so they now agree closely rather than exactly. FULL_PATH_ATOL is set
+    from directly measured worst-case discrepancies on this test suite's own
+    gradient image (0.0078 and 0.0156 across the two rotation cases below),
+    with roughly 3x headroom - loose enough to not fail on that expected,
+    understood quantization noise, tight enough that a real geometry bug
+    (which would be orders of magnitude larger) still fails it.
     """
+
+    FULL_PATH_ATOL = 0.05
 
     def _check_box_matches_full_image(self, in_shape, settings: PreprocessingSettings, box) -> None:
         image = _gradient_image(*in_shape)
@@ -71,9 +87,10 @@ class TestRoiScopedFastPathMatchesFullImage(unittest.TestCase):
         np.testing.assert_allclose(scoped, expected, atol=1e-2)
 
         # Scoped path B: passing the *whole* image as the "patch" at origin
-        # (0, 0) must reduce to exactly the same computation as the full path.
+        # (0, 0) must still agree with the full path (see class docstring for
+        # why this is "closely" rather than to floating-point precision).
         full_as_patch = resample_raw_patch_to_processed_box(image, (0, 0), in_shape, settings, box)
-        np.testing.assert_allclose(full_as_patch, expected, atol=1e-6)
+        np.testing.assert_allclose(full_as_patch, expected, atol=self.FULL_PATH_ATOL)
 
     def test_no_rotation_or_flip(self) -> None:
         self._check_box_matches_full_image((90, 70), PreprocessingSettings(), (10, 15, 40, 45))
