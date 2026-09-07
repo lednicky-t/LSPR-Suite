@@ -1,5 +1,8 @@
 """Regression tests for two related bugs in multi-ROI absorbance calculation
-(gui/analysis_tasks.py's _absorbance_spectrum_task/_absorbance_spectrum_fast_task):
+(gui/analysis_tasks.py's `_scoped_formula_spectrum_task` - the one
+spectrum-compute path, used for every dataset regardless of format; see
+apps/LSPRi/eva/docs/bulk_analysis_performance_investigation.md's
+"Follow-up #6" for why there's only one now):
 
 1. A selected ROI's own reference ring only excluded its OWN sample circle,
    not any other selected ROI's sample circle. In a dense array, a
@@ -38,8 +41,13 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_imaging_app.domain.models import AreaRoi, AreaRoiDetectionSettings, PreprocessingSettings  # noqa: E402
-from lspr_imaging_app.gui.analysis_tasks import _formula_spectrum_task  # noqa: E402
+from lspr_imaging_app.domain.models import (  # noqa: E402
+    AreaRoi,
+    ImageKey,
+    ImageRecord,
+    PreprocessingSettings,
+)
+from lspr_imaging_app.gui.analysis_tasks import _scoped_formula_spectrum_task  # noqa: E402
 
 IMAGE_SHAPE = (60, 80)  # (rows, cols) -> (height, width)
 BACKGROUND_VALUE = 100.0
@@ -66,22 +74,29 @@ def _run_task(
     tifffile.imwrite(str(image_path), _make_image(include_roi_b_spot=include_roi_b_spot).astype(np.uint16))
 
     preprocessing = PreprocessingSettings()
-    measurement_settings = AreaRoiDetectionSettings()
     source_rois = [roi_a, roi_b]
-    measurement_payload = [(500.0, str(image_path), source_rois, None, False, None)]
+    record = ImageRecord(key=ImageKey(wavelength_nm=500.0, spectral_cube_index=1), path=image_path)
+    # `dataset` is unused by dataset_load_plane_roi whenever `record` is
+    # given directly (as here) - the whole plane, matching what TIFF's
+    # read-region is per spectrum_read_region, since this test doesn't need
+    # a real ImageDataset to exercise that path.
+    measurement_payload = [(500.0, None, None, record)]
+    box = (0, 0, IMAGE_SHAPE[1], IMAGE_SHAPE[0])
 
-    return _formula_spectrum_task(
-        measurement_payload,
-        preprocessing,
+    return _scoped_formula_spectrum_task(
         None,
-        measurement_settings,
+        1,
+        measurement_payload,
+        source_rois,
+        selected_roi_ids,
+        8.0,
+        20.0,
+        box,
+        preprocessing,
+        IMAGE_SHAPE,
         roi_mask_cache={},
         roi_mask_cache_lock=threading.Lock(),
         roi_mask_cache_max_size=8,
-        source_rois=source_rois,
-        selected_roi_ids=selected_roi_ids,
-        reference_inner_radius_px=8.0,
-        reference_outer_radius_px=20.0,
         mask_state=None,
         reduction_method="mean",
     )

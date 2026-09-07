@@ -427,7 +427,7 @@ class TestProjectFormulaSpectrum(unittest.TestCase):
         np.testing.assert_allclose(round_tripped.formula_values, result.formula_values)
 
     def test_multi_roi_combined_curve_matches_fresh_multi_roi_compute(self) -> None:
-        """Mirrors _formula_spectrum_task's own multi-ROI combination rule
+        """Mirrors _scoped_formula_spectrum_task's own multi-ROI combination rule
         (per-wavelength mean over finite ROI values) - see
         project_formula_spectrum's docstring. Two ROIs, single wavelength,
         both finite: the projected combined value must equal the mean of
