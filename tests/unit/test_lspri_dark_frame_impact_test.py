@@ -2,9 +2,10 @@
 "Test dark-frame impact" button in Preferences > Wavelength handling, next
 to "Treat 0 nm as a dark reference frame") - specifically the two pure
 functions the button's background computation reduces to:
-dark_frame_with_without_metrics (fit/metric with vs. without a 0 nm frame)
-and format_dark_frame_impact_result (the resulting message text). Split out
-for testability the same way this module's other orchestration/pure-compute
+dark_frame_pixel_impact (measures the dataset's 0 nm frame's own pixel
+counts and simulates subtracting them from every real wavelength) and
+format_dark_frame_impact_result (the resulting message text). Split out for
+testability the same way this module's other orchestration/pure-compute
 functions already are.
 
 Built from a real incident: a user running Fitting=Poly(11)/Metric=Maximum
@@ -12,9 +13,12 @@ over a 470-720nm dataset that also had a genuine 0 nm dark/calibration frame
 (mean pixel value ~9, vs ~45,000 for the real spectral frames) got a
 sensorgram trace pinned around 55nm - the polynomial fit, correctly doing
 what it was told, was dragged off by that one extreme low-signal outlier.
-See docs/qthreadpool_zarr_crash_investigation.md's sibling
-bulk_analysis_performance_investigation.md update, and this test's own
-synthetic reproduction below.
+An earlier version of this test asked "how does the dark frame distort a
+spectral fit" - the maintainer pointed out that's the wrong question (the
+dark frame was never meant to be a spectral data point at all): the real
+question is whether the dark frame's own pixel counts are large enough,
+relative to the real signal, to matter if subtracted as a dark-current
+offset correction - see dark_frame_pixel_impact's own docstring.
 """
 
 from __future__ import annotations
@@ -39,124 +43,172 @@ if str(APP_SRC) not in sys.path:
 import numpy as np
 
 from lspr_imaging_app.gui.analysis_worker_mixin import (
-    dark_frame_with_without_metrics,
+    DarkFramePixelImpact,
+    dark_frame_pixel_impact,
     format_dark_frame_impact_result,
 )
 
 
-def _synthetic_spectrum_with_dark_frame(dark_value: float = 50.0) -> tuple[np.ndarray, np.ndarray]:
+def _synthetic_spectrum(
+    dark_sample: float = 20.0,
+    dark_reference: float = 18.0,
+    signal_scale: float = 1.0,
+    hot_pixel: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, tuple[np.ndarray, np.ndarray]]]:
     """A real absorbance peak centered at 600nm across 470-720nm (10nm
-    steps, matching the real incident's dataset), plus one 0nm dark-frame
-    point carrying `dark_value` - a large, unrealistic absorbance value,
-    the kind a near-zero-count dark frame's sample/reference ratio can
-    produce."""
+    steps, matching the real incident's dataset), expressed as sample/
+    reference pixel COUNTS (not pre-combined absorbance values - this test
+    exercises the pixel-intensity question, not a fit), plus one 0nm
+    dark-frame entry carrying `dark_sample`/`dark_reference` counts.
+    `signal_scale` scales the real counts down to simulate a dimmer
+    dataset where the same dark count matters proportionally more.
+    Returns (wavelengths, sample, reference, reduced_values_by_method) -
+    the exact shapes dark_frame_pixel_impact expects."""
     real_wl = np.arange(470.0, 721.0, 10.0)
-    real_vals = 0.5 * np.exp(-((real_wl - 600.0) ** 2) / (2 * 40.0 ** 2)) + 0.05
+    true_absorbance = 0.3 * np.exp(-((real_wl - 600.0) ** 2) / (2 * 40.0 ** 2)) + 0.02
+    reference_counts = np.full(real_wl.size, 40000.0) * signal_scale
+    sample_counts = reference_counts / (10.0 ** true_absorbance)
+
     wavelengths = np.concatenate([[0.0], real_wl])
-    values = np.concatenate([[dark_value], real_vals])
-    return wavelengths, values
+    sample = np.concatenate([[dark_sample], sample_counts])
+    reference = np.concatenate([[dark_reference], reference_counts])
+
+    trimmed_sample = sample.copy()
+    if hot_pixel:
+        # Trimmed mean much lower than the plain mean at the dark index -
+        # simulates a few hot/noisy pixels inflating the plain mean.
+        trimmed_sample[0] = dark_sample * 0.4
+    reduced_values_by_method = {"mean": (sample, reference), "trimmed_mean": (trimmed_sample, reference.copy())}
+    return wavelengths, sample, reference, reduced_values_by_method
 
 
-class DarkFrameWithWithoutMetricsTests(unittest.TestCase):
-    def test_poly_maximum_is_dragged_off_by_dark_frame(self) -> None:
-        """Reproduces the real incident synthetically: including the 0nm
-        dark frame in an order-11 polynomial fit distorts the peak search
-        far from the real ~600nm peak; excluding it recovers the real
-        peak."""
-        wavelengths, values = _synthetic_spectrum_with_dark_frame()
-        with_value, without_value, span = dark_frame_with_without_metrics(
-            wavelengths, values,
-            fit_method_key="poly", metric_key="maximum", poly_order=11,
-            wl_min=None, wl_max=None,
-        )
-        self.assertIsNotNone(with_value)
-        self.assertIsNotNone(without_value)
-        self.assertEqual(span, 250.0)  # 720 - 470, the real (non-dark) spectral range
-        # Without the dark frame, the fit correctly finds the real peak.
-        self.assertAlmostEqual(without_value, 600.0, delta=5.0)
-        # With it, the result is dragged far outside the real 470-720nm range -
-        # this is the exact failure mode reported (a ~55nm result from a
-        # 470-720nm dataset).
-        self.assertLess(with_value, 470.0)
-        self.assertGreater(abs(with_value - without_value), 100.0)
+class DarkFramePixelImpactTests(unittest.TestCase):
+    def test_bright_dataset_gives_negligible_impact(self) -> None:
+        """A dark count of 20/18 counts against a well-lit ~40,000-count
+        signal (the maintainer's own "20 counts can be negligible" framing)
+        should show a tiny shift - the whole point of this test existing is
+        to *not* cry wolf on an ordinary, harmless dark level."""
+        wavelengths, sample, reference, reduced = _synthetic_spectrum(signal_scale=1.0)
+        impact = dark_frame_pixel_impact(wavelengths, sample, reference, reduced, "absorbance")
+        self.assertIsNotNone(impact)
+        self.assertAlmostEqual(impact.dark_sample_mean, 20.0)
+        self.assertAlmostEqual(impact.dark_reference_mean, 18.0)
+        self.assertLess(impact.dark_as_percent_of_dimmest_signal, 1.0)
+        # Shift should be tiny relative to the real spectrum's own range.
+        self.assertLess(abs(impact.worst_shift) / impact.formula_value_range, 0.05)
 
-    def test_no_dark_frame_present_gives_identical_results(self) -> None:
-        """Sanity check: with no 0nm entry in the input at all, "with" and
-        "without" must be the same computation (nothing to filter out)."""
+    def test_dim_dataset_gives_significant_impact(self) -> None:
+        """The same absolute dark count (20/18) against a much dimmer real
+        signal (the maintainer's "situations when it could have a visible
+        effect") should show a shift that's a meaningful fraction of the
+        spectrum's own range - the exact scenario the test needs to be
+        able to flag."""
+        wavelengths, sample, reference, reduced = _synthetic_spectrum(signal_scale=1.0 / 400.0)
+        impact = dark_frame_pixel_impact(wavelengths, sample, reference, reduced, "absorbance")
+        self.assertIsNotNone(impact)
+        self.assertGreater(impact.dark_as_percent_of_dimmest_signal, 20.0)
+        self.assertGreater(abs(impact.worst_shift) / impact.formula_value_range, 0.05)
+
+    def test_worst_wavelength_is_where_signal_is_dimmest_relative_to_dark(self) -> None:
+        """The peak itself (600nm, where sample counts dip lowest due to
+        absorbance) is where dark counts matter proportionally most -
+        confirms worst_wavelength_nm actually finds a meaningful location,
+        not just the first or last entry."""
+        wavelengths, sample, reference, reduced = _synthetic_spectrum(signal_scale=1.0 / 400.0)
+        impact = dark_frame_pixel_impact(wavelengths, sample, reference, reduced, "absorbance")
+        self.assertAlmostEqual(impact.worst_wavelength_nm, 600.0, delta=10.0)
+
+    def test_hot_pixel_ratio_flags_mean_trimmed_mean_divergence(self) -> None:
+        wavelengths, sample, reference, reduced = _synthetic_spectrum(hot_pixel=True)
+        impact = dark_frame_pixel_impact(wavelengths, sample, reference, reduced, "absorbance")
+        self.assertIsNotNone(impact.dark_sample_hot_pixel_ratio)
+        self.assertGreater(impact.dark_sample_hot_pixel_ratio, 0.15)
+
+    def test_no_hot_pixel_when_mean_and_trimmed_mean_agree(self) -> None:
+        wavelengths, sample, reference, reduced = _synthetic_spectrum(hot_pixel=False)
+        impact = dark_frame_pixel_impact(wavelengths, sample, reference, reduced, "absorbance")
+        self.assertAlmostEqual(impact.dark_sample_hot_pixel_ratio, 0.0, delta=1e-6)
+
+    def test_no_dark_frame_present_returns_none(self) -> None:
         real_wl = np.arange(470.0, 721.0, 10.0)
-        real_vals = 0.5 * np.exp(-((real_wl - 600.0) ** 2) / (2 * 40.0 ** 2)) + 0.05
-        with_value, without_value, span = dark_frame_with_without_metrics(
-            real_wl, real_vals,
-            fit_method_key="poly", metric_key="maximum", poly_order=3,
-            wl_min=None, wl_max=None,
-        )
-        self.assertEqual(with_value, without_value)
-        self.assertEqual(span, 250.0)
+        sample = np.full(real_wl.size, 30000.0)
+        reference = np.full(real_wl.size, 40000.0)
+        reduced = {"mean": (sample, reference), "trimmed_mean": (sample, reference)}
+        self.assertIsNone(dark_frame_pixel_impact(real_wl, sample, reference, reduced, "absorbance"))
 
-    def test_negligible_dark_frame_effect_when_dark_value_is_realistic(self) -> None:
-        """A dark frame whose absorbance value happens to be small/in-range
-        (not an extreme outlier) should shift the result only slightly -
-        confirms this isn't flagging every 0nm frame as dangerous
-        regardless of its actual value, only ones that actually distort
-        the fit."""
-        wavelengths, values = _synthetic_spectrum_with_dark_frame(dark_value=0.06)
-        with_value, without_value, _span = dark_frame_with_without_metrics(
-            wavelengths, values,
-            fit_method_key="poly", metric_key="maximum", poly_order=3,
-            wl_min=None, wl_max=None,
-        )
-        self.assertAlmostEqual(with_value, without_value, delta=10.0)
+    def test_only_dark_frame_no_real_wavelengths_returns_none(self) -> None:
+        wavelengths = np.asarray([0.0])
+        sample = np.asarray([20.0])
+        reference = np.asarray([18.0])
+        reduced = {"mean": (sample, reference), "trimmed_mean": (sample, reference)}
+        self.assertIsNone(dark_frame_pixel_impact(wavelengths, sample, reference, reduced, "absorbance"))
 
-    def test_wavelength_range_filter_applies_to_both_sides_identically(self) -> None:
-        """wl_min/wl_max (the Analysis section's own range filter) must be
-        applied the same way to both the with- and without-dark-frame
-        fits, so the comparison isolates only the dark frame's effect, not
-        a range-setting difference. A range that itself excludes 0nm
-        (e.g. wl_min=100) should make "with" and "without" agree, since
-        the dark frame point never reaches the fit either way."""
-        wavelengths, values = _synthetic_spectrum_with_dark_frame()
-        with_value, without_value, _span = dark_frame_with_without_metrics(
-            wavelengths, values,
-            fit_method_key="poly", metric_key="maximum", poly_order=3,
-            wl_min=100.0, wl_max=720.0,
-        )
-        self.assertEqual(with_value, without_value)
+    def test_zero_dark_sample_mean_gives_no_hot_pixel_ratio(self) -> None:
+        """Avoids a division-by-zero rather than crashing when the dark
+        frame's own mean happens to be exactly zero."""
+        wavelengths, sample, reference, reduced = _synthetic_spectrum(dark_sample=0.0)
+        impact = dark_frame_pixel_impact(wavelengths, sample, reference, reduced, "absorbance")
+        self.assertIsNone(impact.dark_sample_hot_pixel_ratio)
 
-    def test_metric_none_fit_method_uses_raw_spectrum(self) -> None:
-        """Fitting = None (metric read straight off the raw spectrum, no
-        curve fit) must also be supported - the dark frame's raw absorbance
-        value itself becomes a spurious "maximum" when included."""
-        wavelengths, values = _synthetic_spectrum_with_dark_frame()
-        with_value, without_value, _span = dark_frame_with_without_metrics(
-            wavelengths, values,
-            fit_method_key="none", metric_key="maximum", poly_order=3,
-            wl_min=None, wl_max=None,
-        )
-        self.assertEqual(with_value, 0.0)  # argmax lands on the dark frame's own wavelength
-        self.assertAlmostEqual(without_value, 600.0, delta=10.0)
+    def test_missing_trimmed_mean_entry_gives_no_hot_pixel_ratio(self) -> None:
+        wavelengths, sample, reference, _reduced = _synthetic_spectrum()
+        impact = dark_frame_pixel_impact(wavelengths, sample, reference, {"mean": (sample, reference)}, "absorbance")
+        self.assertIsNone(impact.dark_sample_hot_pixel_ratio)
 
 
 class FormatDarkFrameImpactResultTests(unittest.TestCase):
-    def test_large_shift_recommends_the_preference(self) -> None:
-        text = format_dark_frame_impact_result(53.4, 601.2, 250.0, spectral_cube_index=0)
-        self.assertIn("Recommend turning on", text)
-        self.assertIn("219", text)  # ~219.1% of the 250nm range
+    def _impact(self, **overrides) -> DarkFramePixelImpact:
+        defaults = dict(
+            dark_sample_mean=20.0,
+            dark_reference_mean=18.0,
+            dark_sample_hot_pixel_ratio=0.0,
+            dark_as_percent_of_dimmest_signal=0.1,
+            worst_wavelength_nm=600.0,
+            worst_shift=0.0003,
+            mean_abs_shift=0.0001,
+            formula_value_range=0.3,
+        )
+        defaults.update(overrides)
+        return DarkFramePixelImpact(**defaults)
+
+    def test_none_impact_reports_could_not_evaluate(self) -> None:
+        text = format_dark_frame_impact_result(None, 0, "Absorbance")
+        self.assertIn("could not evaluate", text)
+
+    def test_significant_shift_recommends_action(self) -> None:
+        impact = self._impact(worst_shift=0.15, formula_value_range=0.3)  # 50% of range
+        text = format_dark_frame_impact_result(impact, 0, "Absorbance")
+        self.assertIn("could visibly affect", text)
 
     def test_small_shift_says_negligible(self) -> None:
-        text = format_dark_frame_impact_result(600.1, 600.4, 250.0, spectral_cube_index=3)
+        impact = self._impact(worst_shift=0.0003, formula_value_range=0.3)  # 0.1% of range
+        text = format_dark_frame_impact_result(impact, 3, "Absorbance")
         self.assertIn("Negligible", text)
 
-    def test_missing_with_value_reports_which_side_failed(self) -> None:
-        text = format_dark_frame_impact_result(None, 600.4, 250.0, spectral_cube_index=3)
-        self.assertIn("with", text)
+    def test_hot_pixel_note_included_when_ratio_exceeds_threshold(self) -> None:
+        impact = self._impact(dark_sample_hot_pixel_ratio=0.6)
+        text = format_dark_frame_impact_result(impact, 0, "Absorbance")
+        self.assertIn("hot/noisy pixels", text)
 
-    def test_missing_without_value_reports_which_side_failed(self) -> None:
-        text = format_dark_frame_impact_result(53.4, None, 250.0, spectral_cube_index=3)
-        self.assertIn("without", text)
+    def test_hot_pixel_note_omitted_when_ratio_is_none(self) -> None:
+        impact = self._impact(dark_sample_hot_pixel_ratio=None)
+        text = format_dark_frame_impact_result(impact, 0, "Absorbance")
+        self.assertNotIn("hot/noisy pixels", text)
 
-    def test_zero_span_does_not_divide_by_zero(self) -> None:
-        text = format_dark_frame_impact_result(53.4, 600.0, 0.0, spectral_cube_index=0)
-        self.assertIn("too narrow", text)
+    def test_hot_pixel_note_omitted_when_ratio_below_threshold(self) -> None:
+        impact = self._impact(dark_sample_hot_pixel_ratio=0.05)
+        text = format_dark_frame_impact_result(impact, 0, "Absorbance")
+        self.assertNotIn("hot/noisy pixels", text)
+
+    def test_zero_range_does_not_divide_by_zero(self) -> None:
+        impact = self._impact(formula_value_range=0.0, worst_shift=0.001)
+        text = format_dark_frame_impact_result(impact, 0, "Absorbance")
+        self.assertIn("too flat", text)
+
+    def test_formula_label_appears_verbatim(self) -> None:
+        impact = self._impact()
+        text = format_dark_frame_impact_result(impact, 0, "mOD Absorbance (-1000 x log10(Is/Ir))")
+        self.assertIn("mOD Absorbance (-1000 x log10(Is/Ir))", text)
 
 
 if __name__ == "__main__":
