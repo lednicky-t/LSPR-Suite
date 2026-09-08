@@ -37,6 +37,19 @@ class _FakeSettings:
         self._values[key] = value
 
 
+class _FakeAnalysisController:
+    """Records run_dark_frame_impact_test calls and lets a test manually
+    invoke the on_result/on_error callback to simulate the background
+    FunctionWorker's result arriving later - the dialog itself never talks
+    to a real dataset or thread in this test file."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def run_dark_frame_impact_test(self, on_result, on_error) -> None:
+        self.calls.append((on_result, on_error))
+
+
 class _FakeWindow:
     def __init__(self, settings: _FakeSettings) -> None:
         self._settings = settings
@@ -45,6 +58,7 @@ class _FakeWindow:
         self.log_panel_open_calls: list[bool] = []
         self.zarr_adaptive_enabled_calls: list[bool] = []
         self.zarr_adaptive_batch_calls: list[int] = []
+        self._analysis_controller = _FakeAnalysisController()
 
     def _set_ui_theme(self, theme_name: str) -> None:
         self.theme_calls.append(theme_name)
@@ -125,6 +139,66 @@ class PreferencesDialogTests(unittest.TestCase):
         self.assertEqual(window.log_panel_open_calls, [False])
         self.assertEqual(window.zarr_adaptive_enabled_calls, [False])
         self.assertEqual(window.zarr_adaptive_batch_calls, [256])
+
+
+class DarkFrameImpactTestButtonTests(unittest.TestCase):
+    """Covers the "Test dark-frame impact" button added alongside "Treat 0
+    nm as a dark reference frame" (Preferences > Wavelength handling) - see
+    AnalysisWorkerMixin.run_dark_frame_impact_test's docstring for the real
+    incident (a sensorgram trace pinned near 55nm) this was built to help
+    diagnose."""
+
+    def test_click_disables_button_and_delegates_to_analysis_controller(self) -> None:
+        window = _FakeWindow(_FakeSettings({}))
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+
+        dialog.dark_frame_test_button.click()
+
+        self.assertFalse(dialog.dark_frame_test_button.isEnabled())
+        self.assertEqual(dialog.dark_frame_test_result_label.text(), "Testing cube 0...")
+        self.assertEqual(len(window._analysis_controller.calls), 1)
+
+    def test_result_callback_re_enables_button_and_shows_text(self) -> None:
+        window = _FakeWindow(_FakeSettings({}))
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+
+        dialog.dark_frame_test_button.click()
+        on_result, _on_error = window._analysis_controller.calls[0]
+        on_result("Cube 0: shift of 547.80 (219.1% of range). Recommend excluding.")
+
+        self.assertTrue(dialog.dark_frame_test_button.isEnabled())
+        self.assertIn("Recommend excluding", dialog.dark_frame_test_result_label.text())
+
+    def test_error_callback_re_enables_button_and_shows_message(self) -> None:
+        window = _FakeWindow(_FakeSettings({}))
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+
+        dialog.dark_frame_test_button.click()
+        _on_result, on_error = window._analysis_controller.calls[0]
+        on_error("Select at least one ROI (in the ROI table) before running this test.")
+
+        self.assertTrue(dialog.dark_frame_test_button.isEnabled())
+        self.assertEqual(dialog.dark_frame_test_result_label.text(), "Select at least one ROI (in the ROI table) before running this test.")
+
+    def test_result_arriving_after_dialog_closed_is_ignored(self) -> None:
+        """A background test's result can arrive after the dialog is closed
+        (Ok/Cancel/window close) - done() marks _closed so the callback
+        never touches a widget that may no longer exist, matching the same
+        class of race this app's own zarr/QThreadPool investigation was
+        built around avoiding for background dispatch generally."""
+        window = _FakeWindow(_FakeSettings({}))
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+
+        dialog.dark_frame_test_button.click()
+        on_result, _on_error = window._analysis_controller.calls[0]
+        dialog.done(0)  # simulates Ok/Cancel/close before the result arrives
+        on_result("late result that must be ignored")
+
+        self.assertEqual(dialog.dark_frame_test_result_label.text(), "Testing cube 0...")
 
 
 if __name__ == "__main__":
