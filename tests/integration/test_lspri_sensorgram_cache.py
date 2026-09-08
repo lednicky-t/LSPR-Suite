@@ -81,6 +81,7 @@ class _FakeWindow:
         self._analysis_cache_lock = threading.Lock()
         self._sensorgram_spectral_cube_result_cache: OrderedDict = OrderedDict()
         self.analysis_fit_method_combo = _FakeCombo("poly")
+        self._wavelength_range: tuple[float, float] | None = None
 
     def _roi_signature(self, rois):
         return tuple(rois)
@@ -89,7 +90,7 @@ class _FakeWindow:
         return ("preproc", image_key)
 
     def _analysis_wavelength_range(self):
-        return None
+        return self._wavelength_range
 
     def _analysis_fit_method_key(self):
         return "poly"
@@ -250,6 +251,50 @@ class TestSensorgramPointSignatureHashIncludesActiveFormula(unittest.TestCase):
         after = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
         self.assertNotEqual(before, after)
         self.assertNotEqual(before, "")
+
+
+class TestSensorgramPointSignatureHashIncludesWavelengthRange(unittest.TestCase):
+    """Real bug found 2026-09-08: a user running Fitting=Poly(11)/Metric=
+    Maximum over a 470-720nm dataset got a sensorgram trace pinned around
+    55nm - mathematically impossible from fit_polynomial_curve's own peak
+    search (its critical points are always filtered to [x_min, x_max] of the
+    wavelengths actually fit, and x_min/x_max always come from the real
+    per-cube wavelength array). The actual cause: metric_value_cache_get's
+    disk-backed shortcut skips fitting/reading entirely once a stored
+    signature_hash matches, and that hash (_sensorgram_point_signature_hash)
+    included fit method/metric/poly-order/formula but NOT the Analysis
+    section's wavelength-range min/max spinners - so a metric_value backed
+    up while the range was narrowed (even in an earlier session, since
+    measurement_backup.h5 persists across restarts) kept being served
+    forever after the range was widened back out, since every other
+    signature element could still match exactly. Mirrors
+    TestSensorgramPointSignatureHashIncludesActiveFormula above - same bug
+    shape, different missing element."""
+
+    def _make_controller(self) -> tuple[AnalysisController, _FakeWindow]:
+        window = _FakeWindow()
+        return AnalysisController(window), window
+
+    def test_different_wavelength_range_changes_hash(self) -> None:
+        controller, window = self._make_controller()
+        roi_ids = (1,)
+        rois = ["roiA"]
+        window._wavelength_range = (470.0, 525.0)
+        before = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
+        window._wavelength_range = (470.0, 720.0)
+        after = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
+        self.assertNotEqual(before, after)
+        self.assertNotEqual(before, "")
+
+    def test_no_range_to_a_range_also_changes_hash(self) -> None:
+        controller, window = self._make_controller()
+        roi_ids = (1,)
+        rois = ["roiA"]
+        window._wavelength_range = None
+        before = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
+        window._wavelength_range = (470.0, 720.0)
+        after = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
+        self.assertNotEqual(before, after)
 
 
 if __name__ == "__main__":
