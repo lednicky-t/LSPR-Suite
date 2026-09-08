@@ -1,7 +1,7 @@
 """Integration test for the Export section's live chunk-size estimates:
 main_window.py's ome_zarr_chunk_estimate_label (per-plane) and
-ome_zarr_chunk_total_label (dataset-wide, sitting in its own row directly
-under the per-plane one), both next to ome_zarr_chunk_spin - see
+ome_zarr_chunk_total_label (dataset-wide), each sitting in its own row
+below the row with ome_zarr_chunk_spin - see
 apps/LSPRi/eva/docs/bulk_analysis_performance_investigation.md's
 "Follow-up #8" for why this exists. Drives the real chunk-size QSpinBox
 directly (this repo's own "prefer directly callable widgets" testability
