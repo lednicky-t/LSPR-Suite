@@ -49,6 +49,13 @@ class TestLivePreviewPromptDeferred(unittest.TestCase):
         window._analysis_controller = SimpleNamespace(
             update_selection_highlight=Mock(),
             schedule_cube_slider_cache_refresh=Mock(),
+            # _update_selection_dependent_plots also unconditionally
+            # consults the sensorgram cache now (same treatment as
+            # _refresh_visible_spectrum_from_cache above) - see its own
+            # comment for why. Unrelated to what this test file covers
+            # (the deferred-prompt scheduling), just needs to exist so the
+            # call doesn't raise.
+            preview_sensorgram_from_cache=Mock(),
         )
         window._handle_live_preview_selection_change = Mock()
         return window
