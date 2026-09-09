@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
 
@@ -223,6 +224,38 @@ class ImagingMeasurementExportWriterTests(unittest.TestCase):
 
         self.assertEqual(trace["metric_name"], "centroid")
         self.assertEqual(trace["combined_roi_ids"], "1,2")
+
+    def test_set_sensorgram_metric_skips_redundant_writes_for_unchanged_values(self) -> None:
+        """Calling this with the same (metric_name, formula_key,
+        combined_roi_ids) it already wrote for this roi_id must not touch
+        the file again - see set_sensorgram_metric's own docstring for why
+        this matters: it's called once per selected ROI per cube during a
+        per-ROI sensorgram backup, and these values don't change mid-run."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                writer.set_sensorgram_metric(1, metric_name="centroid", formula_key="absorbance")
+                with mock.patch.object(h5py.AttributeManager, "__setitem__", autospec=True) as spy:
+                    writer.set_sensorgram_metric(1, metric_name="centroid", formula_key="absorbance")
+                spy.assert_not_called()
+                writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.5)
+
+            trace = read_sensorgram_trace(path, 1)
+
+        self.assertEqual(trace["metric_name"], "centroid")
+        self.assertEqual(trace["formula_key"], "absorbance")
+
+    def test_set_sensorgram_metric_writes_again_when_values_actually_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(path) as writer:
+                writer.set_sensorgram_metric(1, metric_name="centroid", formula_key="absorbance")
+                writer.set_sensorgram_metric(1, metric_name="maximum", formula_key="absorbance")
+                writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=100, metric_value=0.5)
+
+            trace = read_sensorgram_trace(path, 1)
+
+        self.assertEqual(trace["metric_name"], "maximum")
 
     def test_reopening_existing_backup_preserves_data_and_recovers_keys(self) -> None:
         """Regression test: reopening a backup file that already exists (the
