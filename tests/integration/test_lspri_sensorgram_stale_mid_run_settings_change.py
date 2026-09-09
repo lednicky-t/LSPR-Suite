@@ -47,6 +47,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_imaging_app.gui.analysis_controller import AnalysisController
+from lspr_imaging_app.gui.main_window import MainWindow
 
 
 class _FakeWindow:
@@ -69,6 +70,8 @@ class _FakeWindow:
         self._formula_spectrum_dirty = False
         self._workflow_log: list[str] = []
         self._status_text: str | None = None
+        self._wavelength_values = [500.0, 550.0, 600.0]
+        self._sensorgram_running_roi_ids: tuple[int, ...] = (1, 2, 3)
 
     def _append_workflow_log(self, message: str, *, level: str = "info") -> None:
         self._workflow_log.append(message)
@@ -93,6 +96,10 @@ class _FakeWindow:
 
     def _compact_timing_text(self, *pairs) -> str:
         return ", ".join(f"{label} {self._format_elapsed_seconds(value)}" for label, value in pairs)
+
+    # Reuses the real (pure, static) formatter rather than a hand-rolled
+    # duplicate, so this fixture can't silently drift from the real format.
+    _format_sensorgram_completion_summary = staticmethod(MainWindow._format_sensorgram_completion_summary)
 
 
 def _make_result(*, cancelled: bool = False) -> SimpleNamespace:
