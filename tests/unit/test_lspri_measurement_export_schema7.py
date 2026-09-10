@@ -23,7 +23,7 @@ if str(APP_SRC) not in sys.path:
 
 import numpy as np
 
-from lspr_imaging_app.storage.measurement_export import ImagingMeasurementExportWriter
+from lspr_imaging_app.storage.measurement_export import FormulaSpectrumBackupRow, ImagingMeasurementExportWriter
 
 
 class Schema7CreationTests(unittest.TestCase):
@@ -183,6 +183,101 @@ class Schema7FormulaSpectrumRoundTripTests(unittest.TestCase):
 
         self.assertEqual(set(row_trace.by_cube[0][1].keys()), {"mean", "median"})
         np.testing.assert_allclose(row_trace.by_cube[0][1]["median"][0], [1.5, 2.5, 3.5])
+
+
+class Schema7BatchWriteTests(unittest.TestCase):
+    """Regression coverage for a real bug found after shipping: the
+    per-row write path re-resolved each reduction method's HDF5 dataset
+    pair on every row instead of once per batch, silently defeating the
+    whole point of measurement_backup_batch_size - measured 2x SLOWER than
+    schema 6 at a realistic 30-ROI/4-method/batch-of-5 scale, matching a
+    real "Start analysis" performance regression report. These tests cover
+    the actual multi-row-in-one-call path directly, not just single-row
+    convenience wrappers, so a reintroduced per-row lookup would still be
+    functionally correct here but should be caught by a before/after timing
+    check (see bench_schema7_batched_write.py in this investigation, not
+    committed) rather than by these correctness-only tests."""
+
+    def test_multi_row_batch_round_trips_every_row(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(
+                path, spectral_cube_indices=[0, 1, 2, 3, 4], wavelengths_nm=np.asarray([500.0, 600.0])
+            ) as writer:
+                rows = [
+                    FormulaSpectrumBackupRow(
+                        wavelengths_nm=np.asarray([500.0, 600.0]),
+                        formula_values=np.asarray([0.1, 0.1]),
+                        sample_mean=np.asarray([float(c), float(c)]),
+                        reference_mean=np.asarray([float(c) * 10, float(c) * 10]),
+                        cube_index=c,
+                        timestamp_utc_ms=c * 100,
+                        signature_hash=f"h{c}",
+                        reduced_values_by_method={"mean": (np.asarray([float(c), float(c)]), np.asarray([float(c) * 10, float(c) * 10]))},
+                    )
+                    for c in (1, 2, 3)
+                ]
+                writer.append_formula_spectrum_batch(1, rows)
+
+                for c in (1, 2, 3):
+                    row_trace = writer.formula_spectrum_row(1, c)
+                    self.assertIsNotNone(row_trace, f"cube {c} missing after batch write")
+                    self.assertEqual(row_trace.by_cube[c][0], f"h{c}")
+                    np.testing.assert_allclose(row_trace.by_cube[c][1]["mean"][0], [float(c), float(c)])
+                # Untouched cubes in this batch's own range must stay unwritten.
+                self.assertIsNone(writer.formula_spectrum_row(1, 0))
+                self.assertIsNone(writer.formula_spectrum_row(1, 4))
+
+    def test_rows_with_different_real_methods_in_one_batch(self) -> None:
+        """One batch, one ROI: row 0 has real values for two methods (the
+        single-cube-preview shape, compute_all_reduction_methods=True); row
+        1 only has a real value for "mean", with "median" present but NaN
+        (the bulk-sweep shape - analysis_tasks.py's reduce_sample_and_
+        reference_all_methods always populates every REDUCTION_METHODS key,
+        NaN for whichever wasn't actually active - a row missing a key
+        entirely does not happen via any real call site, so that's not what
+        this covers). Each row's own real values must round-trip
+        independently within the shared batch call."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(
+                path, spectral_cube_indices=[0, 1], wavelengths_nm=np.asarray([500.0])
+            ) as writer:
+                nan_pair = (np.asarray([np.nan]), np.asarray([np.nan]))
+                rows = [
+                    FormulaSpectrumBackupRow(
+                        wavelengths_nm=np.asarray([500.0]),
+                        formula_values=np.asarray([0.1]),
+                        sample_mean=np.asarray([1.0]),
+                        reference_mean=np.asarray([2.0]),
+                        cube_index=0,
+                        timestamp_utc_ms=1,
+                        signature_hash="h0",
+                        reduced_values_by_method={
+                            "mean": (np.asarray([1.0]), np.asarray([2.0])),
+                            "median": (np.asarray([1.5]), np.asarray([2.5])),
+                        },
+                    ),
+                    FormulaSpectrumBackupRow(
+                        wavelengths_nm=np.asarray([500.0]),
+                        formula_values=np.asarray([0.2]),
+                        sample_mean=np.asarray([3.0]),
+                        reference_mean=np.asarray([4.0]),
+                        cube_index=1,
+                        timestamp_utc_ms=2,
+                        signature_hash="h1",
+                        reduced_values_by_method={"mean": (np.asarray([3.0]), np.asarray([4.0])), "median": nan_pair},
+                    ),
+                ]
+                writer.append_formula_spectrum_batch(1, rows)
+
+                row0 = writer.formula_spectrum_row(1, 0)
+                row1 = writer.formula_spectrum_row(1, 1)
+
+        np.testing.assert_allclose(row0.by_cube[0][1]["mean"][0], [1.0])
+        np.testing.assert_allclose(row0.by_cube[0][1]["median"][0], [1.5])
+        np.testing.assert_allclose(row1.by_cube[1][1]["mean"][0], [3.0])
+        self.assertTrue(np.isnan(row1.by_cube[1][1]["median"][0][0]))
 
 
 class Schema7SensorgramRoundTripTests(unittest.TestCase):

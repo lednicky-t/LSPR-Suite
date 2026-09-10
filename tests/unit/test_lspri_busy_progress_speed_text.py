@@ -54,20 +54,24 @@ class TestFormatBusyDetailText(unittest.TestCase):
     def test_curr_and_avg_both_shown(self) -> None:
         # 10 cubes done in 40s total (avg 4.00 s/cube), most recent one took
         # 2.5s (curr) - the two numbers are independent, not derived from
-        # each other.
+        # each other. ETA is items-based (avg 4.00s/cube * 90 remaining =
+        # 360s), deliberately NOT the percent-based 40*(50/50)=40s a naive
+        # extrapolation from the (here mismatched-on-purpose) 50% would give
+        # - see _format_busy_detail_text's docstring for why items win.
         text = MainWindow._format_busy_detail_text(
             40.0, 50, 100, items_completed=10, last_item_seconds=2.5
         )
-        self.assertEqual(text, "0:40 | ETA 0:40 | 50% | Curr/Avg 2.50/4.00 s/cube")
+        self.assertEqual(text, "0:40 | ETA 6:00 | 50% | Curr/Avg 2.50/4.00 s/cube")
 
     def test_curr_falls_back_to_avg_when_not_given(self) -> None:
         # Only ever happens for the very first completed item (no prior
         # completion to diff against) - Curr should read the same as Avg
-        # rather than showing nothing.
+        # rather than showing nothing. ETA is items-based (avg 2.00s/cube *
+        # 99 remaining = 198s), not the percent-based 2*(90/10)=18s.
         text = MainWindow._format_busy_detail_text(
             2.0, 10, 100, items_completed=1, last_item_seconds=None
         )
-        self.assertEqual(text, "0:02 | ETA 0:18 | 10% | Curr/Avg 2.00/2.00 s/cube")
+        self.assertEqual(text, "0:02 | ETA 3:18 | 10% | Curr/Avg 2.00/2.00 s/cube")
 
     def test_curr_can_differ_sharply_from_avg(self) -> None:
         # A single slow cube should be fully visible in Curr, not smoothed
@@ -76,6 +80,23 @@ class TestFormatBusyDetailText(unittest.TestCase):
             100.0, 50, 100, items_completed=50, last_item_seconds=9.0
         )
         self.assertEqual(text, "1:40 | ETA 1:40 | 50% | Curr/Avg 9.00/2.00 s/cube")
+
+    def test_eta_uses_item_rate_not_percent_when_they_diverge(self) -> None:
+        # Reproduces the reported "35% at 1 minute in, but ETA reads far too
+        # low" symptom: the 20%-prep/80%-compute split in analysis_tasks.py's
+        # spectral_cube_progress_callback can put current_percent well ahead
+        # of real per-cube progress right after prep finishes. Naive percent
+        # extrapolation (60*(65/35)=~111s) badly underestimates the true
+        # remaining time; the items-based rate (59 s/cube average here) gives
+        # a much larger, correct-shaped answer instead.
+        text = MainWindow._format_busy_detail_text(
+            60.0, 35, 314, items_completed=59, last_item_seconds=1.0
+        )
+        avg = 60.0 / 59
+        remaining = 314 - 59
+        expected_eta_seconds = avg * remaining
+        self.assertGreater(expected_eta_seconds, 111.4)
+        self.assertIn("ETA 4:", text)
 
     def test_curr_zero_for_an_instant_cache_hit_cube(self) -> None:
         # A cache-hit cube can legitimately finish in ~0s - that's real

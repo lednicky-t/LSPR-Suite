@@ -59,6 +59,11 @@ class _FakeWindow:
         self.zarr_adaptive_enabled_calls: list[bool] = []
         self.zarr_adaptive_batch_calls: list[int] = []
         self._analysis_controller = _FakeAnalysisController()
+        self._selected_roi_ids: set[int] = set()
+        self._wavelength_values: list[float] = []
+        self._spectral_cube_values: list[int] = []
+        self._roi_formula_spectrum_cache: dict = {}
+        self._sensorgram_cache: dict = {}
 
     def _set_ui_theme(self, theme_name: str) -> None:
         self.theme_calls.append(theme_name)
@@ -91,6 +96,25 @@ class _FakeWindow:
     def _set_ome_zarr_adaptive_batch_mb(self, value: int) -> None:
         self.zarr_adaptive_batch_calls.append(int(value))
         self._settings.setValue("export/ome_zarr_adaptive_batch_mb", int(value))
+
+    # -- analysis memory cache (budget + calculator) ----------------------
+    def _analysis_cache_budget_mb(self) -> int:
+        return int(self._settings.value("analysis/cache_budget_mb", 500))
+
+    def _set_analysis_cache_budget_mb(self, value: int) -> None:
+        self._settings.setValue("analysis/cache_budget_mb", int(value))
+
+    @staticmethod
+    def _estimated_roi_formula_spectrum_bytes_per_wavelength() -> int:
+        return 112  # matches MainWindow's own real constant - see main_window.py
+
+    def _estimated_roi_formula_spectrum_entry_bytes(self) -> int:
+        n_wavelengths = len(self._wavelength_values) or 40
+        return n_wavelengths * self._estimated_roi_formula_spectrum_bytes_per_wavelength()
+
+    def _estimated_sensorgram_result_entry_bytes(self) -> int:
+        n_cubes = len(self._spectral_cube_values) or 100
+        return n_cubes * 3 * 8
 
 
 class PreferencesDialogTests(unittest.TestCase):
@@ -199,6 +223,80 @@ class DarkFrameImpactTestButtonTests(unittest.TestCase):
         on_result("late result that must be ignored")
 
         self.assertEqual(dialog.dark_frame_test_result_label.text(), "Testing cube 0...")
+
+
+class AnalysisMemoryCacheCalculatorTests(unittest.TestCase):
+    """Covers the "Spectra cache size calculator" under the Memory cache
+    size field (# ROIs x # wavelengths x # cubes -> MB), including its two
+    autofill buttons - see MainWindow._estimated_roi_formula_spectrum_
+    bytes_per_wavelength for the shared constant this and the real app's
+    budget-to-entry-count conversion both use."""
+
+    def test_result_updates_live_as_inputs_change(self) -> None:
+        window = _FakeWindow(_FakeSettings({}))
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+
+        dialog.cache_calc_roi_spin.setValue(170)
+        dialog.cache_calc_wavelength_spin.setValue(50)
+        dialog.cache_calc_cube_spin.setValue(2000)
+
+        # 170 ROIs x 50 wavelengths x 2000 cubes x 112 bytes/wavelength -
+        # comfortably past the 1024 MB -> GB display threshold.
+        expected_gb = (170 * 50 * 2000 * 112) / (1024.0 * 1024.0 * 1024.0)
+        self.assertIn(f"{expected_gb:,.2f}", dialog.cache_calc_result_label.text())
+        self.assertIn("GB", dialog.cache_calc_result_label.text())
+
+    def test_small_result_shown_in_mb_not_gb(self) -> None:
+        window = _FakeWindow(_FakeSettings({}))
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+
+        dialog.cache_calc_roi_spin.setValue(1)
+        dialog.cache_calc_wavelength_spin.setValue(40)
+        dialog.cache_calc_cube_spin.setValue(10)
+
+        self.assertIn("MB", dialog.cache_calc_result_label.text())
+        self.assertNotIn("GB", dialog.cache_calc_result_label.text())
+
+    def test_use_current_selection_fills_roi_count(self) -> None:
+        window = _FakeWindow(_FakeSettings({}))
+        window._selected_roi_ids = {1, 2, 3, 4, 5}
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+
+        dialog.cache_calc_use_selection_button.click()
+
+        self.assertEqual(dialog.cache_calc_roi_spin.value(), 5)
+
+    def test_use_current_dataset_fills_wavelengths_and_cubes(self) -> None:
+        window = _FakeWindow(_FakeSettings({}))
+        window._wavelength_values = [500.0, 510.0, 520.0]
+        window._spectral_cube_values = list(range(250))
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+
+        dialog.cache_calc_use_dataset_button.click()
+
+        self.assertEqual(dialog.cache_calc_wavelength_spin.value(), 3)
+        self.assertEqual(dialog.cache_calc_cube_spin.value(), 250)
+
+    def test_autofill_buttons_are_no_ops_when_nothing_is_loaded(self) -> None:
+        """No dataset/selection yet - the buttons must not clobber the
+        spinboxes' existing values with zero."""
+        window = _FakeWindow(_FakeSettings({}))
+        parent = QtWidgets.QWidget()
+        dialog = PreferencesDialog(window, parent=parent)
+        roi_before = dialog.cache_calc_roi_spin.value()
+        wavelengths_before = dialog.cache_calc_wavelength_spin.value()
+        cubes_before = dialog.cache_calc_cube_spin.value()
+
+        dialog.cache_calc_use_selection_button.click()
+        dialog.cache_calc_use_dataset_button.click()
+
+        self.assertEqual(dialog.cache_calc_roi_spin.value(), roi_before)
+        self.assertEqual(dialog.cache_calc_wavelength_spin.value(), wavelengths_before)
+        self.assertEqual(dialog.cache_calc_cube_spin.value(), cubes_before)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import numpy as np
 from PyQt6 import QtWidgets
 
 # Must exist before any lspr_imaging_app.gui module is imported below - some
@@ -44,6 +45,12 @@ class TestLivePreviewPromptDeferred(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._selected_roi_ids = {1, 2}
         window._selection_plot_highlight_signature = None
+        # Non-empty by default - most tests here care about the deferred-
+        # prompt scheduling, not the "self-heal an emptied plot" guard (see
+        # test_unchanged_selection_but_empty_sensorgram_still_refreshes for
+        # that case), so default to "already showing real data" the same
+        # way a real window would be after any successful earlier refresh.
+        window._sensorgram_spectral_cube_indices = np.asarray([1, 2, 3], dtype=np.int32)
         window._analysis_live_preview_enabled = live_preview_enabled
         window._refresh_visible_spectrum_from_cache = Mock()
         window._analysis_controller = SimpleNamespace(
@@ -102,12 +109,37 @@ class TestLivePreviewPromptDeferred(unittest.TestCase):
 
     def test_unchanged_selection_signature_is_a_no_op(self) -> None:
         # Early-return guard (selected_signature == cached signature) - must
-        # still work with the deferred prompt in place.
+        # still work with the deferred prompt in place. Only holds when the
+        # sensorgram is still actually showing data (see the next test for
+        # the case where it isn't).
         window = self._make_window()
         window._selection_plot_highlight_signature = (1, 2)
         calls = self._capture_scheduled_callback(window, prompt_live_preview=True)
         self.assertEqual(calls, [])
         window._refresh_visible_spectrum_from_cache.assert_not_called()
+
+    def test_unchanged_selection_but_empty_sensorgram_still_refreshes(self) -> None:
+        # Regression test (reported 2026-09-10): a single ROI click fires
+        # image_interaction_controller.py's eventFilter twice for the same
+        # resulting selection - once on MouseButtonPress, once on
+        # MouseButtonRelease. Both calls go through _update_roi_summary(),
+        # which unconditionally clears the sensorgram (_mark_formula_
+        # spectrum_dirty -> _mark_sensorgram_stale -> clear_sensorgram) when
+        # "Live preview" is off. The press call's own _update_selection_
+        # dependent_plots then repaints it correctly (a real cache/disk hit -
+        # this is the "flash" the maintainer saw), but the release call's
+        # _update_roi_summary() clears it AGAIN, and without this fix the
+        # unchanged-selection-signature guard would have skipped the
+        # release's own repaint too, leaving the sensorgram permanently
+        # blank. Simulated here directly: same signature as last time, but
+        # _sensorgram_spectral_cube_indices is empty (as if just cleared) -
+        # the cache lookup must still run instead of being skipped.
+        window = self._make_window()
+        window._selection_plot_highlight_signature = (1, 2)
+        window._sensorgram_spectral_cube_indices = np.asarray([], dtype=np.int32)
+        self._capture_scheduled_callback(window, prompt_live_preview=True)
+        window._refresh_visible_spectrum_from_cache.assert_called_once()
+        window._analysis_controller.preview_sensorgram_from_cache.assert_called_once()
 
 
 if __name__ == "__main__":
