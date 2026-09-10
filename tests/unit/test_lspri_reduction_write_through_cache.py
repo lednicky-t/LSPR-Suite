@@ -73,6 +73,9 @@ class _FakeWindow:
     def _chromatic_signature_for_image_key(self, image_key):
         return ("chromatic", image_key)
 
+    def _roi_formula_spectrum_cache_limit(self) -> int:
+        return self.ROI_FORMULA_SPECTRUM_CACHE_SIZE
+
 
 def _make_roi_result(reduction_method: str, methods: dict) -> FormulaSpectrumResult:
     """A fresh per-ROI compute result, as reduce_sample_and_reference_all_

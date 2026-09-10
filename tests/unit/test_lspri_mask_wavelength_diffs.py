@@ -101,7 +101,7 @@ class TestSessionMaskWavelengthDiffPersistence(unittest.TestCase):
                 session_mask=session_mask,
             )
             loaded = load_processing_profile(path)
-        loaded_session_mask = loaded[7]
+        loaded_session_mask = loaded[6]
         self.assertIsNotNone(loaded_session_mask)
         np.testing.assert_array_equal(loaded_session_mask["mask"], mask)
         self.assertEqual(loaded_session_mask["wavelength_diffs"], {(0, 450.0): {(2, 2): True}})
@@ -119,7 +119,7 @@ class TestSessionMaskWavelengthDiffPersistence(unittest.TestCase):
                 session_mask=session_mask,
             )
             loaded = load_processing_profile(path)
-        loaded_session_mask = loaded[7]
+        loaded_session_mask = loaded[6]
         self.assertIsNotNone(loaded_session_mask)
         self.assertIsNone(loaded_session_mask["wavelength_diffs"])
 
