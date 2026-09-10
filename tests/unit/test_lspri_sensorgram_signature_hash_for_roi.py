@@ -1,20 +1,27 @@
 """Correctness proof for AnalysisWorkerMixin._sensorgram_point_signature_
 hash_cube_context / _sensorgram_point_signature_hash_for_roi: this pairing
-replaced calling the original, much more expensive _sensorgram_point_
-signature_hash once per ROI with computing a single cube-level hash once
-per cube and cheaply combining it with each ROI's own small piece per ROI -
-avoiding both recomputing the expensive per-wavelength preprocessing scan
-per ROI (~630-780ms/cube at 160 ROIs) and re-serializing/re-hashing that
-same scan via JSON+SHA256 per ROI (~52ms/cube) - see docs/bulk_analysis_
-performance_investigation.md's matching follow-ups for both measurements.
+replaced calling the general _sensorgram_point_signature_hash once per ROI
+with computing a single cube-level hash once per cube and cheaply combining
+it with each ROI's own small piece per ROI - avoiding both recomputing the
+expensive per-wavelength preprocessing scan per ROI (~630-780ms/cube at 160
+ROIs) and re-serializing/re-hashing that same scan via JSON+SHA256 per ROI
+(~52ms/cube) - see docs/bulk_analysis_performance_investigation.md's
+matching follow-ups for both measurements.
 
-Unlike the first version of this fix, the resulting hash is deliberately
-NOT byte-identical to the original per-ROI _sensorgram_point_signature_hash
-call (hashing a pre-hashed summary is a different input, even though it's
-just as valid a fingerprint) - what actually matters, and what this file
-checks, is that the result is a stable, deterministic function of (cube,
-ROI, and every setting that should invalidate it), distinguishing every
-case that should be distinguished.
+Originally this pairing produced a hash that was deliberately NOT byte-
+identical to a plain single-ROI _sensorgram_point_signature_hash call for
+the same (cube, ROI) - two independently-defined schemes that happened to
+cover the same fields. Unified 2026-09-10: _sensorgram_point_signature_hash
+is now itself built from _sensorgram_point_signature_hash_cube_context via
+the shared _sensorgram_point_signature_hash_for_selection combine step, so
+a one-ROI selection and that same ROI's row from a larger multi-ROI run's
+per-ROI backup now hash identically - see test_single_roi_hash_matches_
+plain_selection_hash below, which is the property that motivated unifying
+them (a disk lookup no longer needs to know which of the two call sites
+wrote a given row). What this file checks throughout is that the result is
+a stable, deterministic function of (cube, ROI, and every setting that
+should invalidate it), distinguishing every case that should be
+distinguished.
 """
 
 from __future__ import annotations
@@ -140,6 +147,26 @@ class TestSensorgramPointSignatureHashForRoi(unittest.TestCase):
                 mixin = _make_mixin(**{field: changed_value})
                 changed_context = mixin._sensorgram_point_signature_hash_cube_context(3)
                 self.assertNotEqual(changed_context, baseline_context, msg=f"{field} change was not reflected in the hash")
+
+    def test_single_roi_hash_matches_plain_selection_hash(self) -> None:
+        # The property the 2026-09-10 unification exists for: a single-ROI
+        # selection (_sensorgram_point_signature_hash, the "whatever's
+        # currently selected" path _backup_sensorgram_point/the interactive
+        # disk-shortcut use) and that same ROI's row written by _backup_
+        # per_roi_sensorgram_points while it was one member of a larger
+        # run must be the SAME signature - both represent the identical
+        # underlying per-ROI computation, so a disk lookup for one must
+        # find the other.
+        mixin = _make_mixin()
+        roi = _ROIS[0]
+        cube_context = mixin._sensorgram_point_signature_hash_cube_context(3)
+        via_for_roi = mixin._sensorgram_point_signature_hash_for_roi(cube_context, roi)
+        via_plain_selection = mixin._sensorgram_point_signature_hash(3, (int(roi.area_roi_id),), [roi])
+        self.assertEqual(via_for_roi, via_plain_selection)
+
+    def test_plain_selection_hash_empty_for_no_selection(self) -> None:
+        mixin = _make_mixin()
+        self.assertEqual(mixin._sensorgram_point_signature_hash(3, (), []), "")
 
     def test_roi_geometry_changes_the_per_roi_hash(self) -> None:
         mixin = _make_mixin()
