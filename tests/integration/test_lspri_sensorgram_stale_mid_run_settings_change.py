@@ -79,6 +79,9 @@ class _FakeWindow:
     def _set_status_text(self, text: str) -> None:
         self._status_text = text
 
+    def _begin_busy(self, text: str, *, determinate: bool = False, show_wait_cursor: bool = True, total_items=None) -> None:
+        pass
+
     def _end_busy(self, *, show_wait_cursor: bool = True) -> None:
         pass
 
