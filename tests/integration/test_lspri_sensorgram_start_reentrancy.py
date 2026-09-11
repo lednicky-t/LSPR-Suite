@@ -143,6 +143,28 @@ class SensorgramStartReentrancyTests(unittest.TestCase):
         apply_mock.assert_called_once_with(cached_signature, cached_result, preview=True)
         start_mock.assert_not_called()
 
+    def test_cache_hit_for_a_cancelled_result_falls_through_to_resume_the_worker(self) -> None:
+        """Regression test: pressing Stop caches that run's own incomplete
+        result under the same signature a later, identical "Start analysis"
+        click would compute (see _apply_cached_sensorgram_result). Before
+        the fix, that made a fresh Start analysis click after Stop treat
+        the stopped result as a cache hit and just redisplay it, never
+        calling _start_sensorgram_worker again - the button looked
+        unresponsive because nothing visibly changed and the run never
+        resumed."""
+        window = _FakeWindow()
+        controller = AnalysisController(window)
+        cached_signature = ("current-selection-signature",)
+        cached_result = SimpleNamespace(cancelled=True)
+        window._sensorgram_cache[cached_signature] = cached_result
+
+        with mock.patch.object(controller, "_apply_cached_sensorgram_result") as apply_mock, \
+                mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
+            controller._calculate_sensorgram_for_range()
+
+        apply_mock.assert_not_called()
+        start_mock.assert_called_once()
+
     def test_cache_miss_with_nothing_running_starts_the_worker(self) -> None:
         window = _FakeWindow()
         controller = AnalysisController(window)

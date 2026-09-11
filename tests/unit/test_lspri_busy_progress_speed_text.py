@@ -101,10 +101,52 @@ class TestFormatBusyDetailText(unittest.TestCase):
     def test_curr_zero_for_an_instant_cache_hit_cube(self) -> None:
         # A cache-hit cube can legitimately finish in ~0s - that's real
         # information (not a "meaningless" value to hide/fall back from).
+        # This exercises the legacy (fresh_items_completed=None) path,
+        # where the caller doesn't distinguish cache hits from real
+        # computations at all - see the fresh-tracking tests below for the
+        # scenario this whole distinction actually exists for.
         text = MainWindow._format_busy_detail_text(
             10.0, 50, 100, items_completed=10, last_item_seconds=0.0
         )
         self.assertIn("Curr/Avg 0.00/1.00 s/cube", text)
+
+    def test_resumed_run_catch_up_phase_hides_speed_instead_of_faking_it(self) -> None:
+        # Regression test for a real bug: resuming "Start analysis" after
+        # Stop makes the worker race through every cube a previous, since-
+        # stopped run already finished as a near-instant RAM/disk cache
+        # hit, before reaching genuinely new cubes. Before fresh-tracking
+        # existed, items_completed counted those free hits the same as a
+        # real computation, so elapsed/items_completed read as a falsely
+        # fast average for the rest of the run. Here: 200 items "completed"
+        # (all cache hits) in 0.3s elapsed, but nothing has been genuinely
+        # computed yet (fresh_items_completed=0) - the old formula would
+        # have reported ~0.0015 s/cube; the fix must show no speed reading
+        # at all rather than that fabricated number.
+        text = MainWindow._format_busy_detail_text(
+            0.3, 40, 500, items_completed=200, last_item_seconds=0.0015,
+            fresh_items_completed=0, fresh_elapsed_seconds=0.0,
+        )
+        self.assertNotIn("s/cube", text)
+
+    def test_resumed_run_avg_reflects_only_genuinely_computed_cubes(self) -> None:
+        # Continuing the scenario above: the run has since moved past the
+        # cache-hit catch-up phase and genuinely computed 5 new cubes,
+        # taking 10s of real compute time total, most recently 2.5s. Total
+        # elapsed is 10.3s (0.3s catch-up + 10s real compute) over 205
+        # items_completed (200 free + 5 real) - the old whole-run average
+        # (10.3/205 ~= 0.05 s/cube) would still be badly diluted by the
+        # free prefix. Avg/Curr must reflect only the 5 real completions
+        # (10/5 = 2.00 s/cube), and the ETA must extrapolate from that real
+        # rate over the remaining item count, not the diluted one.
+        text = MainWindow._format_busy_detail_text(
+            10.3, 41, 500, items_completed=205, last_item_seconds=2.5,
+            fresh_items_completed=5, fresh_elapsed_seconds=10.0,
+        )
+        self.assertIn("Curr/Avg 2.50/2.00 s/cube", text)
+        remaining = 500 - 205
+        expected_eta_seconds = 2.00 * remaining
+        self.assertNotAlmostEqual(expected_eta_seconds, 10.3 / 205 * remaining, delta=1.0)
+        self.assertIn("ETA 9:50", text)
 
 
 class TestNoteBusyItemCompleted(unittest.TestCase):
@@ -119,6 +161,8 @@ class TestNoteBusyItemCompleted(unittest.TestCase):
         window._busy_items_completed = 0
         window._busy_last_item_elapsed = 0.0
         window._busy_last_item_seconds = None
+        window._busy_fresh_items_completed = 0
+        window._busy_fresh_elapsed_seconds = 0.0
         return window
 
     def test_no_total_items_is_a_no_op(self) -> None:
@@ -145,6 +189,10 @@ class TestNoteBusyItemCompleted(unittest.TestCase):
             time_module.perf_counter = real_perf_counter
         self.assertEqual(window._busy_items_completed, 1)
         self.assertAlmostEqual(window._busy_last_item_seconds, 3.0, places=6)
+        # Default freshly_computed=True - a genuine completion also counts
+        # toward the fresh-only tracking used for the Avg/Curr readout.
+        self.assertEqual(window._busy_fresh_items_completed, 1)
+        self.assertAlmostEqual(window._busy_fresh_elapsed_seconds, 3.0, places=6)
 
     def test_each_completion_increments_and_diffs_against_the_previous(self) -> None:
         window = self._make_window(100)
@@ -166,7 +214,55 @@ class TestNoteBusyItemCompleted(unittest.TestCase):
             time_module.perf_counter = real_perf_counter
         self.assertEqual(window._busy_items_completed, 4)
         self.assertAlmostEqual(window._busy_last_item_seconds, 3.5, places=6)
-        self.assertAlmostEqual(window._busy_last_item_elapsed, 5.5, places=6)
+
+    def test_cache_hit_advances_items_completed_but_not_the_fresh_counters(self) -> None:
+        # Regression test: a RAM/disk cache hit (freshly_computed=False -
+        # e.g. a cube a since-stopped earlier run already finished, picked
+        # up near-instantly on a resumed "Start analysis" run) must still
+        # advance items_completed/the elapsed clock (so the NEXT item's own
+        # duration and the ETA's remaining-item count stay correct), but
+        # must not be counted as a sample of real per-cube compute time.
+        window = self._make_window(100)
+        import time as time_module
+
+        real_perf_counter = time_module.perf_counter
+        time_module.perf_counter = lambda: 0.01
+        try:
+            window._busy_started_at = 0.0
+            window._note_busy_item_completed(freshly_computed=False)
+        finally:
+            time_module.perf_counter = real_perf_counter
+        self.assertEqual(window._busy_items_completed, 1)
+        self.assertAlmostEqual(window._busy_last_item_elapsed, 0.01, places=6)
+        self.assertEqual(window._busy_fresh_items_completed, 0)
+        self.assertAlmostEqual(window._busy_fresh_elapsed_seconds, 0.0, places=6)
+        # Curr must still be None (not the cache hit's near-zero duration) -
+        # nothing genuine has completed yet to report a rate for.
+        self.assertIsNone(window._busy_last_item_seconds)
+
+    def test_fresh_completion_after_cache_hits_measures_only_its_own_duration(self) -> None:
+        # Continuing the scenario above: several cache hits fly by, then a
+        # genuine computation finishes. Its own duration must be measured
+        # from when IT started (i.e. from the last item's elapsed marker,
+        # which the cache hits above still advanced), not inflated by the
+        # cache-hit time that preceded it.
+        window = self._make_window(100)
+        window._busy_last_item_elapsed = 0.02  # left behind by prior cache hits
+        window._busy_items_completed = 5
+        import time as time_module
+
+        real_perf_counter = time_module.perf_counter
+        time_module.perf_counter = lambda: 2.02  # this cube took 2.0s
+        try:
+            window._busy_started_at = 0.0
+            window._note_busy_item_completed(freshly_computed=True)
+        finally:
+            time_module.perf_counter = real_perf_counter
+        self.assertEqual(window._busy_items_completed, 6)
+        self.assertEqual(window._busy_fresh_items_completed, 1)
+        self.assertAlmostEqual(window._busy_last_item_seconds, 2.0, places=6)
+        self.assertAlmostEqual(window._busy_fresh_elapsed_seconds, 2.0, places=6)
+        self.assertAlmostEqual(window._busy_last_item_elapsed, 2.02, places=6)
 
 
 if __name__ == "__main__":
