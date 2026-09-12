@@ -63,6 +63,11 @@ class TestLivePreviewPromptDeferred(unittest.TestCase):
             # (the deferred-prompt scheduling), just needs to exist so the
             # call doesn't raise.
             preview_sensorgram_from_cache=Mock(),
+            # Likewise unconditionally called right after, to redraw the new
+            # Individual/Average-all/Average-by-group display modes from
+            # each ROI's own per-ROI data - see analysis_pipeline_layers.md.
+            # Unrelated to what this test file covers, just needs to exist.
+            _render_sensorgram_display=Mock(),
         )
         window._handle_live_preview_selection_change = Mock()
         return window

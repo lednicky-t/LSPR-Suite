@@ -40,9 +40,9 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
             baseline_enabled=True,
             baseline_window_start=10.0,
             baseline_window_end=30.0,
-            group_stats_enabled=True,
-            group_stats_center="median",
-            group_stats_band="sem",
+            sensorgram_display_mode="individual",
+            sensorgram_aggregation="median",
+            sensorgram_band="sem",
         )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "profile.json"
@@ -66,6 +66,36 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
             path.write_text(json.dumps(payload), encoding="utf-8")
             loaded = load_processing_profile(path)
         self.assertEqual(loaded[-1], StatisticsSettings())
+
+    def test_legacy_group_stats_keys_map_onto_new_display_mode(self) -> None:
+        # Simulates a profile saved before the Individual/Average-all/
+        # Average-by-group Sensogram display modes existed - the old
+        # group_stats_enabled/center/band keys, no sensorgram_display_mode
+        # key at all. See apps/LSPRi/eva/docs/analysis_pipeline_layers.md
+        # and storage/workspace.py's load_processing_profile.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "profile.json"
+            payload = build_processing_profile_payload(PreprocessingSettings(), AreaRoiDetectionSettings(), [])
+            payload["statistics_settings"] = {
+                "group_stats_enabled": True,
+                "group_stats_center": "median",
+                "group_stats_band": "sem",
+            }
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            loaded = load_processing_profile(path)
+        statistics_settings = loaded[-1]
+        self.assertEqual(statistics_settings.sensorgram_display_mode, "average_by_group")
+        self.assertEqual(statistics_settings.sensorgram_aggregation, "median")
+        self.assertEqual(statistics_settings.sensorgram_band, "sem")
+
+    def test_legacy_group_stats_disabled_maps_to_average_all(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "profile.json"
+            payload = build_processing_profile_payload(PreprocessingSettings(), AreaRoiDetectionSettings(), [])
+            payload["statistics_settings"] = {"group_stats_enabled": False}
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            loaded = load_processing_profile(path)
+        self.assertEqual(loaded[-1].sensorgram_display_mode, "average_all")
 
     def test_roi_math_fields_round_trip_on_area_roi_settings(self) -> None:
         area_roi_settings = AreaRoiDetectionSettings(
