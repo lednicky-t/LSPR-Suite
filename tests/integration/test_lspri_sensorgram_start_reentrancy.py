@@ -56,7 +56,6 @@ class _FakeWindow:
     MainWindow (Qt widgets, live datasets, etc.)."""
 
     def __init__(self) -> None:
-        self._analysis_enabled = True
         self._state = SimpleNamespace(dataset=SimpleNamespace(folder="dataset_folder"))
         self._chromatic_setup_active = False
         self._sensorgram_running = False

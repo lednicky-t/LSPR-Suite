@@ -57,7 +57,6 @@ class _FakeWindow:
     test_lspri_sensorgram_start_reentrancy.py."""
 
     def __init__(self) -> None:
-        self._analysis_enabled = True
         self._sensorgram_running = False
         self._sensorgram_running_signature: tuple | None = None
         self._sensorgram_cancel_event = None
