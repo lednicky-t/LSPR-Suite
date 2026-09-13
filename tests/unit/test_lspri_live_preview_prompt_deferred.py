@@ -68,6 +68,10 @@ class TestLivePreviewPromptDeferred(unittest.TestCase):
             # each ROI's own per-ROI data - see analysis_pipeline_layers.md.
             # Unrelated to what this test file covers, just needs to exist.
             _render_sensorgram_display=Mock(),
+            # Called instead of the three cache-preview methods above when
+            # Live preview is off (see test_live_preview_disabled_* below) -
+            # unrelated to what this test file covers, just needs to exist.
+            _mark_formula_spectrum_dirty=Mock(),
         )
         window._handle_live_preview_selection_change = Mock()
         return window
@@ -111,6 +115,32 @@ class TestLivePreviewPromptDeferred(unittest.TestCase):
         window = self._make_window(live_preview_enabled=False)
         calls = self._capture_scheduled_callback(window, prompt_live_preview=True)
         self.assertEqual(calls, [])
+
+    def test_live_preview_disabled_does_not_repaint_from_cache(self) -> None:
+        # Regression test (reported 2026-09-13): with Live preview off, a
+        # plain selection change (e.g. clicking a different ROI on the
+        # image) must not auto-repaint the spectrum/sensogram from
+        # cache/disk - it must mark both stale instead, via
+        # _mark_formula_spectrum_dirty. Before this fix, the three cache-
+        # preview calls ran unconditionally regardless of the toggle, so
+        # idle-mode ROI clicks silently redrew already-computed results even
+        # though "Live preview" was off.
+        window = self._make_window(live_preview_enabled=False)
+        self._capture_scheduled_callback(window, prompt_live_preview=True)
+        window._refresh_visible_spectrum_from_cache.assert_not_called()
+        window._analysis_controller.preview_sensorgram_from_cache.assert_not_called()
+        window._analysis_controller._render_sensorgram_display.assert_not_called()
+        window._analysis_controller._mark_formula_spectrum_dirty.assert_called_once()
+
+    def test_live_preview_enabled_still_repaints_from_cache(self) -> None:
+        # Live preview on is unaffected by the above fix: a selection change
+        # still shows whatever's already cached/backed-up immediately.
+        window = self._make_window(live_preview_enabled=True)
+        self._capture_scheduled_callback(window, prompt_live_preview=False)
+        window._refresh_visible_spectrum_from_cache.assert_called_once()
+        window._analysis_controller.preview_sensorgram_from_cache.assert_called_once()
+        window._analysis_controller._render_sensorgram_display.assert_called_once()
+        window._analysis_controller._mark_formula_spectrum_dirty.assert_not_called()
 
     def test_unchanged_selection_signature_is_a_no_op(self) -> None:
         # Early-return guard (selected_signature == cached signature) - must
