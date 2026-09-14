@@ -23,7 +23,12 @@ if str(APP_SRC) not in sys.path:
 
 import numpy as np
 
-from lspr_imaging_app.storage.measurement_export import FormulaSpectrumBackupRow, ImagingMeasurementExportWriter
+from lspr_imaging_app.domain.models import AreaRoi
+from lspr_imaging_app.storage.measurement_export import (
+    FormulaSpectrumBackupRow,
+    ImagingMeasurementExportWriter,
+    read_roi_definition_records,
+)
 
 
 class Schema7CreationTests(unittest.TestCase):
@@ -351,6 +356,128 @@ class Schema6RegressionGuardTests(unittest.TestCase):
 
         self.assertEqual(keys, {(1, 0, "h0"), (1, 1, "h1")})
         self.assertEqual(set(trace.by_cube.keys()), {0, 1})
+
+
+class Schema7MigrationTests(unittest.TestCase):
+    """`ImagingMeasurementExportWriter.migrate_to_schema7` - the one-time,
+    user-triggered upgrade for a schema-6 backup file that predates schema
+    7 existing (see that method's docstring and docs/bulk_analysis_
+    performance_investigation.md / measurement_backup_performance_and_
+    crash_recovery.md for why this exists: an un-migrated file's periodic
+    background backup flush can fall behind production badly enough that
+    the final synchronous wait measured 116943ms on a real 160-ROI/314-cube
+    run)."""
+
+    def _make_schema6_writer_with_data(self, path: Path) -> None:
+        with ImagingMeasurementExportWriter(path) as writer:
+            writer.write_roi_definitions(
+                [
+                    AreaRoi(
+                        area_roi_id=1,
+                        center_x=10.0,
+                        center_y=20.0,
+                        sample_radius_px=5.0,
+                        sample_diameter_px=10.0,
+                        reference_inner_diameter_px=12.0,
+                        reference_outer_diameter_px=18.0,
+                        label="Spot A",
+                    )
+                ]
+            )
+            for cube_index, sample_value, timestamp_ms in ((0, 100.0, 10), (2, 300.0, 30)):
+                writer.append_formula_spectrum(
+                    1,
+                    wavelengths_nm=np.asarray([500.0, 600.0]),
+                    formula_values=np.asarray([0.1, 0.2]),
+                    sample_mean=np.asarray([sample_value, sample_value]),
+                    reference_mean=np.asarray([sample_value * 2, sample_value * 2]),
+                    cube_index=cube_index,
+                    timestamp_utc_ms=timestamp_ms,
+                    formula_key="absorbance",
+                    reduction_method="mean",
+                    signature_hash=f"hash-{cube_index}",
+                    reduced_values_by_method={
+                        "mean": (
+                            np.asarray([sample_value, sample_value]),
+                            np.asarray([sample_value * 2, sample_value * 2]),
+                        )
+                    },
+                )
+            writer.set_sensorgram_metric(1, metric_name="peak_wavelength", formula_key="absorbance")
+            writer.append_sensorgram_point(1, cube_index=0, timestamp_utc_ms=10, metric_value=555.0, signature_hash="sg-hash-0")
+            writer.append_sensorgram_point(1, cube_index=2, timestamp_utc_ms=30, metric_value=558.0, signature_hash="sg-hash-2")
+            # Synthetic combined-ROI-selection key (see set_sensorgram_metric's
+            # own docstring) - must survive migration under its own string id,
+            # same as a real numeric ROI id.
+            writer.set_sensorgram_metric(
+                "combined_1_2", metric_name="peak_wavelength", formula_key="absorbance", combined_roi_ids="1,2"
+            )
+            writer.append_sensorgram_point(
+                "combined_1_2", cube_index=0, timestamp_utc_ms=10, metric_value=999.0, signature_hash="sg-combo-0"
+            )
+
+    def test_migration_round_trips_every_row_and_flips_schema_major(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            self._make_schema6_writer_with_data(path)
+            with ImagingMeasurementExportWriter(path) as writer:
+                self.assertEqual(writer._schema_major, 6)
+                result = writer.migrate_to_schema7([0, 1, 2], np.asarray([500.0, 600.0]))
+                self.assertIsNotNone(result)
+                self.assertEqual(writer._schema_major, 7)
+
+                trace = writer.formula_spectrum_index(1)
+                self.assertEqual(set(trace.by_cube.keys()), {0, 2})
+                self.assertEqual(trace.by_cube[0][0], "hash-0")
+                self.assertEqual(trace.by_cube[2][0], "hash-2")
+                np.testing.assert_allclose(trace.by_cube[0][1]["mean"][0], [100.0, 100.0])
+                np.testing.assert_allclose(trace.by_cube[0][1]["mean"][1], [200.0, 200.0])
+                np.testing.assert_allclose(trace.by_cube[2][1]["mean"][0], [300.0, 300.0])
+
+                metric_index = writer.sensorgram_metric_index(1)
+                self.assertEqual(metric_index, {0: ("sg-hash-0", 555.0), 2: ("sg-hash-2", 558.0)})
+                combo_index = writer.sensorgram_metric_index("combined_1_2")
+                self.assertEqual(combo_index, {0: ("sg-combo-0", 999.0)})
+
+            records = read_roi_definition_records(path)
+            self.assertEqual([record.area_roi_id for record in records], [1])
+            self.assertEqual(records[0].label, "Spot A")
+
+    def test_migration_skips_rows_for_cubes_outside_the_new_manifest(self) -> None:
+        """A cube backed up previously but no longer in the live dataset's
+        cube list is dropped (never crashes the migration), matching how a
+        normal schema-7 write already treats an unknown cube_index."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            self._make_schema6_writer_with_data(path)
+            with ImagingMeasurementExportWriter(path) as writer:
+                result = writer.migrate_to_schema7([0], np.asarray([500.0, 600.0]))
+                self.assertIsNotNone(result)
+                trace = writer.formula_spectrum_index(1)
+                self.assertEqual(set(trace.by_cube.keys()), {0})
+
+    def test_migration_no_op_when_already_schema_seven(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            with ImagingMeasurementExportWriter(
+                path, spectral_cube_indices=[0, 1], wavelengths_nm=np.asarray([500.0])
+            ) as writer:
+                result = writer.migrate_to_schema7([0, 1], np.asarray([500.0]))
+                self.assertIsNone(result)
+
+    def test_migration_rejects_wavelength_grid_mismatch_and_touches_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "export.h5"
+            self._make_schema6_writer_with_data(path)
+            with ImagingMeasurementExportWriter(path) as writer:
+                with self.assertRaises(ValueError):
+                    writer.migrate_to_schema7([0, 1, 2], np.asarray([500.0]))  # file has 2 wavelengths, not 1
+                self.assertEqual(writer._schema_major, 6, "a rejected migration must not touch the original file")
+
+            with ImagingMeasurementExportWriter(path) as reopened:
+                self.assertEqual(reopened._schema_major, 6)
+                trace = reopened.formula_spectrum_index(1)
+                self.assertEqual(set(trace.by_cube.keys()), {0, 2})
 
 
 if __name__ == "__main__":

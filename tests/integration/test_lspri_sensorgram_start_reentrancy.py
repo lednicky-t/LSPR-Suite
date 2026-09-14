@@ -176,10 +176,10 @@ class SensorgramStartReentrancyTests(unittest.TestCase):
         start_mock.assert_called_once()
 
     def test_public_alias_delegates_to_the_same_implementation(self) -> None:
-        """calculate_sensorgram_for_range (called by _finish_group_calculation
-        and the live-preview prompt) must go through the exact same guarded
-        path as the button-wired _calculate_sensorgram_for_range - there is
-        only one implementation now, not two diverging ones."""
+        """calculate_sensorgram_for_range (called by the live-preview prompt)
+        must go through the exact same guarded path as the button-wired
+        _calculate_sensorgram_for_range - there is only one implementation
+        now, not two diverging ones."""
         window = _FakeWindow()
         controller = AnalysisController(window)
 
