@@ -21,7 +21,8 @@ from pathlib import Path
 from unittest import mock
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QItemSelectionModel, QPoint
+from PyQt6.QtCore import QEvent, QItemSelectionModel, QPoint, QPointF, Qt
+from PyQt6.QtGui import QMouseEvent
 
 # Must exist before any lspr_imaging_app.gui module is imported below - Qt
 # objects get built at import time in some of those modules.
@@ -255,6 +256,112 @@ class TestImagePanelAddToExistingGroup(unittest.TestCase):
                     window._show_analysis_roi_context_menu(1, QPoint(0, 0))
 
                 self.assertNotIn("Add to group", captured["top_level"])
+
+
+class TestGroupTableLayoutAndDoubleClickButtonFilter(unittest.TestCase):
+    """Bugs found from a screenshot of the Group table, one of which turned
+    out to also affect the (older, separately-implemented) ROI table:
+    (1) the Sample/Reference swatch columns showed visible empty space next
+    to the color icon - because ResizeToContents sizes an icon-only column
+    to fit its *header text* ("Sample"/"Reference"), not the 16px icon, and
+    because Qt also clamps any explicit width to a hidden minimumSectionSize
+    regardless of resize mode. The ROI table's own C_s/C_r columns had the
+    identical bug already, just less noticeably (its setColumnWidth() calls
+    were silently ignored too - see test_roi_table_swatch_columns_also_
+    honor_their_requested_width). (2) right-double-clicking a color swatch
+    opened the same color-picker dialog a left-double-click does, which is
+    standard (if surprising) Qt behavior: cellDoubleClicked/the DoubleClicked
+    edit trigger fire for any mouse button, not just Left."""
+
+    def _window_with_one_group(self, tmp: str):
+        window = MainWindow(Path(tmp), fast_startup=True)
+        window._state.area_rois = [AreaRoi(area_roi_id=1, center_x=0.0, center_y=0.0, sample_radius_px=5.0)]
+        group = AreaRoiGroup(
+            group_id="group_1", name="Alpha", sample_color_hex="#ff0000",
+            reference_color_hex="#00ff00", area_roi_ids=[1],
+        )
+        window._state.area_roi_groups = [group]
+        window._group_table_controller.update_table()
+        return window
+
+    def test_color_swatch_columns_are_narrow_not_header_width(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            window = self._window_with_one_group(tmp)
+            try:
+                self.assertEqual(window.group_table.columnWidth(1), 22)
+                self.assertEqual(window.group_table.columnWidth(2), 22)
+            finally:
+                window._state.dataset = None
+                window.close()
+                window.deleteLater()
+
+    def test_roi_table_swatch_columns_also_honor_their_requested_width(self) -> None:
+        """RoiTableController.update_table()'s own setColumnWidth() calls had
+        the identical bug (pre-existing, not introduced this session): left
+        in ResizeToContents mode, every explicit width was silently ignored,
+        so C_s/C_r rendered at ~60px instead of the requested 22px."""
+        with tempfile.TemporaryDirectory() as tmp:
+            window = self._window_with_one_group(tmp)
+            try:
+                window._roi_table_controller.update_table()
+                self.assertEqual(window.roi_table.columnWidth(0), 34)
+                self.assertEqual(window.roi_table.columnWidth(1), 96)
+                self.assertEqual(window.roi_table.columnWidth(2), 22)
+                self.assertEqual(window.roi_table.columnWidth(3), 22)
+                self.assertEqual(window.roi_table.columnWidth(4), 58)
+                self.assertEqual(window.roi_table.columnWidth(5), 58)
+                self.assertEqual(window.roi_table.columnWidth(6), 58)
+                self.assertEqual(window.roi_table.columnWidth(7), 64)
+                self.assertEqual(window.roi_table.columnWidth(8), 64)
+            finally:
+                window._state.dataset = None
+                window.close()
+                window.deleteLater()
+
+    def test_right_double_click_on_group_table_is_swallowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            window = self._window_with_one_group(tmp)
+            try:
+                event = QMouseEvent(
+                    QEvent.Type.MouseButtonDblClick, QPointF(5, 5),
+                    Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier,
+                )
+                consumed = window._image_interaction.handle_event(window.group_table.viewport(), event)
+                self.assertTrue(consumed, "right-double-click should be swallowed, not treated as a double-click")
+            finally:
+                window._state.dataset = None
+                window.close()
+                window.deleteLater()
+
+    def test_right_double_click_on_roi_table_is_also_swallowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            window = self._window_with_one_group(tmp)
+            try:
+                event = QMouseEvent(
+                    QEvent.Type.MouseButtonDblClick, QPointF(5, 5),
+                    Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier,
+                )
+                consumed = window._image_interaction.handle_event(window.roi_table.viewport(), event)
+                self.assertTrue(consumed)
+            finally:
+                window._state.dataset = None
+                window.close()
+                window.deleteLater()
+
+    def test_left_double_click_on_group_table_is_not_swallowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            window = self._window_with_one_group(tmp)
+            try:
+                event = QMouseEvent(
+                    QEvent.Type.MouseButtonDblClick, QPointF(5, 5),
+                    Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                )
+                consumed = window._image_interaction.handle_event(window.group_table.viewport(), event)
+                self.assertFalse(consumed, "left-double-click must keep working (rename/recolor still needs it)")
+            finally:
+                window._state.dataset = None
+                window.close()
+                window.deleteLater()
 
 
 if __name__ == "__main__":
