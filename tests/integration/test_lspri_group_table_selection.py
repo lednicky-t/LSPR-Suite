@@ -18,9 +18,10 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QItemSelectionModel
+from PyQt6.QtCore import QItemSelectionModel, QPoint
 
 # Must exist before any lspr_imaging_app.gui module is imported below - Qt
 # objects get built at import time in some of those modules.
@@ -193,6 +194,67 @@ class TestRoiGroupTitleToggle(unittest.TestCase):
                 self.assertEqual(window._roi_list_view_mode, "roi")
                 self.assertFalse(window.roi_table.isHidden())
                 self.assertTrue(window.group_table.isHidden())
+
+
+class TestImagePanelAddToExistingGroup(unittest.TestCase):
+    """The image canvas's right-click ROI menu (_show_analysis_roi_context_menu
+    in roi_geometry_mixin.py) gained an "Add to group" submenu listing every
+    existing group, so a selection made on the image can be added to one
+    without retyping its name into the "Group..." dialog. Reuses
+    GroupTableController.add_selected_rois_to_group - same operation as the
+    Group table's own "Add selected ROIs to this group" menu item."""
+
+    def test_add_to_group_submenu_moves_selection_into_existing_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                window._state.area_rois = [
+                    AreaRoi(area_roi_id=i, center_x=float(i), center_y=float(i), sample_radius_px=5.0)
+                    for i in (1, 2, 3)
+                ]
+                group_a = AreaRoiGroup(
+                    group_id="group_1", name="Alpha", sample_color_hex="#ff0000",
+                    reference_color_hex="#00ff00", area_roi_ids=[1],
+                )
+                group_b = AreaRoiGroup(
+                    group_id="group_2", name="Beta", sample_color_hex="#0000ff",
+                    reference_color_hex="#ffff00", area_roi_ids=[],
+                )
+                window._state.area_roi_groups = [group_a, group_b]
+                window._selected_roi_ids = {2, 3}
+
+                captured = {}
+
+                def fake_exec(menu_self, *args, **kwargs):
+                    add_to_group_action = next(a for a in menu_self.actions() if a.text() == "Add to group")
+                    submenu = add_to_group_action.menu()
+                    captured["submenu_items"] = [a.text() for a in submenu.actions()]
+                    return next(a for a in submenu.actions() if a.text() == "Beta")
+
+                with mock.patch("PyQt6.QtWidgets.QMenu.exec", fake_exec):
+                    window._show_analysis_roi_context_menu(2, QPoint(0, 0))
+
+                self.assertEqual(captured["submenu_items"], ["Alpha", "Beta"])
+                self.assertEqual(set(group_b.area_roi_ids), {2, 3})
+                self.assertEqual(group_a.area_roi_ids, [1])
+
+    def test_no_add_to_group_submenu_when_no_groups_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                window._state.area_rois = [
+                    AreaRoi(area_roi_id=1, center_x=0.0, center_y=0.0, sample_radius_px=5.0)
+                ]
+                window._selected_roi_ids = {1}
+
+                captured = {}
+
+                def fake_exec(menu_self, *args, **kwargs):
+                    captured["top_level"] = [a.text() for a in menu_self.actions()]
+                    return None
+
+                with mock.patch("PyQt6.QtWidgets.QMenu.exec", fake_exec):
+                    window._show_analysis_roi_context_menu(1, QPoint(0, 0))
+
+                self.assertNotIn("Add to group", captured["top_level"])
 
 
 if __name__ == "__main__":
