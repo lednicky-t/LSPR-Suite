@@ -73,6 +73,14 @@ class _FakeWindow:
     def _chromatic_signature_for_image_key(self, image_key):
         return ("chromatic", image_key)
 
+    def _preprocessing_signature(self, image_key):
+        # Stand-in for the real per-(cube, wavelength) preprocessing scan
+        # (rotation/flip/crop/background-flatten/mask, which itself embeds
+        # chromatic) - deterministic and image_key-dependent, same spirit as
+        # _chromatic_signature_for_image_key above, since this file tests
+        # write-through/signature-building logic, not real preprocessing.
+        return ("preprocessing", image_key)
+
     def _roi_formula_spectrum_cache_limit(self) -> int:
         return self.ROI_FORMULA_SPECTRUM_CACHE_SIZE
 

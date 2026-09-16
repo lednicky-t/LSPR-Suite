@@ -112,9 +112,9 @@ class _FakeWindow:
         n_wavelengths = len(self._wavelength_values) or 40
         return n_wavelengths * self._estimated_roi_formula_spectrum_bytes_per_wavelength()
 
-    def _estimated_sensorgram_result_entry_bytes(self) -> int:
-        n_cubes = len(self._spectral_cube_values) or 100
-        return n_cubes * 3 * 8
+    @staticmethod
+    def _estimated_sensorgram_metric_entry_bytes() -> int:
+        return 300
 
 
 class PreferencesDialogTests(unittest.TestCase):

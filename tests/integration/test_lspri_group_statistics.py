@@ -18,11 +18,8 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-import numpy as np
-
 from lspr_imaging_app.domain.models import AreaRoi, AreaRoiGroup
 from lspr_imaging_app.gui.analysis_controller import AnalysisController
-from lspr_imaging_app.gui.worker import SensorgramComputationResult
 
 
 def _make_roi(roi_id: int) -> AreaRoi:
@@ -117,38 +114,6 @@ class TestSensorgramGroupBuckets(unittest.TestCase):
         self.assertEqual(len(buckets), 1)
         self.assertEqual(buckets[0][0], "Ungrouped")
         self.assertEqual(buckets[0][2], [1, 2])
-
-
-class TestMemberTraceAligned(unittest.TestCase):
-    """AnalysisController._member_trace_aligned reindexes one ROI's own
-    (possibly sparse) result onto the requested full spectral-cube list, so
-    every ROI's array is the same length/order for aggregate_group_traces
-    regardless of which frames that ROI has. Uses metric_values (the fitted
-    sensogram number itself) - not metric_signal, which is NaN whenever a
-    trace is reconstructed from the HDF5 backup (see
-    _sensorgram_result_from_disk_backup)."""
-
-    def test_reindexes_onto_full_cube_list_with_nan_gaps(self) -> None:
-        result = SensorgramComputationResult(
-            spectral_cube_indices=np.array([0, 2, 3], dtype=np.int32),
-            metric_values=np.array([10.0, 20.0, 30.0]),
-            metric_signal=np.array([1.0, 2.0, 3.0]),
-            completed_count=3,
-            total_count=3,
-        )
-        aligned = AnalysisController._member_trace_aligned(result, [0, 1, 2, 3])
-        np.testing.assert_allclose(aligned, [10.0, np.nan, 20.0, 30.0])
-
-    def test_exact_match_needs_no_gaps(self) -> None:
-        result = SensorgramComputationResult(
-            spectral_cube_indices=np.array([5, 6, 7], dtype=np.int32),
-            metric_values=np.array([1.5, 2.5, 3.5]),
-            metric_signal=np.array([1.0, 2.0, 3.0]),
-            completed_count=3,
-            total_count=3,
-        )
-        aligned = AnalysisController._member_trace_aligned(result, [5, 6, 7])
-        np.testing.assert_allclose(aligned, [1.5, 2.5, 3.5])
 
 
 if __name__ == "__main__":

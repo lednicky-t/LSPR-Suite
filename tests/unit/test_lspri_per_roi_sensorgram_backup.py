@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import math
 import sys
+import threading
 import unittest
+from collections import OrderedDict
 from types import SimpleNamespace
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
@@ -59,6 +61,12 @@ def _make_mixin(*, running: bool, writer: _FakeWriter | None = None):
         _sensorgram_running=running,
         _sensorgram_backup_buffer={},
         _analysis_metric_key=lambda: "centroid",
+        # RAM metric-cache write-through target (see _store_sensorgram_
+        # metric_in_cache) - a generous fixed limit since these tests are
+        # about the disk-backup path, not LRU eviction.
+        _sensorgram_metric_cache=OrderedDict(),
+        _sensorgram_metric_cache_limit=lambda: 999,
+        _analysis_cache_lock=threading.Lock(),
     )
     mixin.window = window
     mixin._active_formula_key = lambda: "absorbance"
@@ -69,6 +77,12 @@ def _make_mixin(*, running: bool, writer: _FakeWriter | None = None):
     # strings the tests assert on.
     mixin._sensorgram_point_signature_hash_cube_context = lambda cube_index: ("ctx", cube_index)
     mixin._sensorgram_point_signature_hash_for_roi = lambda cube_context, roi: f"sig-{roi.area_roi_id}-{cube_context[1]}"
+    # Deterministic stand-ins for the RAM metric-cache's OWN (deliberately
+    # different, cheaper) signature scheme - see _sensorgram_metric_
+    # signature's docstring for why this must stay a separate stub from the
+    # hash-string pair above, not share their computation.
+    mixin._sensorgram_spectral_cube_signatures = lambda spectral_cubes: tuple(("cube-sig", c) for c in spectral_cubes)
+    mixin._sensorgram_metric_signature = lambda roi, cube_signature: f"metric-sig-{roi.area_roi_id}-{cube_signature[1]}"
     return mixin, writer, window
 
 
@@ -84,6 +98,22 @@ class TestBackupPerRoiSensorgramPoints(unittest.TestCase):
         # combined_roi_ids must be empty for a single real ROI - not the
         # synthetic "combined_..." grouping used for a multi-ROI selection.
         self.assertTrue(all(call[3] == "" for call in writer.metric_calls))
+
+    def test_ram_metric_cache_is_populated_alongside_disk_backup(self) -> None:
+        mixin, _writer, window = _make_mixin(running=False)
+        mixin._backup_per_roi_sensorgram_points({1: (1.5, 0.2), 2: (2.5, 0.3)}, cube_index=7)
+        self.assertEqual(window._sensorgram_metric_cache["metric-sig-1-7"], (1.5, 0.2))
+        self.assertEqual(window._sensorgram_metric_cache["metric-sig-2-7"], (2.5, 0.3))
+
+    def test_ram_metric_cache_is_populated_even_when_disk_dedup_skips_the_write(self) -> None:
+        # The RAM cache and the disk `backed_up` dedup set are independent -
+        # a value already on disk from an earlier call may have since been
+        # evicted from the LRU-bounded RAM cache and needs restoring here
+        # regardless of whether disk needs another write.
+        mixin, _writer, window = _make_mixin(running=False)
+        window._measurement_export_backed_up_sensorgram.add(("1", 7, "sig-1-7"))
+        mixin._backup_per_roi_sensorgram_points({1: (1.5, 0.2)}, cube_index=7)
+        self.assertEqual(window._sensorgram_metric_cache["metric-sig-1-7"], (1.5, 0.2))
 
     def test_buffers_in_ram_while_running_instead_of_writing(self) -> None:
         mixin, writer, window = _make_mixin(running=True)

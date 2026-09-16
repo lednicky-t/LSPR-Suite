@@ -26,6 +26,26 @@ from lspr_imaging_app.domain.models import FormulaSpectrumResult
 from lspr_imaging_app.gui.analysis_controller import AnalysisController
 
 
+def _roi(roi_id: int, center_x: float = 0.0, center_y: float = 0.0) -> SimpleNamespace:
+    """Minimal real-shaped ROI stand-in - roi_circular_geometry_signature
+    (shared by both the Sensogram and Spectra cache signatures, see its own
+    docstring) reads these attributes directly, unlike the old plain
+    _roi_signature() this file used to exercise via a bare-string stand-in
+    (`rois = [_ROI_A]`), which never actually looked at ROI geometry."""
+    return SimpleNamespace(
+        area_roi_id=roi_id,
+        center_x=center_x,
+        center_y=center_y,
+        sample_radius_px=5.0,
+        reference_inner_diameter_px=None,
+        reference_outer_diameter_px=None,
+    )
+
+
+_ROI_A = _roi(1)
+_ROI_B = _roi(2)
+
+
 def _make_result(formula_key: str = "absorbance", sample: float = 2.0, reference: float = 4.0) -> FormulaSpectrumResult:
     """Minimal real FormulaSpectrumResult (not a bare object()) - needed
     because project_formula_spectrum uses dataclasses.replace, which
@@ -116,7 +136,7 @@ class TestSensorgramSpectralCubeResultCache(unittest.TestCase):
 
     def test_hit_is_independent_of_fit_parameters(self) -> None:
         controller, _window = self._make_controller()
-        rois = ["roiA"]
+        rois = [_ROI_A]
         roi_ids = (1,)
         result = _make_result()
         controller._store_sensorgram_spectral_cube_result(0, roi_ids, rois, result)
@@ -131,24 +151,24 @@ class TestSensorgramSpectralCubeResultCache(unittest.TestCase):
 
     def test_different_spectral_cube_is_a_miss(self) -> None:
         controller, _window = self._make_controller()
-        rois = ["roiA"]
+        rois = [_ROI_A]
         roi_ids = (1,)
         controller._store_sensorgram_spectral_cube_result(0, roi_ids, rois, _make_result())
         self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(1, roi_ids, rois))
 
     def test_different_roi_selection_is_a_miss(self) -> None:
         controller, _window = self._make_controller()
-        controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], _make_result())
-        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (2,), ["roiB"]))
+        controller._store_sensorgram_spectral_cube_result(0, (1,), [_ROI_A], _make_result())
+        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (2,), [_ROI_B]))
 
     def test_different_reduction_method_is_a_miss(self) -> None:
         """ROI's-math changes must invalidate the per-frame result cache -
         otherwise switching Reduction method would keep showing values
         computed under the old method."""
         controller, window = self._make_controller()
-        controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], _make_result())
+        controller._store_sensorgram_spectral_cube_result(0, (1,), [_ROI_A], _make_result())
         window._state.area_roi_settings.reduction_method = "median"
-        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (1,), ["roiA"]))
+        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (1,), [_ROI_A]))
 
     def test_formula_key_change_still_hits_and_gets_projected(self) -> None:
         """Formula is deliberately NOT part of this cache's signature (only
@@ -159,9 +179,9 @@ class TestSensorgramSpectralCubeResultCache(unittest.TestCase):
         project_formula_spectrum), never force a pixel-reduction miss."""
         controller, window = self._make_controller()
         stored = _make_result(formula_key="absorbance", sample=2.0, reference=4.0)
-        controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], stored)
+        controller._store_sensorgram_spectral_cube_result(0, (1,), [_ROI_A], stored)
         window._state.area_roi_settings.formula_key = "ratio"
-        projected = controller._cached_sensorgram_spectral_cube_result(0, (1,), ["roiA"])
+        projected = controller._cached_sensorgram_spectral_cube_result(0, (1,), [_ROI_A])
         self.assertIsNotNone(projected)
         self.assertEqual(projected.formula_key, "ratio")
         self.assertAlmostEqual(float(projected.formula_values[0]), 0.5)  # sample/reference = 2/4
@@ -169,23 +189,23 @@ class TestSensorgramSpectralCubeResultCache(unittest.TestCase):
     def test_lru_eviction_drops_least_recently_used(self) -> None:
         controller, window = self._make_controller(cache_size=2)
         r0, r1, r2 = _make_result(), _make_result(), _make_result()
-        controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], r0)
-        controller._store_sensorgram_spectral_cube_result(1, (1,), ["roiA"], r1)
+        controller._store_sensorgram_spectral_cube_result(0, (1,), [_ROI_A], r0)
+        controller._store_sensorgram_spectral_cube_result(1, (1,), [_ROI_A], r1)
         # Touch frame 0 again so frame 1 becomes the least-recently-used entry.
-        controller._cached_sensorgram_spectral_cube_result(0, (1,), ["roiA"])
-        controller._store_sensorgram_spectral_cube_result(2, (1,), ["roiA"], r2)
+        controller._cached_sensorgram_spectral_cube_result(0, (1,), [_ROI_A])
+        controller._store_sensorgram_spectral_cube_result(2, (1,), [_ROI_A], r2)
 
         self.assertEqual(len(window._sensorgram_spectral_cube_result_cache), 2)
-        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(1, (1,), ["roiA"]))
-        self.assertIs(controller._cached_sensorgram_spectral_cube_result(0, (1,), ["roiA"]), r0)
-        self.assertIs(controller._cached_sensorgram_spectral_cube_result(2, (1,), ["roiA"]), r2)
+        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(1, (1,), [_ROI_A]))
+        self.assertIs(controller._cached_sensorgram_spectral_cube_result(0, (1,), [_ROI_A]), r0)
+        self.assertIs(controller._cached_sensorgram_spectral_cube_result(2, (1,), [_ROI_A]), r2)
 
     def test_no_dataset_is_a_no_op(self) -> None:
         controller, window = self._make_controller()
         window._state.dataset = None
-        controller._store_sensorgram_spectral_cube_result(0, (1,), ["roiA"], _make_result())
+        controller._store_sensorgram_spectral_cube_result(0, (1,), [_ROI_A], _make_result())
         self.assertEqual(len(window._sensorgram_spectral_cube_result_cache), 0)
-        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (1,), ["roiA"]))
+        self.assertIsNone(controller._cached_sensorgram_spectral_cube_result(0, (1,), [_ROI_A]))
 
 
 class TestSensorgramSignatureForSelectionIncludesRoiMath(unittest.TestCase):
@@ -206,7 +226,7 @@ class TestSensorgramSignatureForSelectionIncludesRoiMath(unittest.TestCase):
 
     def test_different_reduction_method_changes_signature(self) -> None:
         controller, window = self._make_controller()
-        rois, roi_ids = ["roiA"], (1,)
+        rois, roi_ids = [_ROI_A], (1,)
         before = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
         window._state.area_roi_settings.reduction_method = "median"
         after = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
@@ -214,7 +234,7 @@ class TestSensorgramSignatureForSelectionIncludesRoiMath(unittest.TestCase):
 
     def test_different_formula_key_changes_signature(self) -> None:
         controller, window = self._make_controller()
-        rois, roi_ids = ["roiA"], (1,)
+        rois, roi_ids = [_ROI_A], (1,)
         before = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
         window._state.area_roi_settings.formula_key = "ratio"
         after = controller._sensorgram_signature_for_selection([0, 1], roi_ids, rois)
@@ -226,6 +246,33 @@ class TestSensorgramSignatureForSelectionIncludesRoiMath(unittest.TestCase):
     # left to vary here. See gui/analysis_worker_mixin.py's
     # _write_through_reduced_values_by_method for how switching among the
     # four Reduction methods (including trimmed_mean) stays instant instead.
+
+    def test_per_roi_reference_diameter_override_changes_signature(self) -> None:
+        # Regression test: "Edit reference ROI diameter" sets roi.reference_
+        # inner/outer_diameter_px directly, overriding the global default for
+        # that ROI only. Before roi_circular_geometry_signature, this
+        # signature only ever read the global area_roi_settings value, so a
+        # per-ROI-only edit like this left it completely unchanged - a stale
+        # cached value would keep being shown for the edited ROI.
+        controller, _window = self._make_controller()
+        roi = _roi(1)
+        before = controller._sensorgram_signature_for_selection([0, 1], (1,), [roi])
+        roi.reference_inner_diameter_px = 30.0
+        after = controller._sensorgram_signature_for_selection([0, 1], (1,), [roi])
+        self.assertNotEqual(before, after)
+
+    def test_global_reference_diameter_default_change_affects_a_roi_still_using_it(self) -> None:
+        # The complementary case: a ROI with NO per-ROI override (reference_
+        # inner/outer_diameter_px still None) must still see a signature
+        # change when the GLOBAL default moves - this is the gap the OTHER
+        # (Spectra-side) signature scheme had, using `roi.X or 0.0` which
+        # produced the same constant regardless of the live default.
+        controller, window = self._make_controller()
+        roi = _roi(1)  # reference_inner/outer_diameter_px left None - uses the global default
+        before = controller._sensorgram_signature_for_selection([0, 1], (1,), [roi])
+        window._state.area_roi_settings.reference_inner_radius_px = 99.0
+        after = controller._sensorgram_signature_for_selection([0, 1], (1,), [roi])
+        self.assertNotEqual(before, after)
 
 
 class TestSensorgramPointSignatureHashIncludesActiveFormula(unittest.TestCase):
@@ -245,7 +292,7 @@ class TestSensorgramPointSignatureHashIncludesActiveFormula(unittest.TestCase):
     def test_different_formula_key_changes_hash(self) -> None:
         controller, window = self._make_controller()
         roi_ids = (1,)
-        rois = ["roiA"]
+        rois = [_ROI_A]
         before = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
         window._state.area_roi_settings.formula_key = "ratio"
         after = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
@@ -278,7 +325,7 @@ class TestSensorgramPointSignatureHashIncludesWavelengthRange(unittest.TestCase)
     def test_different_wavelength_range_changes_hash(self) -> None:
         controller, window = self._make_controller()
         roi_ids = (1,)
-        rois = ["roiA"]
+        rois = [_ROI_A]
         window._wavelength_range = (470.0, 525.0)
         before = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
         window._wavelength_range = (470.0, 720.0)
@@ -289,7 +336,7 @@ class TestSensorgramPointSignatureHashIncludesWavelengthRange(unittest.TestCase)
     def test_no_range_to_a_range_also_changes_hash(self) -> None:
         controller, window = self._make_controller()
         roi_ids = (1,)
-        rois = ["roiA"]
+        rois = [_ROI_A]
         window._wavelength_range = None
         before = controller._sensorgram_point_signature_hash(0, roi_ids, rois)
         window._wavelength_range = (470.0, 720.0)

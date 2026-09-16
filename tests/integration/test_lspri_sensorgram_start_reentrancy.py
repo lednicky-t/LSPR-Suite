@@ -28,7 +28,6 @@ from __future__ import annotations
 import sys
 import threading
 import unittest
-from collections import OrderedDict
 from types import SimpleNamespace
 from unittest import mock
 
@@ -62,7 +61,6 @@ class _FakeWindow:
         self._sensorgram_running_signature: tuple | None = None
         self._pending_sensorgram_payload = None
         self._analysis_cache_lock = threading.Lock()
-        self._sensorgram_cache: OrderedDict = OrderedDict()
         self._workflow_log: list[str] = []
         self._summary_text: str | None = None
 
@@ -92,14 +90,14 @@ class SensorgramStartReentrancyTests(unittest.TestCase):
     def test_cache_hit_for_a_different_running_signature_is_queued_not_applied(self) -> None:
         window = _FakeWindow()
         controller = AnalysisController(window)
-        # The current selection's signature already has a cached result...
+        # The current selection's signature is the one _calculate_sensorgram_
+        # for_range would compute (fixed by _FakeWindow's own stub)...
         cached_signature = ("current-selection-signature",)
-        window._sensorgram_cache[cached_signature] = object()
         # ...but a DIFFERENT run is in flight right now.
         window._sensorgram_running = True
         window._sensorgram_running_signature = ("some-other-signature",)
 
-        with mock.patch.object(controller, "_apply_cached_sensorgram_result") as apply_mock, \
+        with mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
                 mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
             controller._calculate_sensorgram_for_range()
 
@@ -129,35 +127,42 @@ class SensorgramStartReentrancyTests(unittest.TestCase):
         self.assertIsNone(window._pending_sensorgram_payload)
 
     def test_cache_hit_with_nothing_running_is_applied_immediately(self) -> None:
+        # "Cache hit" is now "every selected ROI already has every requested
+        # cube's value" (_sensorgram_selection_fully_available), checked via
+        # the atomic per-(ROI, cube) cache rather than a single combined-
+        # selection entry - see docs/analysis_caching_architecture.md. This
+        # test only needs to prove _calculate_sensorgram_for_range asks that
+        # question and acts on a True answer; the question's own real logic
+        # is covered separately (test_lspri_sensorgram_metric_cache.py,
+        # test_lspri_sensorgram_missing_data_message.py).
         window = _FakeWindow()
         controller = AnalysisController(window)
-        cached_signature = ("current-selection-signature",)
-        cached_result = object()
-        window._sensorgram_cache[cached_signature] = cached_result
 
-        with mock.patch.object(controller, "_apply_cached_sensorgram_result") as apply_mock, \
+        with mock.patch.object(controller, "_sensorgram_selection_fully_available", return_value=True), \
+                mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
                 mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
             controller._calculate_sensorgram_for_range()
 
-        apply_mock.assert_called_once_with(cached_signature, cached_result, preview=True)
+        apply_mock.assert_called_once_with((1,), [0, 1, 2])
         start_mock.assert_not_called()
 
     def test_cache_hit_for_a_cancelled_result_falls_through_to_resume_the_worker(self) -> None:
-        """Regression test: pressing Stop caches that run's own incomplete
-        result under the same signature a later, identical "Start analysis"
-        click would compute (see _apply_cached_sensorgram_result). Before
-        the fix, that made a fresh Start analysis click after Stop treat
-        the stopped result as a cache hit and just redisplay it, never
-        calling _start_sensorgram_worker again - the button looked
+        """Regression test: pressing Stop must not make a later, identical
+        "Start analysis" click silently redisplay the stopped run's
+        incomplete result instead of resuming it - the button would look
         unresponsive because nothing visibly changed and the run never
-        resumed."""
+        continued. The mechanism changed (there's no longer a distinct
+        `cancelled` flag to check - see docs/analysis_caching_architecture.md),
+        but the guarantee holds by construction now: a Stopped run only ever
+        leaves the cubes it actually finished in the atomic cache, so
+        `_sensorgram_selection_fully_available` correctly reports "not fully
+        available" for the remaining ones and a real worker start follows,
+        exactly like any other incomplete selection."""
         window = _FakeWindow()
         controller = AnalysisController(window)
-        cached_signature = ("current-selection-signature",)
-        cached_result = SimpleNamespace(cancelled=True)
-        window._sensorgram_cache[cached_signature] = cached_result
 
-        with mock.patch.object(controller, "_apply_cached_sensorgram_result") as apply_mock, \
+        with mock.patch.object(controller, "_sensorgram_selection_fully_available", return_value=False), \
+                mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
                 mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
             controller._calculate_sensorgram_for_range()
 
@@ -168,7 +173,8 @@ class SensorgramStartReentrancyTests(unittest.TestCase):
         window = _FakeWindow()
         controller = AnalysisController(window)
 
-        with mock.patch.object(controller, "_apply_cached_sensorgram_result") as apply_mock, \
+        with mock.patch.object(controller, "_sensorgram_selection_fully_available", return_value=False), \
+                mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
                 mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
             controller._calculate_sensorgram_for_range()
 
