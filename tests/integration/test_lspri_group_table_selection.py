@@ -22,7 +22,7 @@ from unittest import mock
 
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import QEvent, QItemSelectionModel, QPoint, QPointF, Qt
-from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtGui import QColor, QMouseEvent
 
 # Must exist before any lspr_imaging_app.gui module is imported below - Qt
 # objects get built at import time in some of those modules.
@@ -146,6 +146,108 @@ class TestGroupTableSelection(unittest.TestCase):
                 window._selected_roi_ids = {3}
                 window._group_table_controller.add_selected_rois_to_group(group.group_id)
                 self.assertEqual(set(group.area_roi_ids), {1, 2, 3})
+
+    def test_create_group_with_selection_moves_rois_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                group = self._three_rois_one_group(window)
+                window._selected_roi_ids = {2, 3}
+                with (
+                    mock.patch("PyQt6.QtWidgets.QInputDialog.getText", return_value=("New", True)),
+                    mock.patch("PyQt6.QtWidgets.QColorDialog.getColor", return_value=QColor("#123456")),
+                ):
+                    window._group_table_controller.create_group()
+
+                new_group = next(g for g in window._state.area_roi_groups if g.name == "New")
+                self.assertEqual(set(new_group.area_roi_ids), {2, 3})
+                # ROI 2 was moved out of the pre-existing "Sensors" group.
+                self.assertEqual(group.area_roi_ids, [1])
+
+    def test_create_group_without_selection_starts_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                self._three_rois_one_group(window)
+                window._selected_roi_ids = set()
+                with (
+                    mock.patch("PyQt6.QtWidgets.QInputDialog.getText", return_value=("Empty New", True)),
+                    mock.patch("PyQt6.QtWidgets.QColorDialog.getColor", return_value=QColor("#123456")),
+                ):
+                    window._group_table_controller.create_group()
+
+                new_group = next(g for g in window._state.area_roi_groups if g.name == "Empty New")
+                self.assertEqual(new_group.area_roi_ids, [])
+
+    def test_delete_selected_groups_removes_them_and_ungroups_members(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                self._three_rois_one_group(window)
+                _select_table_row(window.group_table, _row_named(window.group_table, "Sensors"))
+                window._group_table_controller.delete_selected_groups()
+
+                self.assertEqual(window._state.area_roi_groups, [])
+
+    def test_delete_selected_groups_with_no_selection_leaves_groups_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                group = self._three_rois_one_group(window)
+                window.group_table.clearSelection()
+                window._group_table_controller.delete_selected_groups()
+
+                self.assertIn(group, window._state.area_roi_groups)
+
+    def test_group_by_column_creates_one_group_per_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                # A loose 2x3 grid: two x-clusters (~0 and ~100), three rows each.
+                window._state.area_rois = [
+                    AreaRoi(area_roi_id=roi_id, center_x=float(x), center_y=float(y), sample_radius_px=5.0)
+                    for roi_id, (x, y) in enumerate(
+                        [(0, 0), (0, 50), (0, 100), (100, 0), (100, 50), (100, 100)], start=1
+                    )
+                ]
+                window._group_table_controller.update_table()
+
+                window._group_rois_by_column()
+
+                names = sorted(g.name for g in window._state.area_roi_groups)
+                self.assertEqual(names, ["Column 1", "Column 2"])
+                by_name = {g.name: g for g in window._state.area_roi_groups}
+                self.assertEqual(set(by_name["Column 1"].area_roi_ids), {1, 2, 3})
+                self.assertEqual(set(by_name["Column 2"].area_roi_ids), {4, 5, 6})
+                self.assertNotEqual(by_name["Column 1"].sample_color_hex, by_name["Column 2"].sample_color_hex)
+
+    def test_group_by_column_replaces_existing_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                window._state.area_rois = [
+                    AreaRoi(area_roi_id=roi_id, center_x=float(x), center_y=0.0, sample_radius_px=5.0)
+                    for roi_id, x in enumerate([0, 100], start=1)
+                ]
+                stale_group = AreaRoiGroup(
+                    group_id="group_1", name="Stale", sample_color_hex="#ff0000",
+                    reference_color_hex="#00ff00", area_roi_ids=[1, 2],
+                )
+                window._state.area_roi_groups = [stale_group]
+                window._group_table_controller.update_table()
+
+                window._group_rois_by_column()
+
+                self.assertNotIn(stale_group, window._state.area_roi_groups)
+                self.assertEqual(len(window._state.area_roi_groups), 2)
+
+    def test_group_by_column_with_no_column_structure_leaves_groups_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                # All ROIs at (roughly) the same x - a single column, nothing to split.
+                window._state.area_rois = [
+                    AreaRoi(area_roi_id=roi_id, center_x=0.0, center_y=float(roi_id * 20), sample_radius_px=5.0)
+                    for roi_id in (1, 2, 3)
+                ]
+                window._group_table_controller.update_table()
+
+                window._group_rois_by_column()
+
+                self.assertEqual(window._state.area_roi_groups, [])
 
     def test_remove_last_roi_from_group_prunes_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
