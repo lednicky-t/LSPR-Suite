@@ -21,6 +21,20 @@ setting changes mid-run) instead of being applied immediately. These tests
 assert on that ordering directly, via `_apply_cached_sensorgram_result` /
 `_start_sensorgram_worker` call spies, rather than reproducing the full
 worker/plotting machinery.
+
+Updated 2026-09-19: the availability check itself
+(`_sensorgram_selection_fully_available`) now runs off the GUI thread (see
+`_dispatch_sensorgram_availability_check`'s docstring - a large selection on
+a cold cache used to freeze the UI for minutes with zero feedback). The
+"is something else already running" guard tested below is unchanged and
+still runs synchronously inside `_calculate_sensorgram_for_range`, so those
+tests are untouched. The apply-vs-start *decision* that used to happen
+inline in `_calculate_sensorgram_for_range` now happens in the result
+callback, `_on_sensorgram_availability_checked` - the "cache hit/miss"
+tests below now call that callback directly (with a matching request_id,
+simulating the background check having already reported its answer)
+instead of `_calculate_sensorgram_for_range`, since that's now the actual
+unit that makes the decision.
 """
 
 from __future__ import annotations
@@ -59,10 +73,14 @@ class _FakeWindow:
         self._chromatic_setup_active = False
         self._sensorgram_running = False
         self._sensorgram_running_signature: tuple | None = None
+        self._sensorgram_request_id = 0
         self._pending_sensorgram_payload = None
         self._analysis_cache_lock = threading.Lock()
         self._workflow_log: list[str] = []
         self._summary_text: str | None = None
+        self._status_text: str | None = None
+        self._control_state_refresh_count = 0
+        self._background_errors: list[tuple[str, str]] = []
 
     def _selected_spectrum_roi_ids(self) -> tuple[int, ...]:
         return (1,)
@@ -84,6 +102,15 @@ class _FakeWindow:
 
     def _set_sensorgram_summary_text(self, text: str) -> None:
         self._summary_text = text
+
+    def _set_status_text(self, text: str) -> None:
+        self._status_text = text
+
+    def _update_analysis_control_state(self) -> None:
+        self._control_state_refresh_count += 1
+
+    def _background_error(self, context: str, message: str) -> None:
+        self._background_errors.append((context, message))
 
 
 class SensorgramStartReentrancyTests(unittest.TestCase):
@@ -126,60 +153,121 @@ class SensorgramStartReentrancyTests(unittest.TestCase):
         start_mock.assert_not_called()
         self.assertIsNone(window._pending_sensorgram_payload)
 
-    def test_cache_hit_with_nothing_running_is_applied_immediately(self) -> None:
-        # "Cache hit" is now "every selected ROI already has every requested
-        # cube's value" (_sensorgram_selection_fully_available), checked via
-        # the atomic per-(ROI, cube) cache rather than a single combined-
-        # selection entry - see docs/analysis_caching_architecture.md. This
-        # test only needs to prove _calculate_sensorgram_for_range asks that
-        # question and acts on a True answer; the question's own real logic
-        # is covered separately (test_lspri_sensorgram_metric_cache.py,
-        # test_lspri_sensorgram_missing_data_message.py).
+    def test_nothing_running_dispatches_the_availability_check(self) -> None:
+        """`_calculate_sensorgram_for_range` itself no longer decides apply-
+        vs-start (see _on_sensorgram_availability_checked below) - it just
+        hands off to `_dispatch_sensorgram_availability_check`, synchronously,
+        before anything expensive runs. That method is what marks the run
+        in-flight and shows busy state immediately (covered by its own
+        behavior below via the callback tests, which simulate having gone
+        through it) instead of the UI going silent for however long the now-
+        backgrounded cache scan takes - see `_dispatch_sensorgram_
+        availability_check`'s own docstring for the 2026-09-19 "feels
+        frozen, nothing shows it's happening" report this fixes."""
         window = _FakeWindow()
         controller = AnalysisController(window)
 
-        with mock.patch.object(controller, "_sensorgram_selection_fully_available", return_value=True), \
-                mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
-                mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
+        with mock.patch.object(controller, "_dispatch_sensorgram_availability_check") as dispatch_mock:
             controller._calculate_sensorgram_for_range()
+
+        dispatch_mock.assert_called_once_with(("current-selection-signature",), [0, 1, 2], (1,), ["roiA"])
+
+    def test_dispatch_marks_running_and_starts_a_worker_before_anything_expensive(self) -> None:
+        """`_dispatch_sensorgram_availability_check` is what actually shows
+        busy state immediately - marking `_sensorgram_running` True and
+        bumping the request id happen synchronously, before the (real)
+        background thread that runs the expensive check is even started.
+        `FunctionWorker` itself is mocked here so this stays a fast, real-
+        thread-free unit test - the worker's own dispatch mechanics
+        (`.start()` spawning a plain `threading.Thread`, never QThreadPool)
+        are FunctionWorker's own contract, not this method's."""
+        window = _FakeWindow()
+        controller = AnalysisController(window)
+
+        with mock.patch("lspr_imaging_app.gui.worker.FunctionWorker") as worker_cls:
+            worker_instance = worker_cls.return_value
+            controller._dispatch_sensorgram_availability_check(
+                ("current-selection-signature",), [0, 1, 2], (1,), ["roiA"]
+            )
+
+        self.assertTrue(window._sensorgram_running)
+        self.assertEqual(window._sensorgram_running_signature, ("current-selection-signature",))
+        self.assertEqual(window._sensorgram_request_id, 1)
+        worker_instance.start.assert_called_once()
+
+    def test_availability_check_result_hit_is_applied_and_clears_running(self) -> None:
+        # "Cache hit" is "every selected ROI already has every requested
+        # cube's value" (_sensorgram_selection_fully_available), checked via
+        # the atomic per-(ROI, cube) cache rather than a single combined-
+        # selection entry - see docs/analysis_caching_architecture.md. That
+        # check now runs off the GUI thread (_dispatch_sensorgram_
+        # availability_check); this test exercises its result callback
+        # directly - the actual unit that now makes the apply-vs-start
+        # decision - as if the background check had already reported "hit".
+        # The question's own real logic is covered separately
+        # (test_lspri_sensorgram_metric_cache.py,
+        # test_lspri_sensorgram_missing_data_message.py).
+        window = _FakeWindow()
+        window._sensorgram_request_id = 1
+        window._sensorgram_running = True
+        controller = AnalysisController(window)
+
+        with mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
+                mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
+            controller._on_sensorgram_availability_checked(
+                1, True, ("current-selection-signature",), [0, 1, 2], (1,), ["roiA"]
+            )
 
         apply_mock.assert_called_once_with((1,), [0, 1, 2])
         start_mock.assert_not_called()
+        self.assertFalse(window._sensorgram_running)
 
-    def test_cache_hit_for_a_cancelled_result_falls_through_to_resume_the_worker(self) -> None:
-        """Regression test: pressing Stop must not make a later, identical
-        "Start analysis" click silently redisplay the stopped run's
-        incomplete result instead of resuming it - the button would look
-        unresponsive because nothing visibly changed and the run never
-        continued. The mechanism changed (there's no longer a distinct
-        `cancelled` flag to check - see docs/analysis_caching_architecture.md),
-        but the guarantee holds by construction now: a Stopped run only ever
-        leaves the cubes it actually finished in the atomic cache, so
-        `_sensorgram_selection_fully_available` correctly reports "not fully
-        available" for the remaining ones and a real worker start follows,
-        exactly like any other incomplete selection."""
+    def test_availability_check_result_miss_starts_the_worker(self) -> None:
+        """Regression coverage carried over from before the async rewrite:
+        pressing Stop must not make a later, identical "Start analysis"
+        click silently redisplay the stopped run's incomplete result
+        instead of resuming it - the button would look unresponsive because
+        nothing visibly changed and the run never continued. There's no
+        distinct `cancelled` flag to check (see docs/analysis_caching_
+        architecture.md); the guarantee holds by construction: a Stopped run
+        only ever leaves the cubes it actually finished in the atomic cache,
+        so `_sensorgram_selection_fully_available` correctly reports "not
+        fully available" for the remaining ones and a real worker start
+        follows, exactly like any other incomplete selection (or a plain
+        cache miss, the other case this covers)."""
         window = _FakeWindow()
+        window._sensorgram_request_id = 1
+        window._sensorgram_running = True
         controller = AnalysisController(window)
 
-        with mock.patch.object(controller, "_sensorgram_selection_fully_available", return_value=False), \
-                mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
+        with mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
                 mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
-            controller._calculate_sensorgram_for_range()
+            controller._on_sensorgram_availability_checked(
+                1, False, ("current-selection-signature",), [0, 1, 2], (1,), ["roiA"]
+            )
 
         apply_mock.assert_not_called()
-        start_mock.assert_called_once()
+        start_mock.assert_called_once_with(("current-selection-signature",), [0, 1, 2], (1,), ["roiA"])
 
-    def test_cache_miss_with_nothing_running_starts_the_worker(self) -> None:
+    def test_availability_check_result_ignored_if_superseded(self) -> None:
+        """If the selection changed (or a newer check/run started) while the
+        background check was still in flight, `_sensorgram_request_id` will
+        have moved on by the time the stale result arrives - same guard
+        on_sensorgram_ready/on_sensorgram_failed already use for the real
+        worker's own results. Neither apply nor start must fire for a
+        request_id that no longer matches."""
         window = _FakeWindow()
+        window._sensorgram_request_id = 2  # a newer request is now current
         controller = AnalysisController(window)
 
-        with mock.patch.object(controller, "_sensorgram_selection_fully_available", return_value=False), \
-                mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
+        with mock.patch.object(controller, "_apply_already_available_sensorgram_selection") as apply_mock, \
                 mock.patch.object(controller, "_start_sensorgram_worker") as start_mock:
-            controller._calculate_sensorgram_for_range()
+            controller._on_sensorgram_availability_checked(
+                1, True, ("current-selection-signature",), [0, 1, 2], (1,), ["roiA"]
+            )
 
         apply_mock.assert_not_called()
-        start_mock.assert_called_once()
+        start_mock.assert_not_called()
 
     def test_public_alias_delegates_to_the_same_implementation(self) -> None:
         """calculate_sensorgram_for_range (called by the live-preview prompt)
