@@ -54,7 +54,9 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
                 statistics_settings=statistics_settings,
             )
             loaded = load_processing_profile(path)
-        self.assertEqual(loaded[-1], statistics_settings)
+        # statistics_settings is second-to-last since selected_area_roi_ids
+        # was appended after it (session-restore ROI/group selection).
+        self.assertEqual(loaded[-2], statistics_settings)
 
     def test_missing_key_falls_back_to_defaults(self) -> None:
         # Simulates a profile saved before this feature existed - no
@@ -65,7 +67,7 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
             del payload["statistics_settings"]
             path.write_text(json.dumps(payload), encoding="utf-8")
             loaded = load_processing_profile(path)
-        self.assertEqual(loaded[-1], StatisticsSettings())
+        self.assertEqual(loaded[-2], StatisticsSettings())
 
     def test_legacy_group_stats_keys_map_onto_new_display_mode(self) -> None:
         # Simulates a profile saved before the Individual/Average-all/
@@ -83,7 +85,7 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
             }
             path.write_text(json.dumps(payload), encoding="utf-8")
             loaded = load_processing_profile(path)
-        statistics_settings = loaded[-1]
+        statistics_settings = loaded[-2]
         self.assertEqual(statistics_settings.sensorgram_display_mode, "average_by_group")
         self.assertEqual(statistics_settings.sensorgram_aggregation, "median")
         self.assertEqual(statistics_settings.sensorgram_band, "sem")
@@ -95,7 +97,7 @@ class TestStatisticsSettingsPersistence(unittest.TestCase):
             payload["statistics_settings"] = {"group_stats_enabled": False}
             path.write_text(json.dumps(payload), encoding="utf-8")
             loaded = load_processing_profile(path)
-        self.assertEqual(loaded[-1].sensorgram_display_mode, "average_all")
+        self.assertEqual(loaded[-2].sensorgram_display_mode, "average_all")
 
     def test_roi_math_fields_round_trip_on_area_roi_settings(self) -> None:
         area_roi_settings = AreaRoiDetectionSettings(

@@ -24,6 +24,7 @@ from unittest import mock
 import numpy as np
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 
 # Must exist before any lspr_imaging_app.gui module is imported below - some
 # Qt objects are touched at import time.
@@ -64,12 +65,19 @@ class _FakeWindow:
         self._selected_roi_ids = set(selected_roi_ids)
         self._state = SimpleNamespace(
             area_rois=[_fake_roi(1), _fake_roi(2), _fake_roi(3)],
+            area_roi_groups=[],
             statistics_settings=SimpleNamespace(
                 sensorgram_display_mode="average_all", sensorgram_aggregation="mean", sensorgram_band="sd"
             ),
         )
         self._sensorgram_running = False
         self.sensorgram_summary_label = _FakeSummaryLabel()
+        # No ROI belongs to a group in these tests - _sensorgram_group_buckets
+        # (now consulted even in "average_all" mode, to check whether the
+        # selection collapses to a single group) needs this to return None,
+        # not an auto-vivified MagicMock, or every ROI would look like it
+        # belongs to some fake group.
+        self._group_for_roi = lambda roi_id: None
         # Real (not auto-mocked) values: the "len(bucket_traces) == 1" draw
         # branch passes these straight into real pyqtgraph/Qt calls
         # (pg.mkPen, QPen.setStyle, float(...)) which reject a MagicMock.
@@ -77,6 +85,7 @@ class _FakeWindow:
         self._sensorgram_line_style = Qt.PenStyle.SolidLine
         self._sensorgram_show_symbols = True
         self._sensorgram_symbol_size_px = 6.0
+        self._sensorgram_average_all_color = QColor("#38bdf8")
 
     def __getattr__(self, name: str):
         value = mock.MagicMock()
