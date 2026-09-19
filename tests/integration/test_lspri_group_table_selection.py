@@ -67,7 +67,7 @@ def _select_table_row(table: QtWidgets.QTableWidget, row: int) -> None:
 
 def _row_named(table: QtWidgets.QTableWidget, name: str) -> int:
     for row in range(table.rowCount()):
-        if table.item(row, 0).text() == name:
+        if table.item(row, 1).text() == name:
             return row
     raise AssertionError(f"no row named {name!r} in table")
 
@@ -94,7 +94,7 @@ class TestGroupTableSelection(unittest.TestCase):
             with _open_window(Path(tmp)) as window:
                 self._three_rois_one_group(window)
                 self.assertEqual(window.group_table.rowCount(), 2)
-                names = {window.group_table.item(row, 0).text() for row in range(2)}
+                names = {window.group_table.item(row, 1).text() for row in range(2)}
                 self.assertEqual(names, {"Sensors", "Ungrouped"})
 
     def test_selecting_group_row_selects_its_members_and_refreshes_plots(self) -> None:
@@ -137,7 +137,8 @@ class TestGroupTableSelection(unittest.TestCase):
 
                 self.assertIn(group, window._state.area_roi_groups)
                 self.assertEqual(_row_named(window.group_table, "Empty"), 0)
-                self.assertEqual(window.group_table.item(0, 3).text(), "0")
+                self.assertEqual(window.group_table.item(0, 0).text(), "1")
+                self.assertEqual(window.group_table.item(0, 4).text(), "0")
 
     def test_add_selected_rois_to_group_moves_them_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -248,6 +249,76 @@ class TestGroupTableSelection(unittest.TestCase):
                 window._group_rois_by_column()
 
                 self.assertEqual(window._state.area_roi_groups, [])
+
+    def test_group_table_shows_1_based_position_in_first_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                window._state.area_rois = [
+                    AreaRoi(area_roi_id=roi_id, center_x=0.0, center_y=0.0, sample_radius_px=5.0)
+                    for roi_id in (1, 2)
+                ]
+                group_a = AreaRoiGroup(
+                    group_id="group_1", name="Alpha", sample_color_hex="#ff0000",
+                    reference_color_hex="#00ff00", area_roi_ids=[1],
+                )
+                group_b = AreaRoiGroup(
+                    group_id="group_2", name="Beta", sample_color_hex="#0000ff",
+                    reference_color_hex="#ffff00", area_roi_ids=[2],
+                )
+                window._state.area_roi_groups = [group_a, group_b]
+                window._group_table_controller.update_table()
+
+                self.assertEqual(window.group_table.item(_row_named(window.group_table, "Alpha"), 0).text(), "1")
+                self.assertEqual(window.group_table.item(_row_named(window.group_table, "Beta"), 0).text(), "2")
+
+    def test_move_group_swaps_list_order_and_renumbers_display(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                group_a = AreaRoiGroup(
+                    group_id="group_1", name="Alpha", sample_color_hex="#ff0000",
+                    reference_color_hex="#00ff00", area_roi_ids=[],
+                )
+                group_b = AreaRoiGroup(
+                    group_id="group_2", name="Beta", sample_color_hex="#0000ff",
+                    reference_color_hex="#ffff00", area_roi_ids=[],
+                )
+                window._state.area_roi_groups = [group_a, group_b]
+                window._group_table_controller.update_table()
+
+                window._group_table_controller.move_group("group_2", -1)
+                window._group_table_controller.update_table()
+
+                self.assertEqual(window._state.area_roi_groups, [group_b, group_a])
+                self.assertEqual(window.group_table.item(_row_named(window.group_table, "Beta"), 0).text(), "1")
+                self.assertEqual(window.group_table.item(_row_named(window.group_table, "Alpha"), 0).text(), "2")
+
+    def test_move_group_up_at_top_is_a_no_op(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                group_a = AreaRoiGroup(
+                    group_id="group_1", name="Alpha", sample_color_hex="#ff0000",
+                    reference_color_hex="#00ff00", area_roi_ids=[],
+                )
+                group_b = AreaRoiGroup(
+                    group_id="group_2", name="Beta", sample_color_hex="#0000ff",
+                    reference_color_hex="#ffff00", area_roi_ids=[],
+                )
+                window._state.area_roi_groups = [group_a, group_b]
+                window._group_table_controller.update_table()
+
+                window._group_table_controller.move_group("group_1", -1)
+
+                self.assertEqual(window._state.area_roi_groups, [group_a, group_b])
+
+    def test_move_selected_no_ops_on_ungrouped_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _open_window(Path(tmp)) as window:
+                group = self._three_rois_one_group(window)
+                _select_table_row(window.group_table, _row_named(window.group_table, "Ungrouped"))
+
+                window._group_table_controller.move_selected(-1)
+
+                self.assertEqual(window._state.area_roi_groups, [group])
 
     def test_remove_last_roi_from_group_prunes_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -390,8 +461,8 @@ class TestGroupTableLayoutAndDoubleClickButtonFilter(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             window = self._window_with_one_group(tmp)
             try:
-                self.assertEqual(window.group_table.columnWidth(1), 22)
                 self.assertEqual(window.group_table.columnWidth(2), 22)
+                self.assertEqual(window.group_table.columnWidth(3), 22)
             finally:
                 window._state.dataset = None
                 window.close()
