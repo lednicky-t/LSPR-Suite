@@ -44,7 +44,9 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
+    from lspr_imaging_app.analysis import AnalysisSettingsModule
     from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.analysis.settings import MetricSettings, StatisticsSettings
     from lspr_imaging_app.app_rewrite import apply_session, capture_session
     from lspr_imaging_app.image_tools import (
         BackgroundModule,
@@ -76,6 +78,7 @@ def _modules():
     return (
         GeometryModule(), MaskModule(), ChromaticModule(),
         BackgroundModule(), RoiToolbox(), SelectionModule(),
+        AnalysisSettingsModule(),
     )
 
 
@@ -84,8 +87,8 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self._tmp.name)
         self.naming = FrameNamingScheme.for_dataset([0, 1], [500.0, 550.0, 600.0])
-        (self.geometry, self.mask, self.chromatic,
-         self.background, self.roi_toolbox, self.selection) = _modules()
+        (self.geometry, self.mask, self.chromatic, self.background,
+         self.roi_toolbox, self.selection, self.analysis_settings) = _modules()
         self.patch = np.zeros((5, 6), dtype=bool)
         self.patch[1:4, 1:5] = True
         self._populate()
@@ -141,6 +144,17 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
             self.roi_toolbox.groups(),
             self.roi_toolbox.array_groups(),
         )
+        self.analysis_settings.set_metric_settings(MetricSettings(
+            fit_method="gaussian", poly_order=5, fit_wl_min=520.0,
+            fit_wl_max=590.0, metric_key="centroid",
+        ))
+        self.analysis_settings.set_statistics_settings(StatisticsSettings(
+            smoothing_method="savgol", smoothing_window=11, smoothing_polyorder=3,
+            spike_rejection_enabled=True, spike_rejection_method="running_median",
+            baseline_enabled=True, baseline_window_start=1.0, baseline_window_end=4.0,
+            sensorgram_display_mode="average_by_group", sensorgram_aggregation="median",
+            sensorgram_band="sem",
+        ))
         self.selection.set_cube(1)
         self.selection.set_wavelength(600.0)
         self.selection.set_roi_selection({self.roi_b})
@@ -149,7 +163,8 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         return save_session(
             self.root,
             capture_session(self.geometry, self.mask, self.chromatic,
-                            self.background, self.roi_toolbox, self.selection),
+                            self.background, self.roi_toolbox, self.selection,
+                            self.analysis_settings),
             self.naming,
         )
 
@@ -171,7 +186,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(payload["schema_name"], SESSION_SCHEMA_NAME)
         self.assertLessEqual(
-            {"geometry", "background", "mask", "chromatic", "roi", "selection"},
+            {"geometry", "background", "mask", "chromatic", "roi", "analysis", "selection"},
             set(payload),
         )
 
@@ -196,7 +211,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
     # -- round trip -----------------------------------------------------
 
     def test_settings_round_trip(self) -> None:
-        geometry, _mask, _chrom, background, _roi, _sel = self._reload()
+        geometry, _mask, _chrom, background, _roi, _sel, _analysis = self._reload()
         restored, original = geometry.settings(), self.geometry.settings()
         self.assertEqual(restored.rotation_angle_deg, original.rotation_angle_deg)
         self.assertEqual(restored.flip_horizontal, original.flip_horizontal)
@@ -208,7 +223,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         )
 
     def test_mask_timeline_round_trip(self) -> None:
-        _geo, mask, _chrom, _bg, _roi, _sel = self._reload()
+        _geo, mask, _chrom, _bg, _roi, _sel, _analysis = self._reload()
         self.assertEqual(len(mask.mask_changes()), 2)
 
         original = self.mask.resolve_mask_source((0, 500.0))
@@ -223,7 +238,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         self.assertEqual(individual[2], "individual")
 
     def test_chromatic_round_trip(self) -> None:
-        _geo, _mask, chromatic, _bg, _roi, _sel = self._reload()
+        _geo, _mask, chromatic, _bg, _roi, _sel, _analysis = self._reload()
         self.assertEqual(len(chromatic.models()), 1)
         self.assertTrue(np.allclose(
             chromatic.affine_for((0, 550.0)), np.array([[1.0, 0.0, 2.5], [0.0, 1.0, -1.5]])
@@ -231,7 +246,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         self.assertEqual([m.landmark_id for m in chromatic.landmarks()], [7])
 
     def test_roi_round_trip_including_mask_geometry_and_nudges(self) -> None:
-        _geo, _mask, _chrom, _bg, roi_toolbox, _sel = self._reload()
+        _geo, _mask, _chrom, _bg, roi_toolbox, _sel, _analysis = self._reload()
         self.assertEqual(len(roi_toolbox.rois()), 2)
         self.assertEqual(roi_toolbox.detection_settings().reduction_method, "median")
         self.assertEqual(roi_toolbox.detection_settings().reference_outer_radius_px, 21.0)
@@ -249,10 +264,49 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         self.assertIsNotNone(roi_toolbox.group_for_roi(self.roi_a))
 
     def test_selection_round_trip(self) -> None:
-        _geo, _mask, _chrom, _bg, _roi, selection = self._reload()
+        _geo, _mask, _chrom, _bg, _roi, selection, _analysis = self._reload()
         self.assertEqual(selection.current_cube(), 1)
         self.assertEqual(selection.current_wavelength(), 600.0)
         self.assertEqual(selection.selected_roi_ids(), frozenset({self.roi_b}))
+
+    def test_analysis_settings_round_trip(self) -> None:
+        """Added with the query layer (2026-09-23). Before it,
+        `statistics_settings` had no owner at all and nothing persisted it -
+        so a baseline window set in one session was silently gone on the
+        next open, and the trace it produced read as an absolute value
+        rather than a relative shift, with nothing on screen to say so."""
+        *_modules_, analysis = self._reload()
+        metric = analysis.metric_settings()
+        self.assertEqual(metric.fit_method, "gaussian")
+        self.assertEqual(metric.poly_order, 5)
+        self.assertEqual((metric.fit_wl_min, metric.fit_wl_max), (520.0, 590.0))
+        self.assertEqual(metric.metric_key, "centroid")
+
+        statistics = analysis.statistics_settings()
+        self.assertEqual(statistics.smoothing_method, "savgol")
+        self.assertTrue(statistics.spike_rejection_enabled)
+        self.assertEqual(statistics.spike_rejection_method, "running_median")
+        self.assertTrue(statistics.baseline_enabled)
+        self.assertEqual((statistics.baseline_window_start, statistics.baseline_window_end), (1.0, 4.0))
+        self.assertEqual(statistics.sensorgram_display_mode, "average_by_group")
+        self.assertEqual(statistics.sensorgram_band, "sem")
+
+    def test_a_schema_1_0_file_still_loads_with_default_analysis_settings(self) -> None:
+        """The additive-minor-bump contract, exercised rather than assumed:
+        1.0 files predate the analysis block entirely, and must open with
+        defaults rather than being rejected."""
+        path = self._save()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["schema_version"] = "1.0"
+        del payload["analysis"]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        state = load_session(self.root)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.metric_settings, MetricSettings())
+        self.assertEqual(state.statistics_settings, StatisticsSettings())
+        # The rest of a 1.0 file still has to come back intact.
+        self.assertEqual(len(state.rois), 2)
 
     # -- the traps ------------------------------------------------------
 
@@ -263,7 +317,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
     def test_id_counters_resume_past_what_was_restored(self) -> None:
         """If they reset, the next ROI or group created replaces an
         existing one instead of being added."""
-        _geo, _mask, _chrom, _bg, roi_toolbox, _sel = self._reload()
+        _geo, _mask, _chrom, _bg, roi_toolbox, _sel, _analysis = self._reload()
         new_roi = roi_toolbox.add_roi(1.0, 2.0)
         self.assertEqual(new_roi, 3)
         self.assertEqual(len(roi_toolbox.rois()), 3)

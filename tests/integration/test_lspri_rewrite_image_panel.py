@@ -230,7 +230,9 @@ class RewriteImagePanelTest(unittest.TestCase):
             RenderRequest(
                 cube_index=9, wavelength_nm=999.0,
                 geometry=self.geometry.settings(), background=self.background.settings(),
-                authored_mask=None, mask_warp_affine=None, serial=serial,
+                authored_mask=None, mask_warp_affine=None,
+                rois=(), detection=self.roi_toolbox.detection_settings(),
+                serial=serial,
             )
         )
         _pump()
@@ -244,7 +246,9 @@ class RewriteImagePanelTest(unittest.TestCase):
         stale = RenderRequest(
             cube_index=0, wavelength_nm=500.0,
             geometry=self.geometry.settings(), background=self.background.settings(),
-            authored_mask=None, mask_warp_affine=None, serial=self.panel._latest_serial - 1,
+            authored_mask=None, mask_warp_affine=None,
+            rois=(), detection=self.roi_toolbox.detection_settings(),
+            serial=self.panel._latest_serial - 1,
         )
         self.panel._on_rendered(RenderResult(request=stale, image=np.zeros((4, 4), dtype=np.float32)))
         self.assertEqual(self.panel._status.text(), before)
