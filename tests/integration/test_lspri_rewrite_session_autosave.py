@@ -38,7 +38,7 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.analysis import AnalysisSettingsModule
     from lspr_imaging_app.analysis.provenance import FrameNamingScheme
-    from lspr_imaging_app.app_rewrite import _build_session_autosave
+    from lspr_imaging_app.app_rewrite import _build_session_autosave, _wire_session_coordinator
     from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
     from lspr_imaging_app.image_tools import (
@@ -49,8 +49,10 @@ try:
     )
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import SelectionModule
+    from lspr_imaging_app.storage import session_index
     from lspr_imaging_app.storage.session import SessionState, session_path
     from lspr_imaging_app.storage.session_autosave import SessionAutosave
+    from lspr_imaging_app.storage.session_coordinator import SessionCoordinator
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
@@ -198,9 +200,23 @@ def _write_dataset(root: Path) -> ImageDataset:
     )
 
 
+class _FakeAnalysisEngine:
+    """`_wire_session_coordinator` only ever calls `set_storage_root` on
+    this - a real `AnalysisEngine` needs a `DatasetModule` wired to load
+    planes from, which this autosave-focused test has no use for (same
+    "plain fakes over six Qt modules" philosophy this file's docstring
+    states)."""
+
+    def set_storage_root(self, root: Path | None) -> None:
+        pass
+
+
 class SessionAutosaveDatasetWiringTest(unittest.TestCase):
-    """The end-to-end half: opening a dataset restores its session, and
-    editing afterwards writes a real file back to it."""
+    """The end-to-end half: opening a dataset resolves/creates its active
+    session and restores it, and editing afterwards writes a real file back
+    to it - now one level deeper than the dataset's own folder, under
+    `sessions/<id>/` (2026-09-26), since a dataset can hold several
+    independent sessions (`storage/session_index.py`)."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -222,16 +238,29 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.roi_toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.analysis_settings = AnalysisSettingsModule()
+        self.coordinator = SessionCoordinator()
         self.autosave = _build_session_autosave(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, self.analysis_settings,
         )
+        _wire_session_coordinator(
+            self.coordinator, self.autosave, _FakeAnalysisEngine(),
+            self.geometry, self.mask, self.chromatic, self.background,
+            self.roi_toolbox, self.selection, self.analysis_settings,
+        )
+        self.dataset.dataset_loaded.connect(lambda ds: self.coordinator.bind_dataset(ds.home))
+        self.dataset.dataset_cleared.connect(self.coordinator.unbind)
+
+    def _active_session_path(self) -> Path:
+        active_id = session_index.load_session_index(self.root).active_session_id
+        self.assertIsNotNone(active_id, "expected a session to have been created automatically")
+        return session_path(session_index.session_dir_for(self.root, active_id))
 
     def test_an_edit_is_written_and_comes_back_after_a_restart(self) -> None:
         self.dataset.load_dataset(self.dataset_model)
         self.roi_toolbox.add_roi(8.0, 6.0, sample_radius_px=2.0)
         self.autosave.flush()
-        self.assertTrue(session_path(self.root).is_file())
+        self.assertTrue(self._active_session_path().is_file())
 
         self._build()
         self.dataset.load_dataset(self.dataset_model)
@@ -245,19 +274,37 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.dataset.load_dataset(self.dataset_model)
         self.roi_toolbox.add_roi(8.0, 6.0, sample_radius_px=2.0)
         self.autosave.flush()
-        written_at = session_path(self.root).stat().st_mtime_ns
+        written_at = self._active_session_path().stat().st_mtime_ns
 
         self._build()
         self.dataset.load_dataset(self.dataset_model)
         self.autosave.flush()
-        self.assertEqual(session_path(self.root).stat().st_mtime_ns, written_at)
+        self.assertEqual(self._active_session_path().stat().st_mtime_ns, written_at)
+
+    def test_a_second_session_is_independent_of_the_first(self) -> None:
+        """The whole point of sessions: a new one never sees the previous
+        one's ROIs, and switching back restores them."""
+        self.dataset.load_dataset(self.dataset_model)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_radius_px=2.0)
+        self.autosave.flush()
+        first_session_id = self.coordinator.active_session_id()
+
+        self.coordinator.create_new()
+        self.assertEqual(self.roi_toolbox.rois(), ())
+
+        self.coordinator.switch_to(first_session_id)
+        restored = self.roi_toolbox.rois()
+        self.assertEqual(len(restored), 1)
+        self.assertEqual((restored[0].center_x, restored[0].center_y), (8.0, 6.0))
 
     def test_an_unreadable_session_disables_saving_rather_than_overwriting_it(self) -> None:
         """The destructive case. A session file this build cannot parse
         leaves every module at defaults - autosaving that would replace the
         user's real state with an empty one, and the file that could have
         been recovered by hand would be gone."""
-        path = session_path(self.root)
+        self.dataset.load_dataset(self.dataset_model)
+        path = self._active_session_path()
+        self.dataset.clear_dataset()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"schema_name": "something_else"}), encoding="utf-8")
         original = path.read_text(encoding="utf-8")
