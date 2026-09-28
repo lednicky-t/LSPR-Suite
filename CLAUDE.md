@@ -6,12 +6,6 @@ See `AGENTS.md` for the full engineering policy, scientific computing rules, GUI
 This file focuses on repo topology, commands, quick-reference maps, and **how to collaborate with the maintainer**.
 
 ---
-## Agent Routing
-- For file reading, exploration, grep tasks → use the `explorer` agent (haiku)
-- For code review → use the `code-reviewer` agent (haiku)
-- For complex architecture decisions → handle in main session (opus/sonnet)
-- For writing tests → use the `test-writer` agent (haiku)
-
 ## Abbreviations
 
 The maintainer uses shorthand in conversation. Recognize these; expand on first use in your own
@@ -132,92 +126,21 @@ See `packages/lspr_ui/ICONS.md` before adding a new icon or a new icon dependenc
 
 ## Setup
 
-```powershell
-git clone --recurse-submodules https://github.com/lednicky-t/LSPR-Suite.git
-cd LSPR-Suite
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
+`requirements.txt` installs all packages and apps in editable mode (clone with `--recurse-submodules`). Python >= 3.12 is required. On Windows, make sure `python` resolves to your system install, not the Inkscape-bundled interpreter.
 
-`requirements.txt` installs all three packages and all four apps in editable mode.
-
-Python ≥ 3.12 is required. On Windows, make sure `python` resolves to your system install, not the Inkscape-bundled interpreter.
-
-Optional hardware dependency (AMF M-Switch):
-```powershell
-python -m pip install AMFTools
-```
-Without it, M-Switch controls in the acquisition app are disabled.
+Optional hardware dependency (AMF M-Switch): `python -m pip install AMFTools`. Without it, M-Switch controls in the acquisition app are disabled.
 
 ---
 
 ## Dependency Pinning (Reproducibility)
 
-Every third-party (PyPI) dependency in a `pyproject.toml` should carry both a
-**floor** and a **ceiling** version constraint — never a bare name like
-`"numpy"` with no version at all. This is priority #2 in the Engineering
-Priority Order below (data integrity and reproducibility): with no
-constraint, `pip install` always resolves to "whatever is newest today," so a
-`git clone` + fresh install six months from now can silently pull a different
-`numpy`/`scipy`/`h5py` than what a result was actually produced with — same
-code, different numbers, no error and no diff to review.
-
-**How to choose the bounds** (see `packages/lspr_io/pyproject.toml` or
-`apps/LSPRi/eva/pyproject.toml` for worked examples):
-
-1. Find the currently installed, actually-tested version:
-   `.venv\Scripts\python.exe -m pip show <package>` (or
-   `pip list --format=freeze | findstr <package>`).
-2. Floor = that version, truncated to `major.minor` (e.g. installed `3.16.0`
-   → `>=3.16`). Don't leave the floor open-ended — an old, never-tested
-   version satisfying `>=1` is just as much a reproducibility gap as no
-   floor at all.
-3. Ceiling = the next boundary where the library is allowed to break
-   compatibility:
-   - Normal semver library at `major >= 1` (numpy, scipy, h5py, matplotlib,
-     PyQt6, Pillow, pyserial, PyYAML, ...) → next major version
-     (`>=3.16,<4`).
-   - **Pre-1.0 library** (`0.x` — pyqtgraph, ome-zarr, numcodecs,
-     scikit-image, ...): treat any minor bump as potentially breaking →
-     ceiling is the next *minor*, not next major (`>=0.14,<0.15`).
-   - **Calendar-versioned library** (imagecodecs, tifffile — versioned
-     `YYYY.M.D`, not semver) → ceiling is next calendar year (`>=2026.6.6,<2027`).
-4. Internal `lspr-*` packages (`lspr-core`, `lspr-io`, `lspr-ui`,
-   `lspr-acq-shell`) are exempt — they're path-installed from this same
-   monorepo via `requirements.txt`, not resolved from PyPI, so there's no
-   "silently picks a newer version" risk. Keep their existing
-   `lspr-x>=0.1.0` floor-only style.
-
-**When adding a new dependency**: pin it at add-time using the rule above —
-don't leave it open "to fix later." **When bumping an existing pin**
-deliberately (e.g. to pick up a fix, the way `PyQt6-sip>=13.12.0` was pinned
-to dodge a known crash): move both floor and ceiling together, re-run the
-affected app's tests, and leave a one-line comment explaining *why* if the
-bump was forced by something specific (a bug, a security fix) rather than
-routine — matching the existing `PyQt6-sip` comment in this repo.
-
-**Current status (2026-08)**: applied to `packages/lspr_core`, `lspr_io`,
-`lspr_ui`, `lspr_acq_shell`, `apps/sLSPR/acq`, and `apps/LSPRi/eva` — the two
-actively-developed apps plus everything they depend on. **Not yet applied**
-to `apps/sLSPR/eva` (still has several unpinned deps); pin it the same way
-next time that app gets non-trivial attention. There is no monorepo-wide
-lockfile (`requirements.txt` only installs the editable local packages) —
-range-pinning in each `pyproject.toml` is the current mechanism. A lockfile
-would be a further step, not yet needed.
+Every third-party (PyPI) dependency in a `pyproject.toml` needs both a floor and a ceiling version constraint, never a bare name - otherwise a fresh install months later can silently pull a different numpy/scipy/h5py and change results (priority #2 below). Internal `lspr-*` packages are exempt. Use the `dependency-pinning` skill when adding or bumping a dependency, or when asked to pin an app (`apps/sLSPR/eva` is still unpinned).
 
 ---
 
 ## Running Apps
 
-```powershell
-lspr-suite                  # Suite launcher (recommended entry point)
-lspr-acquisition            # singleLSPR acquisition directly
-lspr-single-evaluation      # singleLSPR evaluation directly
-lspri-evaluation            # LSPRimaging evaluation directly
-```
-
-For VS Code "Run Python File", use the `run.py` file in each app directory.
+Entry points are the `[project.scripts]` of each app's `pyproject.toml`; `lspr-suite` (the Suite launcher) is the recommended one. For VS Code "Run Python File", use the `run.py` file in each app directory.
 
 The launcher supports three profiles for the acquisition app (selectable inline in the card):
 - `Full` — real hardware discovery and auto-connect
@@ -226,18 +149,11 @@ The launcher supports three profiles for the acquisition app (selectable inline 
 
 ---
 
+---
+
 ## Running Tests
 
-Tests live in `tests/` at the repo root, split into two subdirectories.
-
-```powershell
-python -m pytest tests/              # run everything
-python -m pytest tests/unit/        # pure-logic tests only (fast, no Qt, no files)
-python -m pytest tests/integration/ # Qt, HDF5, device-mock, and workflow tests
-```
-
-All tests pass without real hardware. Simulated instruments replace hardware for normal test runs.
-Use tolerances for floating-point assertions, not exact equality.
+Tests live in `tests/unit/` (pure logic, no Qt, no files) and `tests/integration/` (Qt, HDF5, device-mock, workflow). All pass without real hardware; simulated instruments replace it. Use tolerances for floating-point assertions, not exact equality.
 
 ---
 
@@ -252,13 +168,7 @@ and *say so* — name the tool and why it's relevant — then wait for the maint
 Don't run them just because a task touched code; only flag it when one of the situations below
 actually applies.
 
-| Tool | Checks | Command |
-|------|--------|---------|
-| `radon` | Cyclomatic complexity + maintainability index per file | `radon mi packages apps --min B` (files below A grade); `radon cc packages apps -s -a` (complexity detail) |
-| `pytest-cov` | Test coverage % | `pytest tests/unit --cov=packages --cov=apps --cov-report=term-missing` |
-| `vulture` | Dead code (unused functions/vars/imports) | `vulture packages apps --min-confidence 80` |
-| `import-linter` | Enforces the GUI/science-code separation rule (see Engineering Priority Order) as an automated check, config at `.importlinter` | `lint-imports --config .importlinter` |
-| `mypy` | Static type checking, run **per package/app root** (a combined multi-root run hits "Duplicate module named ..." because each app's `src/` has its own top-level `main.py`) | `mypy packages/lspr_core/src --ignore-missing-imports` (repeat per package/app dir) |
+Run each tool by its standard command (see `requirements-dev.txt`); `import-linter` reads `.importlinter`, and `mypy` must be run **per package/app root** - a combined multi-root run hits "Duplicate module named ..." because each app's `src/` has its own top-level `main.py`.
 
 Moments worth flagging (suggest, don't act):
 - After a refactor touching many files across one app/package → suggest `import-linter`, to confirm no layering rule broke.
@@ -268,71 +178,13 @@ Moments worth flagging (suggest, don't act):
 - After touching a dataclass/attribute contract shared across mixins or controllers → suggest `mypy` on that file, to catch stale type annotations like a field typed as the base Qt class instead of the actual custom subclass assigned to it.
 - When the maintainer directly asks about code quality, tech debt, or maintainability.
 
-Baseline as of 2026-08-23: unit-test coverage ~25%; `lspr_core`/`lspr_io` clean of GUI imports;
-`gui/main_window_*.py`-style files trend toward C-grade complexity (known, tracked via the
-existing split-file pattern, see Common Pitfalls). mypy baseline: `lspr_core`/`lspr_io` clean
-(0 errors), ~1,312 errors suite-wide, dominated (~66%) by two structural false-positive patterns
-rather than real bugs — (a) `attr-defined` from the mixin/controller-split architecture, where
-mypy checks each mixin class in isolation and doesn't know about attributes defined on sibling
-mixins composed into the same window at runtime, and (b) `union-attr` from PyQt6 stubs typing
-things as `X | None` conservatively even where Qt guarantees non-null in normal use. Real bugs are
-mixed in (e.g. a dataclass field mistyped as the base Qt widget class instead of a custom
-subclass with extra methods) — mypy output needs per-item triage, not a blanket fix or suppress.
+mypy output is dominated by two structural false-positive patterns rather than real bugs: `attr-defined` from the mixin/controller-split architecture (mypy checks each mixin in isolation and doesn't see attributes defined on sibling mixins), and `union-attr` from PyQt6 stubs typing things as `X | None` even where Qt guarantees non-null. Real bugs are mixed in (e.g. a dataclass field typed as the base Qt widget class instead of a custom subclass), so triage per item - no blanket fix or suppress. `lspr_core`/`lspr_io` are kept free of GUI imports and mypy-clean.
 
 ---
 
 ## Where Code Lives
 
-### singleLSPR Acquisition (`apps/sLSPR/acq/src/lspr_app/`)
-
-```
-app.py            — entry point
-gui/              — all Qt windows, widgets, dialogs
-  main_window*.py — main window split into lifecycle, layout, plotting, etc.
-  experiment_control_*.py — experiment control subsystem
-  workers.py      — background acquisition workers
-device/           — hardware interfaces (Ocean spectrometer, Arduino, Reglo ICC, AMF)
-  base.py         — device interface ABC
-  simulated.py    — simulated spectrometer for tests/simulation mode
-  ocean.py        — Ocean Insight seabreeze backend
-domain/           — typed data models (measurement, pump plan, session)
-storage/          — HDF5 recording and async file writing
-diagnostics.py    — runtime diagnostics and probe
-```
-
-### singleLSPR Evaluation (`apps/sLSPR/eva/src/lspr_single_evaluation/`)
-
-```
-app.py            — entry point
-gui/              — Qt windows
-analysis.py       — peak position, centroid, FWHM computations
-processing.py     — spectrum processing pipeline
-models.py         — data models
-io.py             — HDF5 / pump-plan file loading
-```
-
-### LSPRimaging Evaluation (`apps/LSPRi/eva/src/lspr_imaging_app/`)
-
-```
-app.py            — entry point
-gui/              — Qt windows and controllers
-  main_window.py  — central window (~6.8k lines); delegates to controllers below
-  *_controller.py — dedicated controllers for dataset, image, analysis, ROI, etc.
-domain/           — models (ROI, image stack)
-processing/       — image analysis algorithms (ROI, chromatic, spot detection)
-io/               — TIFF / OME-Zarr loading, format versioning
-storage/          — session state persistence (processing profile JSON)
-```
-
-When adding GUI behavior here, prefer the relevant **controller** over adding more to `main_window.py`.
-
-### Suite Launcher (`apps/suite_launcher/src/suite_launcher/`)
-
-```
-app.py            — entry point, Qt window with four app cards
-targets.py        — app path resolution (workspace vs legacy paths)
-version.py
-```
+Each app's source is under `apps/<app>/src/<package>/` (see the table above); read the app's `docs/` folder before changing its architecture. Two gotchas: the main window is split across several files (see Common Pitfalls), and in LSPRimaging Evaluation prefer the relevant `*_controller.py` over adding more to `main_window.py` (~6.8k lines).
 
 ---
 
@@ -405,94 +257,11 @@ higher one, and name which priority a change serves when you explain it:
 
 ---
 
-## Performance Work: Instrumentation, Verification, and Testability
+## Performance Work and Numeric Changes
 
-Refined from a 2026-09 investigation into "Start analysis" slowness in LSPRi
-Evaluation — see `apps/LSPRi/eva/docs/bulk_analysis_performance_investigation.md`
-and `apps/LSPRi/eva/docs/roi_scoped_resample_cv2_fast_path.md` for the full
-case studies these rules are drawn from.
+Any change that alters measured or derived scientific values needs a standalone before/after comparison against realistic data (not just unit tests), and must be flagged to the maintainer with the quantified impact, even when it is negligible. Instrument new hot paths with cheap debug-level stage timing, and verify any performance fix with a real before/after measurement. Use the `performance-work` skill for the full method and case studies.
 
-**Instrument hot paths at write time, not after a complaint.** Add cheap,
-always-on stage timing (`time.perf_counter()` around each phase, one
-aggregated `logger.debug(...)` line per outer unit of work) to any new code
-that scales with dataset size (per-cube, per-wavelength, per-ROI, per-frame,
-etc.) *when it's written* — this repo already has the right convention in
-places (e.g. the "SG fast task stage timing" pattern in `analysis_tasks.py`),
-the gap is applying it consistently up front rather than only retrofitting
-it once someone reports something slow.
-- Aggregate within the inner loop and log **once per outer unit of work**
-  (e.g. sum every wavelength's timing and log one line per cube) — never log
-  per-ROI or per-pixel; the logging itself becomes the bottleneck otherwise.
-- Use lazy `%s`-style logging with cheap arguments
-  (`logger.debug("... %s", value)`), never an f-string or a call to
-  something expensive inside the log call — an argument is still evaluated
-  eagerly regardless of style, so nothing expensive should be passed in.
-- `time.perf_counter()` overhead is negligible (tens of nanoseconds) against
-  anything measured in milliseconds — there is no performance argument
-  against leaving stage timing permanently in place, gated behind DEBUG
-  level exactly like this repo's existing Normal/Debug console toggle
-  (DEBUG records always reach the log *file* regardless of that toggle,
-  which only filters the on-screen console — see `workflow_log_controller.py`).
-- Reserve heavier tools for on-demand diagnosis only, never baked into
-  normal runs: `cProfile` (2-10x slowdown, but shows exact call counts and
-  hot functions) once stage timing has identified *which* stage is slow but
-  not *why*; a sampling profiler (`py-spy`, `austin` — near-zero overhead,
-  attaches to an already-running process with no code changes) as the
-  lighter first reach for "where is time going" generally.
-
-**Verify a fix with a real before/after measurement — always, even when it
-"obviously" mirrors a pattern that worked before elsewhere.** A plausible
-optimization can regress performance for reasons invisible from reading the
-code alone: a fix modeled directly on a previously-successful pattern
-(`PlotManager.roi_area_masks()`'s per-ROI bounding box instead of a
-full-image distance grid) made a *different* code path 100x slower, because
-that path's own geometry functions already did per-ROI box-shrinking
-internally — the "fix" routed it through a different branch that trusted the
-caller's much bigger box instead. Caught only because it was measured (a
-standalone script against real data) before shipping, not because the code
-looked wrong.
-- Before considering a performance change complete, measure it — a
-  standalone script against realistic data/scale if driving the full app
-  isn't practical — not just "the code now looks like the fast pattern used
-  elsewhere."
-- When a fix doesn't help (or hurts), profile the *mechanism* (call counts,
-  `cProfile`) rather than iterating on more guesses.
-- When one fix's win is small, check whether the dominant cost is actually a
-  **data or configuration decision** (chunk size, index choice, batch size)
-  rather than something fixable in application code.
-
-**Numeric changes to scientific-compute paths need their own correctness
-check, separate from unit tests.** A change touching measured or derived
-values (not just control flow) needs a standalone before/after comparison
-against realistic data, in addition to whatever unit tests pass. Compare the
-discrepancy against a domain-meaningful baseline (e.g. the sensor's own
-shot-noise floor, not just "looks small") before deciding it's acceptable.
-- An existing test that pins two code paths to tight numerical agreement
-  (e.g. "fast path must equal reference path to `atol=1e-6`") is a
-  deliberate tripwire, not an obstacle to route around. If a legitimate
-  change trips it, don't loosen the tolerance on intuition — measure the
-  actual worst-case discrepancy on that test's own data, set the new bound
-  from that measurement with explicit margin, and document why in both the
-  test and a comment at the change site.
-- Flag any change that measurably alters computed values to the maintainer
-  explicitly, with the quantified impact, even when it is negligible
-  relative to real-world noise — don't fold it in silently just because
-  tests still pass.
-
-**Check upstream fixes before designing a workaround, when a dependency's
-behavior looks like a bug.** When a third-party library's behavior is an
-inexplicable performance cliff or looks like a bug rather than expected
-behavior, check its changelog/release notes/issue tracker for a targeted,
-already-merged fix before designing an application-level workaround —
-especially for pre-1.0-adjacent or actively-developed libraries (the same
-libraries this repo's Dependency Pinning policy already treats as
-higher-churn are also more likely to have just-fixed rough edges). This is
-not "keep dependencies generally current" — it's "when you hit an
-inexplicable wall, check whether it's already been fixed upstream before
-building around it," and then verify the fix against the project's own real
-data/workload before adopting it, not just the changelog's claim (recheck
-sibling packages that share the dependency for compatibility, same as any
-other pin update).
+## GUI Testability
 
 **Prefer widgets that are directly callable, for testability.** Prefer real
 `QAbstractButton` subclasses (`QPushButton`, `QToolButton`, `QCheckBox`) over
@@ -512,11 +281,9 @@ UI-automation tooling and screen readers alike.
 ## Common Pitfalls
 
 - **Startup popup bug pattern**: do not call `showPopup()` during widget construction. Default popup readiness to `False` and enable only after startup wiring is complete. Use explicit state propagation, not `getattr(..., True)` fallbacks.
-- **Parentless widget + `setVisible()`/`.hide()`/`.show()` before it's attached = phantom top-level window flash.** Building a widget with no parent (`QLabel(text)`) and then calling any visibility method on it *before it's really attached to a parent widget* makes Qt briefly realize it as a genuine OS-level top-level window — default ~640×480 geometry, actually shown/composited by Windows for a frame or more — not just a property set on an inert object. The trap: `layout.addWidget(...)` does **not** by itself fix this if `layout` is a bare `QVBoxLayout()`/`QHBoxLayout()` that hasn't itself been attached to a real parent yet (common when building up nested layouts before doing `outer_layout.addLayout(inner_layout)` at the end of a constructor) — the widget only gets a real parent once that final attachment happens, so anything set on it *before* that point sees `parent() is None`. Fix: pass the parent directly at construction (`QLabel(text, self)`), not just via a layout that isn't wired up yet. Found in `suite_launcher`'s `LaunchCard` in 2026-08 (a version-number `QLabel` calling `setVisible()` before attachment flashed a small window on every startup) after ~6 rounds of screen-recording analysis failed to pin it down — what actually found it in minutes was installing an event filter that flags top-level Show/Hide/Polish events on parentless widgets (mirroring `StartupSuspiciousWidgetTracer` in `apps/sLSPR/acq/src/lspr_app/app.py`, which exists for exactly this recurring class of bug). Prefer that instrumentation over guessing from a recording next time this pattern shows up — see `apps/suite_launcher/docs/startup_flicker_investigation.md` for the full investigation writeup.
 - **Main window is split across files**: `main_window.py`, `main_window_layout.py`, `main_window_lifecycle.py`, etc. Check all of them before assuming you know how a feature is wired.
 - **GUI thread blocking**: long acquisition, file loading, fitting, and image processing must run off the main thread. Workers are in `gui/workers.py` (acquisition) or the thread pool (imaging).
 - **Don't mix scientific code with GUI code.** Analysis functions must work without a running Qt application.
 - **Raw data is sacred**: never overwrite raw measurement data. Derived results live in separate groups/files.
-- **`spot`/`ring` → sample ROI / reference ROI rename is done** (LSPRimaging, 2026-08). Code identifiers now use `sample_*`/`reference_*`/`AreaRoi`/`AreaRoiGroup`/`AreaRoiDetectionSettings` throughout `processing/` and `gui/`; the old `DetectedSpot`/`SpotGroup`/`SpotDetectionSettings` aliases were removed. `processing/spot_detection.py` is now `processing/roi_detection.py` (`detect_rois`, not `detect_spots`). Persisted JSON files from before the rename still load via legacy-key fallbacks in `storage/workspace.py`. Two things intentionally still say "spot": the unrelated `RoiDefinition` rectangle-stamp annotation tool, and the chromatic-correction "Spots" landmark-tracking option (`detect_regional_spot_landmarks`/`track_spot_landmarks`, `spot_radius_px`/`spot_mode`) — a different feature (which kind of blob to track for image registration), not the sample/reference ROI pair. The bigger Template/Placement/Pair model described in `apps/LSPRi/eva/docs/roi_implementation_direction.md` is still future work; this was the terminology-only Phase 1.
-- **`image_tools_enabled` preview flag** (LSPRimaging): toggled off while the crop/rotate tool is active so the full image shows; it must not be *persisted* as off, or crops silently won't re-apply on reload.
-- **ROI coordinates are in processed image space** (after rotation/flip/crop). Mixing coordinate spaces produces silently wrong results — be explicit about which space you're in.
+- **Parentless widget + `setVisible()`/`.show()`/`.hide()` before attaching it = phantom top-level window flash.** Pass the parent at construction (`QLabel(text, self)`), not just via a layout that isn't wired up yet. Full explanation and the diagnosis method: `apps/suite_launcher/CLAUDE.md`.
+- **LSPRimaging-specific pitfalls** (ROI coordinates live in processed image space - mixing spaces silently gives wrong results; `image_tools_enabled` must not be persisted as off; the sample/reference ROI rename) are in `apps/LSPRi/eva/CLAUDE.md`, loaded when working under that directory.
