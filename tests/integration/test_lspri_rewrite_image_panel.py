@@ -40,6 +40,7 @@ try:
     from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
     from lspr_imaging_app.image_tools import (
+        ActiveToolModule,
         BackgroundModule,
         ChromaticModule,
         GeometryModule,
@@ -101,7 +102,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.selection = SelectionModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
-            self.background, self.roi_toolbox, self.selection,
+            self.background, self.roi_toolbox, self.selection, ActiveToolModule(),
         )
 
     def tearDown(self) -> None:
