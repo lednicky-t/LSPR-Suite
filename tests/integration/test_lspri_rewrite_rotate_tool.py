@@ -21,9 +21,11 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QAction
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -64,6 +66,16 @@ def _pump(seconds: float = 0.5) -> None:
     while time.monotonic() < deadline:
         _APP.processEvents()
         time.sleep(0.01)
+
+
+def _pick_first_enabled_action(menu: QtWidgets.QMenu, *_args: object, **_kwargs: object) -> QAction | None:
+    """A stand-in for `QMenu.exec()` that "clicks" the first enabled action,
+    the way a user picking the one available choice would - see
+    `RotateToolTest.setUp`."""
+    for action in menu.actions():
+        if action.isEnabled():
+            return action
+    return None
 
 
 def _write_dataset(root: Path) -> ImageDataset:
@@ -144,6 +156,18 @@ class RotateToolTest(unittest.TestCase):
             self.roi_toolbox, self.selection, self.active_tool,
         )
         self.tool = self.panel._rotate_tool
+        self.status_messages: list[str] = []
+        self.panel.tool_status_changed.connect(self.status_messages.append)
+        # QMenu.exec() blocks on a real event loop waiting for a click that
+        # will never come under test - the right-click context menu
+        # (panel.py's _show_rotate_context_menu) is instead driven by
+        # patching exec() to auto-pick its one enabled action, the same
+        # outcome a user choosing "Cancel rotation" produces. This mirrors
+        # every existing right-click test's expectation (cancel happens
+        # immediately); tests that need a *different* menu outcome (nothing
+        # to cancel, or the user dismissing it) patch exec() again locally,
+        # which shadows this one for the duration of their `with` block.
+        self.enterContext(mock.patch.object(QtWidgets.QMenu, "exec", _pick_first_enabled_action))
         # Shown and sized so the view box has a real on-screen rectangle and
         # a view range covering the image - the panel (rightly) ignores
         # clicks outside it, so an unshown zero-size view would swallow every
@@ -209,7 +233,9 @@ class RotateToolTest(unittest.TestCase):
         undo_manager.undo()
         self.assertEqual(self._rotation(), 0.0)
 
-    def test_right_click_cancels_point_one(self) -> None:
+    def test_right_click_menus_cancel_action_cancels_point_one(self) -> None:
+        """The context menu's action, not the right-click itself - `setUp`'s
+        patch auto-picks it, standing in for the user choosing it."""
         self.active_tool.set_active(ImageTool.ROTATE, True)
         self._click(10.0, 20.0)
         self._click(0.0, 0.0, Qt.MouseButton.RightButton)
@@ -217,6 +243,29 @@ class RotateToolTest(unittest.TestCase):
         self._click(30.0, 30.0)  # starts over as a fresh point 1
         self.assertPointAlmostEqual(self.tool.first_point(), (30.0, 30.0))
         self.assertEqual(self._rotation(), 0.0)
+
+    def test_right_click_menu_cancel_action_is_disabled_with_nothing_to_cancel(self) -> None:
+        self.active_tool.set_active(ImageTool.ROTATE, True)
+        seen_menus: list[QtWidgets.QMenu] = []
+
+        def _capture(menu: QtWidgets.QMenu, *_a: object, **_k: object) -> None:
+            seen_menus.append(menu)
+            return None
+
+        with mock.patch.object(QtWidgets.QMenu, "exec", _capture):
+            self._click(0.0, 0.0, Qt.MouseButton.RightButton)  # no point 1 pending
+        self.assertEqual(len(seen_menus), 1)
+        cancel_action = seen_menus[0].actions()[0]
+        self.assertEqual(cancel_action.text(), "Cancel rotation")
+        self.assertFalse(cancel_action.isEnabled())
+        self.assertIsNone(self.tool.first_point())  # nothing to have cancelled
+
+    def test_right_click_menu_dismissed_keeps_point_one(self) -> None:
+        self.active_tool.set_active(ImageTool.ROTATE, True)
+        self._click(10.0, 20.0)
+        with mock.patch.object(QtWidgets.QMenu, "exec", lambda *_a, **_k: None):
+            self._click(0.0, 0.0, Qt.MouseButton.RightButton)
+        self.assertPointAlmostEqual(self.tool.first_point(), (10.0, 20.0))  # menu dismissed, not cancelled
 
     def test_escape_cancels_point_one_and_is_only_consumed_when_it_does(self) -> None:
         self.active_tool.set_active(ImageTool.ROTATE, True)
@@ -253,7 +302,7 @@ class RotateToolTest(unittest.TestCase):
         self.assertTrue(self.tool._band.isVisible())
         xs, ys = self.tool._band.getData()
         np.testing.assert_allclose([list(xs), list(ys)], [[10.0, 70.0], [20.0, 22.0]], atol=1e-6)
-        self.assertIn("rotates by", self.panel._tool_hint.text())
+        self.assertIn("rotates by", self.status_messages[-1])
         self._click(0.0, 0.0, Qt.MouseButton.RightButton)
         self.assertFalse(self.tool._band.isVisible())
 
@@ -262,7 +311,10 @@ class RotateToolTest(unittest.TestCase):
         self._click(10.0, 20.0)
         self.active_tool.set_active(ImageTool.ROTATE, False)
         self.assertIsNone(self.tool.first_point())
-        self.assertFalse(self.panel._tool_hint.isVisible())
+        # The info icon is permanent - it falls back to the plain-image
+        # controls instead of disappearing.
+        self.assertTrue(self.panel._tool_info.isVisible())
+        self.assertEqual(self.panel._tool_info.toolTip(), controls_text(None))
 
     def test_image_tools_switched_off_blocks_rotation_with_a_message(self) -> None:
         self.geometry.set_image_tools_enabled(False)
@@ -270,7 +322,7 @@ class RotateToolTest(unittest.TestCase):
         self._click(10.0, 20.0)
         self._click(70.0, 22.0)
         self.assertEqual(self._rotation(), 0.0)
-        self.assertIn("switched off", self.panel._tool_hint.text())
+        self.assertIn("switched off", self.status_messages[-1])
 
     # -- arrow keys -------------------------------------------------------
 
@@ -356,13 +408,14 @@ class RotateToolTest(unittest.TestCase):
         self._click(40.0, 30.0)
         self.assertEqual(len(self.selection.selected_roi_ids()), 1)
 
-    def test_a_tool_without_canvas_behavior_does_not_take_clicks_or_show_a_hint(self) -> None:
+    def test_a_tool_without_canvas_behavior_does_not_take_clicks(self) -> None:
         """Crop can be switched on from the Workflow panel but does nothing on
-        the image yet - it must not silently disable ROI selection."""
+        the image yet - it must not silently disable ROI selection. The info
+        icon falls back to the plain-image controls rather than hiding."""
         self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
         _pump()
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.assertFalse(self.panel._tool_hint.isVisible())
+        self.assertEqual(self.panel._tool_info.toolTip(), controls_text(None))
         self._click(40.0, 30.0)
         self.assertEqual(len(self.selection.selected_roi_ids()), 1)
 
