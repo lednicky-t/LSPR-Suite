@@ -161,12 +161,14 @@ class RotateToolTest(unittest.TestCase):
         # QMenu.exec() blocks on a real event loop waiting for a click that
         # will never come under test - the right-click context menu
         # (panel.py's _show_rotate_context_menu) is instead driven by
-        # patching exec() to auto-pick its one enabled action, the same
-        # outcome a user choosing "Cancel rotation" produces. This mirrors
-        # every existing right-click test's expectation (cancel happens
-        # immediately); tests that need a *different* menu outcome (nothing
-        # to cancel, or the user dismissing it) patch exec() again locally,
-        # which shadows this one for the duration of their `with` block.
+        # patching exec() to auto-pick its one enabled action ("Cancel
+        # rotation" is always enabled - see context_menu.py's docstring),
+        # the same outcome a user choosing it produces. This mirrors every
+        # existing right-click test's expectation (the tool exits
+        # immediately); tests that need a *different* menu outcome (the
+        # user dismissing it, or inspecting the menu's own contents without
+        # choosing anything) patch exec() again locally, which shadows this
+        # one for the duration of their `with` block.
         self.enterContext(mock.patch.object(QtWidgets.QMenu, "exec", _pick_first_enabled_action))
         # Shown and sized so the view box has a real on-screen rectangle and
         # a view range covering the image - the panel (rightly) ignores
@@ -233,18 +235,27 @@ class RotateToolTest(unittest.TestCase):
         undo_manager.undo()
         self.assertEqual(self._rotation(), 0.0)
 
-    def test_right_click_menus_cancel_action_cancels_point_one(self) -> None:
+    def test_right_click_menus_cancel_action_exits_rotate_mode(self) -> None:
         """The context menu's action, not the right-click itself - `setUp`'s
-        patch auto-picks it, standing in for the user choosing it."""
+        patch auto-picks it, standing in for the user choosing it. "Cancel
+        rotation" exits Rotate mode entirely (maintainer's spec, 2026-09-
+        29 - "same like clicking on tool icon in workflow"), dropping the
+        in-progress point along the way - it does not just drop the point
+        and stay in Rotate mode ready for another pair."""
         self.active_tool.set_active(ImageTool.ROTATE, True)
         self._click(10.0, 20.0)
         self._click(0.0, 0.0, Qt.MouseButton.RightButton)
+        self.assertIsNone(self.active_tool.active())
         self.assertIsNone(self.tool.first_point())
-        self._click(30.0, 30.0)  # starts over as a fresh point 1
-        self.assertPointAlmostEqual(self.tool.first_point(), (30.0, 30.0))
         self.assertEqual(self._rotation(), 0.0)
 
-    def test_right_click_menu_cancel_action_is_disabled_with_nothing_to_cancel(self) -> None:
+    def test_right_click_menu_cancel_action_is_always_enabled(self) -> None:
+        """Regression (2026-09-29): an earlier version disabled "Cancel
+        rotation" with no point 1 pending - which, since it's the menu's
+        only item, meant a right-click with nothing pending opened a menu
+        with nothing clickable in it at all (looked exactly like a broken
+        menu). "Cancel" now always means "exit Rotate mode", which is
+        always a valid thing to do, so it is always enabled."""
         self.active_tool.set_active(ImageTool.ROTATE, True)
         seen_menus: list[QtWidgets.QMenu] = []
 
@@ -257,8 +268,11 @@ class RotateToolTest(unittest.TestCase):
         self.assertEqual(len(seen_menus), 1)
         cancel_action = seen_menus[0].actions()[0]
         self.assertEqual(cancel_action.text(), "Cancel rotation")
-        self.assertFalse(cancel_action.isEnabled())
-        self.assertIsNone(self.tool.first_point())  # nothing to have cancelled
+        self.assertTrue(cancel_action.isEnabled())
+        # The stand-in exec() above never returned an action, so nothing
+        # was actually chosen - the tool must still be exactly as it was.
+        self.assertIs(self.active_tool.active(), ImageTool.ROTATE)
+        self.assertIsNone(self.tool.first_point())
 
     def test_right_click_menu_dismissed_keeps_point_one(self) -> None:
         self.active_tool.set_active(ImageTool.ROTATE, True)

@@ -351,6 +351,26 @@ class CropToolTest(unittest.TestCase):
         self.tool.set_active(True)
         self.assertFalse(self.tool.cancel())
 
+    def test_escape_discards_a_pending_edit_but_stays_active(self) -> None:
+        """Esc (`handle_key`) is the one real, reachable caller of
+        `cancel()` left in the app - the right-click menu's "Cancel crop"
+        goes straight to deactivating the tool instead (panel.py), the
+        same way Rotate's Esc/right-click-menu split works."""
+        self.geometry.set_crop(10, 10, 20, 20)
+        self.tool.set_active(True)
+        self.tool.set_size(50, 50)  # an unapplied edit
+        self.assertTrue(self.tool.handle_key(Qt.Key.Key_Escape))
+        self.assertEqual(self.tool.rect(), (10, 10, 20, 20))
+        self.assertTrue(self.tool.is_active())
+
+    def test_escape_is_not_consumed_when_there_is_nothing_to_cancel(self) -> None:
+        self.tool.set_active(True)
+        self.assertFalse(self.tool.handle_key(Qt.Key.Key_Escape))
+
+    def test_other_keys_are_never_consumed(self) -> None:
+        self.tool.set_active(True)
+        self.assertFalse(self.tool.handle_key(Qt.Key.Key_Right))
+
     def test_has_pending_changes_tracks_the_diff_from_applied(self) -> None:
         self.tool.set_active(True)
         self.assertFalse(self.tool.has_pending_changes())
@@ -455,8 +475,15 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         self.panel._on_scene_clicked(_Click(self.panel._plot.vb.mapViewToScene(QPointF(0.0, 0.0)), Qt.MouseButton.RightButton))
         self.assertTrue(self.geometry.settings().crop.enabled)
         self.assertEqual((self.geometry.settings().crop.width, self.geometry.settings().crop.height), (40, 30))
+        self.assertIsNone(self.active_tool.active())  # apply also exits Crop mode
 
-    def test_right_click_menu_disabled_with_nothing_pending(self) -> None:
+    def test_right_click_menu_cancel_action_is_always_enabled(self) -> None:
+        """Regression (2026-09-29): an earlier version disabled both "Apply
+        crop" and "Cancel crop" with nothing pending - the whole menu had
+        nothing clickable in it, which read as "the menu is broken" (not
+        "there's nothing to do"). "Cancel" now always means "exit Crop
+        mode", always a valid thing to do, so it stays enabled even when
+        "Apply" is grayed out."""
         self.active_tool.set_active(ImageTool.CROP, True)
         seen_menus: list[QtWidgets.QMenu] = []
 
@@ -467,10 +494,34 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         with mock.patch.object(QtWidgets.QMenu, "exec", _capture):
             self.panel._on_scene_clicked(_Click(self.panel._plot.vb.mapViewToScene(QPointF(0.0, 0.0)), Qt.MouseButton.RightButton))
         self.assertEqual(len(seen_menus), 1)
-        labels = [a.text() for a in seen_menus[0].actions()]
-        self.assertEqual(labels, ["Apply crop", "Cancel crop"])
-        for action in seen_menus[0].actions():
-            self.assertFalse(action.isEnabled())
+        apply_action, cancel_action = seen_menus[0].actions()
+        self.assertEqual((apply_action.text(), cancel_action.text()), ("Apply crop", "Cancel crop"))
+        self.assertFalse(apply_action.isEnabled())  # nothing new to commit
+        self.assertTrue(cancel_action.isEnabled())
+        self.assertIs(self.active_tool.active(), ImageTool.CROP)  # nothing chosen above, unaffected
+
+    def test_right_click_menu_cancel_exits_crop_mode_with_nothing_pending(self) -> None:
+        """setUp's default patch auto-picks the first *enabled* action -
+        with nothing pending that's "Cancel crop" (index 1, since "Apply
+        crop" at index 0 is disabled) - standing in for the user picking
+        it themselves."""
+        self.active_tool.set_active(ImageTool.CROP, True)
+        self.panel._on_scene_clicked(_Click(self.panel._plot.vb.mapViewToScene(QPointF(0.0, 0.0)), Qt.MouseButton.RightButton))
+        self.assertIsNone(self.active_tool.active())
+        self.assertFalse(self.geometry.settings().crop.enabled)  # nothing was ever applied
+
+    def test_right_click_menu_cancel_discards_a_pending_edit_and_exits(self) -> None:
+        """maintainer's spec (2026-09-29): "Cancel" exits the tool - same
+        as clicking the Workflow panel's Crop button again - dropping any
+        not-yet-applied resize/move along the way, without touching
+        whatever was last actually applied."""
+        self.geometry.set_crop(10, 10, 20, 20)
+        self.active_tool.set_active(ImageTool.CROP, True)
+        self.tool.set_size(50, 50)  # an unapplied edit
+        with mock.patch.object(QtWidgets.QMenu, "exec", lambda menu, *_a, **_k: menu.actions()[1]):  # "Cancel crop"
+            self.panel._on_scene_clicked(_Click(self.panel._plot.vb.mapViewToScene(QPointF(0.0, 0.0)), Qt.MouseButton.RightButton))
+        self.assertIsNone(self.active_tool.active())
+        self.assertEqual((self.geometry.settings().crop.width, self.geometry.settings().crop.height), (20, 20))
 
     def test_preview_is_uncropped_while_crop_is_active(self) -> None:
         self.geometry.set_crop(8, 6, 48, 40)
@@ -489,6 +540,39 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         self.assertTrue(self.panel._crop_controls.isVisible())
         self.assertEqual(self.panel._crop_controls._width_spin.value(), 40)
         self.assertEqual(self.panel._crop_controls._height_spin.value(), 30)
+
+    def test_size_controls_right_edge_aligns_with_the_rectangles_right_edge(self) -> None:
+        """Maintainer's spec (2026-09-29): the apply button - the last,
+        rightmost widget in the layout - sits flush with the crop
+        rectangle's right edge, not the old bottom-left anchor."""
+        self.active_tool.set_active(ImageTool.CROP, True)
+        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
+        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
+        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        expected_scene = self.panel._plot.vb.mapViewToScene(QPointF(50.0, 40.0))
+        expected_view = self.panel._view.mapFromScene(expected_scene)
+        controls = self.panel._crop_controls
+        self.assertEqual(controls.x() + controls.width(), expected_view.x())
+
+    def test_size_fields_have_a_compact_fixed_width(self) -> None:
+        """Maintainer's spec (2026-09-29): no more than 4-digit numbers'
+        worth of width - QSpinBox's own default sizeHint is much wider,
+        which was the big-gaps complaint."""
+        controls = self.panel._crop_controls
+        self.assertLess(controls._width_spin.width(), 80)
+        self.assertEqual(controls._width_spin.width(), controls._height_spin.width())
+
+    def test_apply_button_has_its_own_cursor(self) -> None:
+        """Regression (2026-09-29): the size-controls widget is a child of
+        the image view's viewport, whose cursor `_on_scene_moved` keeps
+        changing to a resize/move shape as the mouse crosses the crop
+        rectangle's edges. A widget with no cursor of its own inherits its
+        parent's, so without an explicit override that stray resize cursor
+        bled onto the whole floating widget - including the apply button,
+        which gave no "this is clickable" hint at all when hovered."""
+        controls = self.panel._crop_controls
+        self.assertEqual(controls.cursor().shape(), Qt.CursorShape.ArrowCursor)
+        self.assertEqual(controls._apply_button.cursor().shape(), Qt.CursorShape.PointingHandCursor)
 
     def test_size_controls_show_the_full_prefilled_size_on_first_activation(self) -> None:
         """Regression: the spin boxes start life range-limited to [1, 1]
@@ -524,6 +608,35 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         self.panel._crop_controls._apply_button.click()
         self.assertTrue(self.geometry.settings().crop.enabled)
 
+    def test_apply_exits_crop_mode_and_renders_the_cropped_image(self) -> None:
+        """Maintainer's spec (2026-09-29): applying doesn't just commit the
+        crop, it also ends the session and shows the result - while Crop
+        stays active the panel always renders the *uncropped* frame
+        (`_PREVIEW_TOOLS`), so without exiting, apply would commit
+        correctly but look like nothing happened."""
+        self.active_tool.set_active(ImageTool.CROP, True)
+        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
+        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
+        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._crop_controls._apply_button.click()
+        self.assertIsNone(self.active_tool.active())
+        self.assertFalse(self.tool.is_active())
+        self.assertFalse(self.panel._crop_controls.isVisible())
+        _pump()
+        self.assertEqual(self.panel._image_item.image.shape, (30, 40))  # the cropped result, not the full 64x80 frame
+
+    def test_a_failed_apply_leaves_the_session_running(self) -> None:
+        """Image Tools switched off blocks the commit (same rule Rotate
+        follows) - and must not exit the tool over nothing having changed."""
+        self.geometry.set_image_tools_enabled(False)
+        self.active_tool.set_active(ImageTool.CROP, True)
+        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
+        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._crop_controls._apply_button.click()
+        self.assertFalse(self.geometry.settings().crop.enabled)
+        self.assertIs(self.active_tool.active(), ImageTool.CROP)
+        self.assertTrue(self.tool.is_active())
+
     def test_deactivating_crop_hides_the_size_controls(self) -> None:
         self.active_tool.set_active(ImageTool.CROP, True)
         self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
@@ -538,6 +651,20 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.ROTATE, True)
         self.assertFalse(self.tool.is_active())
         self.assertIsNone(self.tool.rect())
+
+    def test_real_escape_key_event_discards_a_pending_edit(self) -> None:
+        """Through the view's event filter, not a direct call - same
+        pattern as test_lspri_rewrite_rotate_tool.py's equivalent test."""
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QKeyEvent
+
+        self.geometry.set_crop(10, 10, 20, 20)
+        self.active_tool.set_active(ImageTool.CROP, True)
+        self.tool.set_size(50, 50)
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+        QtWidgets.QApplication.sendEvent(self.panel._view, event)
+        self.assertEqual(self.tool.rect(), (10, 10, 20, 20))
+        self.assertTrue(self.tool.is_active())
 
 
 class _Click:
