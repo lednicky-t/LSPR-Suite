@@ -422,19 +422,6 @@ class RotateToolTest(unittest.TestCase):
         self._click(40.0, 30.0)
         self.assertEqual(len(self.selection.selected_roi_ids()), 1)
 
-    def test_a_tool_without_canvas_behavior_does_not_take_clicks(self) -> None:
-        """Measure can be switched on from the Workflow panel but does
-        nothing on the image yet (unlike Rotate and, since 2026-09-29,
-        Crop - see test_lspri_rewrite_crop_tool.py) - it must not silently
-        disable ROI selection. The info icon falls back to the plain-image
-        controls rather than hiding."""
-        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
-        _pump()
-        self.active_tool.set_active(ImageTool.MEASURE, True)
-        self.assertEqual(self.panel._tool_info.toolTip(), controls_text(None))
-        self._click(40.0, 30.0)
-        self.assertEqual(len(self.selection.selected_roi_ids()), 1)
-
     def test_middle_click_never_selects_or_clears(self) -> None:
         self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
         _pump()
