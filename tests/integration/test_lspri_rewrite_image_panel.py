@@ -254,6 +254,32 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.panel._on_rendered(RenderResult(request=stale, image=np.zeros((4, 4), dtype=np.float32)))
         self.assertEqual(self.panel._status.text(), before)
 
+    # -- cursor overlay (2026-09-29) -------------------------------------
+
+    def test_cursor_overlay_reads_the_displayed_pixel(self) -> None:
+        """Ported from the stable app's cursor-toggle overlay (maintainer's
+        request) - here, reading `_image_item.image` directly rather than
+        snapping to a 1D curve, since this is a 2D pixel lookup."""
+        self._load()
+        overlay = self.panel._cursor_overlay
+        self.assertFalse(overlay._enabled)
+        overlay.toggle()
+        self.assertTrue(overlay._enabled)
+        result = overlay._value_at(38.5, 30.5)
+        self.assertIsNotNone(result)
+        x, y, text = result
+        self.assertEqual((x, y), (38.5, 30.5))
+        self.assertIn("(38, 30)", text)
+        expected = float(self.panel._image_item.image[30, 38])
+        self.assertIn(f"{expected:.1f}", text)
+
+    def test_cursor_overlay_off_image_returns_none(self) -> None:
+        self._load()
+        overlay = self.panel._cursor_overlay
+        overlay.toggle()
+        self.assertIsNone(overlay._value_at(-5.0, -5.0))
+        self.assertIsNone(overlay._value_at(9999.0, 9999.0))
+
 
 if __name__ == "__main__":
     unittest.main()
