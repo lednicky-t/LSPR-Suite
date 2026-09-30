@@ -174,42 +174,50 @@ class CanvasToolsBarButtonsTest(unittest.TestCase):
         self.assertFalse(self.bar._add_roi_button.isChecked())
         self.assertTrue(self.bar._select_button.isChecked())
 
-    # -- sizing and border (2026-09-30, maintainer request) -----------------
+    # -- sizing and border (2026-09-30, maintainer request; flipped from a
+    # vertical strip on the canvas's left edge to a horizontal bar across
+    # its top, same day) -----------------------------------------------------
 
     def test_buttons_are_sized_to_hug_the_icons(self) -> None:
         """Shrunk from the first pass's 28px (borrowed from the horizontal
-        Transforms row) - a vertical strip docked to the canvas edge should
-        read as a thin rail, not a second toolbar's worth of width."""
+        Transforms row) - this strip should read as compact, not a second
+        toolbar's worth of size."""
         from lspr_imaging_app.panels.image.canvas_tools import _BUTTON_SIZE, _ICON_SIZE
 
         self.assertEqual(self.bar._select_button.size().width(), _BUTTON_SIZE)
         self.assertEqual(self.bar._select_button.iconSize().width(), _ICON_SIZE)
         self.assertLess(_BUTTON_SIZE, 28)
 
-    def test_bar_width_is_close_to_one_buttons_width(self) -> None:
-        """The whole point of tightening the layout margins - the bar's own
-        width should not meaningfully exceed a single button's width plus
-        its margins, not leave visible slack around the icons."""
-        from lspr_imaging_app.panels.image.canvas_tools import _BAR_MARGIN, _BUTTON_SIZE
+    def test_bar_size_hint_hugs_both_buttons(self) -> None:
+        """Horizontal now (2026-09-30, flipped from vertical) - the bar's
+        own size should not meaningfully exceed its two buttons' width/
+        height plus margins and the spacing between them, not leave visible
+        slack around the icons."""
+        from lspr_imaging_app.panels.image.canvas_tools import _BAR_MARGIN, _BAR_SPACING, _BUTTON_SIZE
 
-        self.assertEqual(self.bar.sizeHint().width(), _BUTTON_SIZE + 2 * _BAR_MARGIN)
+        self.assertEqual(self.bar.sizeHint().width(), 2 * _BUTTON_SIZE + _BAR_SPACING + 2 * _BAR_MARGIN)
+        self.assertEqual(self.bar.sizeHint().height(), _BUTTON_SIZE + 2 * _BAR_MARGIN)
 
-    def test_right_edge_has_a_subtle_border_against_the_canvas(self) -> None:
-        """The reported bug: this bar and the canvas beside it share the
-        same background, so the seam between them was invisible. Only the
-        right edge (the one that actually touches the canvas) should be
-        bordered."""
+    def test_bar_has_no_border_of_its_own(self) -> None:
+        """The seam moved to `panel.py`'s wrapping top bar (2026-09-30,
+        flipped from a vertical strip to a horizontal one) - this widget no
+        longer sits directly against the canvas, so it draws none itself."""
         style = self.bar.styleSheet()
-        self.assertIn("border-right: 1px solid", style)
+        self.assertIn("border: none", style)
+        self.assertNotIn("border-right", style)
         self.assertNotIn("border-left", style)
         self.assertNotIn("border-top", style)
         self.assertNotIn("border-bottom", style)
 
-    def test_border_color_updates_on_a_live_theme_switch(self) -> None:
+    def test_refresh_theme_does_not_raise(self) -> None:
+        """Still called on every live theme switch (`ImagePanel.
+        refresh_theme`) even though it sets no border color today - pinned
+        so a future change here can't silently reintroduce a crash on
+        theme switch without a test catching it."""
         from lspr_ui import BRIGHT_THEME
 
         self.bar.refresh_theme(BRIGHT_THEME)
-        self.assertIn(BRIGHT_THEME.toolbar_border, self.bar.styleSheet())
+        self.assertIn("border: none", self.bar.styleSheet())
 
 
 class AddRoiToolTest(unittest.TestCase):

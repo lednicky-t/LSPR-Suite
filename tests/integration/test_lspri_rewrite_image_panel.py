@@ -119,7 +119,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_empty_before_a_dataset_is_loaded(self) -> None:
         self.assertFalse(self.panel._cube_spin.isEnabled())
-        self.assertIn("No dataset", self.panel._status.text())
+        self.assertIn("No dataset", self.panel._frame_status)
 
     def test_renders_a_real_image_after_load(self) -> None:
         self._load()
@@ -145,7 +145,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertIsNone(self.panel._image_item.image)
         self.assertFalse(self.panel._cube_spin.isEnabled())
-        self.assertIn("No dataset", self.panel._status.text())
+        self.assertIn("No dataset", self.panel._frame_status)
 
     # -- geometry -------------------------------------------------------
 
@@ -222,7 +222,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         self.assertIn(self.panel._current_wavelength(), (500.0, 600.0))
         self.assertIsNotNone(self.panel._image_item.image)
-        self.assertNotIn("Cannot show", self.panel._status.text())
+        self.assertNotIn("Cannot show", self.panel._tool_status)
 
     def test_a_missing_frame_is_reported_not_raised(self) -> None:
         self._load()
@@ -239,13 +239,13 @@ class RewriteImagePanelTest(unittest.TestCase):
             )
         )
         _pump()
-        self.assertIn("Cannot show", self.panel._status.text())
+        self.assertIn("Cannot show", self.panel._tool_status)
 
     def test_a_stale_render_result_is_dropped(self) -> None:
         """"Latest request wins": a frame superseded while in flight must
         not overwrite the newer one that already arrived."""
         self._load()
-        before = self.panel._status.text()
+        before = self.panel._frame_status
         stale = RenderRequest(
             cube_index=0, wavelength_nm=500.0,
             geometry=self.geometry.settings(), background=self.background.settings(),
@@ -254,7 +254,7 @@ class RewriteImagePanelTest(unittest.TestCase):
             serial=self.panel._latest_serial - 1,
         )
         self.panel._on_rendered(RenderResult(request=stale, image=np.zeros((4, 4), dtype=np.float32)))
-        self.assertEqual(self.panel._status.text(), before)
+        self.assertEqual(self.panel._frame_status, before)
 
     # -- cursor overlay (2026-09-29) -------------------------------------
 
@@ -344,32 +344,69 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.panel._cube_spin.setValue(1)  # 500.0 / 600.0 only
         model = self.panel._wavelength_completer.model()
         texts = {model.data(model.index(i, 0)) for i in range(model.rowCount())}
-        self.assertEqual(texts, {"500.0", "600.0"})
+        self.assertEqual(texts, {"500", "600"})
 
-    # -- navigation bar border (2026-09-30, maintainer request) --------------
+    # -- navigation bar border (2026-09-30, maintainer request, reversed
+    # same day) - the seam line added earlier 2026-09-30 turned out to read
+    # as distracting rather than clarifying; the bar now sits flush against
+    # the canvas with no line at all.
 
-    def test_navigation_bar_has_a_subtle_border_against_the_canvas(self) -> None:
-        """The reported bug: this bar (Cube/λ rows + status row) and the
-        canvas above it (moved below the canvas 2026-09-30) share the same
-        background, so the seam between them was invisible. Only the top
-        edge (the one that actually touches the canvas) should be
-        bordered."""
+    def test_navigation_bar_has_no_border(self) -> None:
         style = self.panel._controls_bar.styleSheet()
-        self.assertIn("border-top: 1px solid", style)
+        self.assertIn("border: none", style)
+        self.assertNotIn("border-top", style)
         self.assertNotIn("border-left", style)
         self.assertNotIn("border-right", style)
         self.assertNotIn("border-bottom", style)
 
-    def test_navigation_bar_border_updates_on_a_live_theme_switch(self) -> None:
+    def test_navigation_bar_theme_refresh_does_not_raise(self) -> None:
+        """`_refresh_controls_bar_theme` is still called on every live theme
+        switch (see `refresh_theme`) even though it sets no border color
+        today - pinned so a future change there can't silently reintroduce
+        a crash on theme switch without a test catching it."""
         from lspr_ui import APP_THEME, BRIGHT_THEME, set_active_theme
 
         set_active_theme(BRIGHT_THEME)
         try:
             self.panel.refresh_theme()
-            self.assertIn(BRIGHT_THEME.toolbar_border, self.panel._controls_bar.styleSheet())
+            self.assertIn("border: none", self.panel._controls_bar.styleSheet())
         finally:
             set_active_theme(APP_THEME)
             self.panel.refresh_theme()
+
+    # -- outer layout margin (2026-09-30, real bug found via headless
+    # geometry probe, maintainer report of "wide borders around the image
+    # area, biggest from the top") -------------------------------------------
+
+    def test_outer_layout_has_no_margin_or_spacing(self) -> None:
+        """The outermost layout was the one layout in `_build_ui` left at
+        Qt's style-default ~11px margin on all four sides - invisible as a
+        distinct line (this panel's own background and the canvas's are the
+        same color), but it padded out the canvas/toolbar/nav bar on every
+        side, worst at the top where it stacked on top of the dock's own
+        title bar. A 10px left/right margin was briefly added here too
+        (maintainer's "small stylish" follow-up), then moved to just the
+        nav bar's own `controls` layout - it was meant for the Cube/λ rows
+        only, not the canvas/toolbar as well. Checked on the layout object
+        directly, not post-layout widget geometry, since the latter needs a
+        real show()/resize() pass this test's `setUp` never does."""
+        outer_layout = self.panel.layout()
+        self.assertEqual(outer_layout.contentsMargins().left(), 0)
+        self.assertEqual(outer_layout.contentsMargins().top(), 0)
+        self.assertEqual(outer_layout.contentsMargins().right(), 0)
+        self.assertEqual(outer_layout.contentsMargins().bottom(), 0)
+        self.assertEqual(outer_layout.spacing(), 0)
+
+    def test_nav_bar_has_left_right_margin_only(self) -> None:
+        """The Cube/λ titles shouldn't start flush against the dock's left
+        edge, and the number fields shouldn't end flush against its right
+        edge (maintainer request) - scoped to this bar's own `controls`
+        layout, not the whole panel."""
+        controls_layout = self.panel._controls_bar.layout()
+        self.assertEqual(controls_layout.contentsMargins().left(), 10)
+        self.assertEqual(controls_layout.contentsMargins().top(), 0)
+        self.assertEqual(controls_layout.contentsMargins().right(), 10)
+        self.assertEqual(controls_layout.contentsMargins().bottom(), 0)
 
     # -- wavelength slider tick labels (2026-09-30, real bug) ----------------
 
@@ -439,7 +476,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(self.panel._wavelength_spin.prefix(), "")
         self.assertEqual(self.panel._wavelength_spin.suffix(), "")
         self.assertEqual(self.panel._cube_spin.text(), "0")
-        self.assertEqual(self.panel._wavelength_spin.text(), "500.0")
+        self.assertEqual(self.panel._wavelength_spin.text(), "500")
 
     def test_titles_and_number_fields_share_one_width_each(self) -> None:
         """"Cube" and "λ (nm)" are different lengths, and so are their
@@ -451,22 +488,115 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(labels["Cube"].width(), labels["λ (nm)"].width())
         self.assertEqual(self.panel._cube_spin.width(), self.panel._wavelength_spin.width())
 
+    def test_spin_boxes_are_narrow_and_sized_for_a_future_time_format(self) -> None:
+        """Narrowed off "00:00:00" (2026-09-30, maintainer request), not the
+        widgets' own `sizeHint()` - the cube field is meant to grow into an
+        HH:MM:SS elapsed-time display later, and a plain index needs far
+        less room than the old sizeHint-based width gave it."""
+        from PyQt6.QtGui import QFontMetrics
+
+        metrics = QFontMetrics(self.panel._cube_spin.font())
+        expected = metrics.horizontalAdvance("00:00:00") + 28
+        self.assertEqual(self.panel._cube_spin.width(), expected)
+        self.assertEqual(self.panel._wavelength_spin.width(), expected)
+
     def test_canvas_is_above_the_navigation_bar(self) -> None:
         """Moved to the bottom of the panel (2026-09-30, maintainer
-        request) - the outer layout must place the canvas row before the
-        navigation bar, not after. `_canvas_tools` lives inside `canvas_row`,
-        an unnamed sub-layout, so find *that* sub-layout's position rather
+        request) - the outer layout must place the canvas column before the
+        navigation bar, not after. `_top_bar` lives inside that column, an
+        unnamed sub-layout, so find *that* sub-layout's position rather
         than assuming a stored reference to it exists."""
         outer_layout = self.panel.layout()
         controls_index = outer_layout.indexOf(self.panel._controls_bar)
         canvas_index = None
         for i in range(outer_layout.count()):
             sub_layout = outer_layout.itemAt(i).layout()
-            if sub_layout is not None and sub_layout.indexOf(self.panel._canvas_tools) != -1:
+            if sub_layout is not None and sub_layout.indexOf(self.panel._top_bar) != -1:
                 canvas_index = i
                 break
         self.assertIsNotNone(canvas_index)
         self.assertLess(canvas_index, controls_index)
+
+    # -- frame status moved to the dock title bar (2026-09-30, maintainer
+    # request) - the old bottom status row is gone; "Cube X, wl nm" is
+    # emitted as `frame_status_changed` for the dock title bar's centered
+    # subtitle instead, and no resolution text is shown anywhere anymore.
+
+    def test_frame_status_reports_cube_and_wavelength_with_no_decimal(self) -> None:
+        self._load()
+        self.assertEqual(self.panel._frame_status, "Cube 0, 500 nm")
+
+    def test_frame_status_signal_fires_on_navigation(self) -> None:
+        self._load()
+        values: list[str] = []
+        self.panel.frame_status_changed.connect(values.append)
+        self.panel._cube_spin.setValue(1)
+        _pump()
+        self.assertIn("Cube 1, 500 nm", values)
+
+    # -- top toolbar (2026-09-30, maintainer request - flipped from a
+    # vertical strip on the canvas's left edge to a horizontal bar across
+    # its top, "since frames are usually landscapes"; the cursor-readout
+    # and "i" icons moved off the canvas corners and into this bar too).
+
+    def test_tool_info_and_cursor_icon_live_in_the_top_bar(self) -> None:
+        """Both used to float as manually-`.move()`d overlays on the canvas
+        itself; now they're ordinary widgets in the shared top bar, after
+        the Select/Add ROI tool buttons (`_canvas_tools`) with a stretch
+        between - tools on the left, utility icons on the right."""
+        top_bar_layout = self.panel._top_bar.layout()
+        self.assertIs(self.panel._tool_info.parent(), self.panel._top_bar)
+        self.assertIs(self.panel._cursor_overlay.icon_label.parent(), self.panel._top_bar)
+        canvas_tools_index = top_bar_layout.indexOf(self.panel._canvas_tools)
+        cursor_index = top_bar_layout.indexOf(self.panel._cursor_overlay.icon_label)
+        info_index = top_bar_layout.indexOf(self.panel._tool_info)
+        self.assertNotEqual(canvas_tools_index, -1)
+        self.assertLess(canvas_tools_index, cursor_index)
+        self.assertLess(cursor_index, info_index)
+
+    def test_tool_info_and_cursor_icon_match_the_bars_other_icons(self) -> None:
+        """"make cursor and i icon same as other icons in the bar... this
+        apply for all icons later applied, they should have same style"
+        (maintainer request) - both now go through the same
+        `style_bar_icon_button` helper Select/Add ROI use, so they share
+        height, icon size, and hover chrome with the rest of this bar. The
+        cursor icon's *width* stays free (`fixed_width=False`) since it
+        must grow to show live text while enabled."""
+        from lspr_imaging_app.panels.image.canvas_tools import _BUTTON_SIZE, _ICON_SIZE
+
+        for widget in (self.panel._tool_info, self.panel._cursor_overlay.icon_label):
+            self.assertEqual(widget.height(), _BUTTON_SIZE)
+            self.assertEqual(widget.iconSize().width(), _ICON_SIZE)
+            self.assertEqual(widget.styleSheet(), self.panel._canvas_tools._select_button.styleSheet())
+        self.assertEqual(self.panel._tool_info.width(), _BUTTON_SIZE)
+        # The cursor icon's width is deliberately not clamped, unlike the
+        # "i" icon's - it must still grow to show live text.
+        self.assertGreater(self.panel._cursor_overlay.icon_label.maximumWidth(), _BUTTON_SIZE)
+
+    def test_top_bar_sits_above_the_view_with_a_bottom_border(self) -> None:
+        """"make there a bo[r]der on the bottom to separate it from the
+        image area" (maintainer request) - the seam belongs to the shared
+        top bar now, not the old per-strip borders `CanvasToolsBar` and the
+        cursor icon used to draw."""
+        outer_layout = self.panel.layout()
+        canvas_column = None
+        for i in range(outer_layout.count()):
+            sub_layout = outer_layout.itemAt(i).layout()
+            if sub_layout is not None and sub_layout.indexOf(self.panel._top_bar) != -1:
+                canvas_column = sub_layout
+                break
+        self.assertIsNotNone(canvas_column)
+        self.assertLess(canvas_column.indexOf(self.panel._top_bar), canvas_column.indexOf(self.panel._view))
+        style = self.panel._top_bar.styleSheet()
+        self.assertIn("border-bottom: 1px solid", style)
+
+    def test_canvas_tools_bar_is_horizontal_with_no_border_of_its_own(self) -> None:
+        """Flipped from a vertical strip (2026-09-30, maintainer request) -
+        Select and Add ROI now sit side by side; the border moved to the
+        wrapping top bar, so this widget draws none itself."""
+        self.assertIsInstance(self.panel._canvas_tools.layout(), QtWidgets.QHBoxLayout)
+        self.assertIn("border: none", self.panel._canvas_tools.styleSheet())
+        self.assertNotIn("border-right", self.panel._canvas_tools.styleSheet())
 
 
 if __name__ == "__main__":
