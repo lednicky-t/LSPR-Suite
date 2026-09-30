@@ -392,6 +392,39 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.assertFalse(button.icon().isNull())
         self.assertIn("border: none", button.styleSheet())
 
+    # -- display-settings persistence (2026-09-30) ---------------------------
+
+    def test_initial_display_settings_are_applied_at_construction(self) -> None:
+        """`AppSettings.histogram_*` / `HistogramPanel(initial_*=...)` -
+        maintainer request: histogram settings-dialog controls must survive
+        an app restart. See `test_lspri_rewrite_visual_settings_restore.py`
+        for the full round trip through `build_main_window`."""
+        panel = HistogramPanel(
+            self.image_panel, self.geometry, self.mask, self.chromatic, self.roi_toolbox, self.highlight_range,
+            initial_percent_mode=False, initial_log_y=True, initial_bin_width=64, initial_line_width=3.0,
+        )
+        self.assertFalse(panel._percent_mode)
+        self.assertTrue(panel._log_y)
+        self.assertEqual(panel._bin_width, 64.0)
+        self.assertEqual(panel._line_width, 3.0)
+        self.assertEqual(panel._plot._all_pixels_curve.opts["pen"].widthF(), 3.0)
+
+    def test_changing_a_dialog_control_emits_display_settings_changed(self) -> None:
+        self._load()
+        received: list[tuple[bool, bool, int, float]] = []
+        self.panel.display_settings_changed.connect(lambda *args: received.append(args))
+        self.panel._show_settings_dialog()
+        self.panel._settings_dialog.axis_mode_combo.setCurrentIndex(1)  # Counts, not Percent
+        self.panel._settings_dialog.scale_combo.setCurrentIndex(1)  # Log
+        self.panel._settings_dialog.bin_spin.setValue(32)
+        self.panel._settings_dialog.line_width_spin.setValue(4.0)
+        self.assertEqual(len(received), 4)
+        percent_mode, log_y, bin_width, line_width = received[-1]
+        self.assertFalse(percent_mode)
+        self.assertTrue(log_y)
+        self.assertEqual(bin_width, 32)
+        self.assertEqual(line_width, 4.0)
+
     def test_cursor_overlay_toggle_and_value_readout(self) -> None:
         self._load()
         overlay = self.panel._plot._cursor_overlay

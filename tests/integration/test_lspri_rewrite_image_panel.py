@@ -599,5 +599,101 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertNotIn("border-right", self.panel._canvas_tools.styleSheet())
 
 
+class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
+    """Regression tests for the viewport (pan/zoom) restore-on-launch feature
+    (2026-09-30, maintainer request: "image area, position... should be
+    restorable during app launch"). `AppSettings.image_view_*` /
+    `ImagePanel(initial_view_range=...)` / `view_range_changed` ->
+    `app_rewrite.py`'s `_persist` wiring - see
+    `test_lspri_rewrite_visual_settings_restore.py` for the full round trip
+    through `build_main_window`."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self._tmp.name)
+        self.dataset_model = _write_dataset(self.root)
+        self.dataset = DatasetModule()
+
+    def tearDown(self) -> None:
+        self.panel._renderer.stop()
+        self._tmp.cleanup()
+
+    def _build_panel(self, *, initial_view_range=None) -> "ImagePanel":
+        panel = ImagePanel(
+            self.dataset, GeometryModule(), MaskModule(), ChromaticModule(),
+            BackgroundModule(), RoiToolbox(), SelectionModule(), ActiveToolModule(),
+            ReferenceFrameModule(), initial_view_range=initial_view_range,
+        )
+        self.panel = panel
+        panel.resize(400, 280)
+        panel.show()
+        return panel
+
+    @staticmethod
+    def _center(lo: float, hi: float) -> float:
+        return (lo + hi) / 2.0
+
+    def test_no_saved_range_leaves_pyqtgraph_auto_range_in_charge(self) -> None:
+        """First-ever launch (or an older settings file predating this
+        field): `initial_view_range=None` must not call `setRange` at all -
+        only pin that the panel still renders normally."""
+        panel = self._build_panel(initial_view_range=None)
+        self.dataset.load_dataset(self.dataset_model)
+        _pump()
+        self.assertTrue(panel._view_range_restored)
+        self.assertIsNotNone(panel._image_item.image)
+
+    def test_a_saved_range_is_applied_after_the_first_render(self) -> None:
+        """`setAspectLocked(True)` (panel.py's `_build_ui`) means an exact
+        `setRange(..., padding=0)` can end up slightly wider than requested
+        on whichever axis needs to grow to match the ViewBox's actual screen
+        pixel aspect - it never shrinks or re-centers, though (confirmed
+        empirically: same center, span >= requested). So this pins the two
+        things a restore actually promises - the *requested* center, and a
+        span no smaller than requested - rather than exact pixel bounds,
+        which the aspect lock makes environment-dependent."""
+        panel = self._build_panel(initial_view_range=((5.0, 45.0), (2.0, 30.0)))
+        self.dataset.load_dataset(self.dataset_model)
+        _pump()
+        x_range, y_range = panel._plot.vb.viewRange()
+        self.assertAlmostEqual(self._center(*x_range), 25.0, delta=0.5)
+        self.assertAlmostEqual(self._center(*y_range), 16.0, delta=0.5)
+        self.assertGreaterEqual(x_range[1] - x_range[0], 39.5)
+        self.assertGreaterEqual(y_range[1] - y_range[0], 27.5)
+        # And clearly not the full-image auto-fit (the test image is 80x64) -
+        # proof this is the restored range, not the pre-existing default.
+        self.assertLess(x_range[1] - x_range[0], 70.0)
+
+    def test_the_saved_range_is_never_reapplied_on_a_later_frame_change(self) -> None:
+        """Restoring must be a one-shot: navigating to a different frame
+        after restore must not snap the view back, or the user could never
+        actually zoom/pan during the session."""
+        panel = self._build_panel(initial_view_range=((5.0, 45.0), (2.0, 30.0)))
+        self.dataset.load_dataset(self.dataset_model)
+        _pump()
+        panel._plot.vb.setRange(xRange=(0.0, 80.0), yRange=(0.0, 64.0), padding=0.0)
+        panel._selection.set_wavelength(550.0)
+        _pump()
+        x_range, _ = panel._plot.vb.viewRange()
+        # Moved to (roughly) the manual target's own center, not snapped
+        # back to the restored range's center (25.0).
+        self.assertAlmostEqual(self._center(*x_range), 40.0, delta=2.0)
+
+    def test_panning_emits_view_range_changed_after_the_debounce(self) -> None:
+        panel = self._build_panel(initial_view_range=None)
+        self.dataset.load_dataset(self.dataset_model)
+        _pump()
+        received: list[tuple[float, float, float, float]] = []
+        panel.view_range_changed.connect(lambda *args: received.append(args))
+        panel._plot.vb.setRange(xRange=(10.0, 50.0), yRange=(5.0, 40.0), padding=0.0)
+        _pump(1.0)  # longer than _VIEW_RANGE_PERSIST_DEBOUNCE_MS
+        self.assertTrue(received)
+        x_min, x_max, y_min, y_max = received[-1]
+        self.assertAlmostEqual(self._center(x_min, x_max), 30.0, delta=0.5)
+        self.assertAlmostEqual(self._center(y_min, y_max), 22.5, delta=0.5)
+        self.assertGreaterEqual(x_max - x_min, 39.5)
+        self.assertGreaterEqual(y_max - y_min, 34.5)
+
+
 if __name__ == "__main__":
     unittest.main()
