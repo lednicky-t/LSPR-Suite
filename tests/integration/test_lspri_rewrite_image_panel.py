@@ -25,6 +25,7 @@ import unittest
 from pathlib import Path
 
 from PyQt6 import QtWidgets
+from PyQt6.QtGui import QColor
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -568,10 +569,94 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         section = self.panel._transforms_section
         self.assertIsInstance(section, TransformsSection)
-        self.assertIs(self.panel._tool_ribbon._stack.widget(0), section)
+        # The tab's page is a small container (Transforms | mask-overlay
+        # controls, 2026-09-30 - see mask_overlay_controls.py), not the
+        # TransformsSection directly any more; it must still be reachable
+        # as a child of that page.
+        self.assertIs(section.parentWidget(), self.panel._tool_ribbon._stack.widget(0))
 
         section._rotate_button.click()
         self.assertIs(self.panel._active_tool.active(), ImageTool.ROTATE)
+
+    # -- mask overlay (2026-09-30, maintainer request: "implement...the
+    # mask overlay features" - show/hide + color + transparency, ported
+    # from the stable app's `show_mask_check`/`mask_color_button`/
+    # `mask_alpha_slider`) -------------------------------------------------
+
+    def test_mask_overlay_controls_live_in_the_image_tools_tab(self) -> None:
+        """Next to Transforms in the same "Image tools" tab, separated by a
+        vertical divider ("can be separated by |", maintainer request)."""
+        from lspr_imaging_app.panels.image.mask_overlay_controls import MaskOverlayControls
+
+        controls = self.panel._mask_overlay_controls
+        self.assertIsInstance(controls, MaskOverlayControls)
+        page = self.panel._tool_ribbon._stack.widget(0)
+        self.assertIs(controls.parentWidget(), page)
+        self.assertIs(self.panel._mask_overlay_separator.parentWidget(), page)
+
+    def test_mask_overlay_draws_the_chosen_color_over_masked_pixels(self) -> None:
+        self._load()
+        mask = np.zeros((64, 80), dtype=bool)
+        mask[10:20, 10:20] = True
+        self.mask.set_mask_change((0, 500.0), "persistent", mask)
+        _pump()
+
+        self.assertTrue(self.panel._mask_overlay_item.isVisible())
+        overlay = self.panel._mask_overlay_item.image
+        self.assertEqual(overlay.shape, (64, 80, 4))
+        color = self.panel._mask_overlay_color
+        expected = (color.red(), color.green(), color.blue(), int(round(self.panel._mask_overlay_alpha * 255.0)))
+        self.assertEqual(tuple(overlay[15, 15]), expected)
+        self.assertEqual(tuple(overlay[0, 0]), (0, 0, 0, 0))
+
+    def test_mask_overlay_hides_when_toggled_off_and_returns_when_toggled_on(self) -> None:
+        self._load()
+        mask = np.zeros((64, 80), dtype=bool)
+        mask[10:20, 10:20] = True
+        self.mask.set_mask_change((0, 500.0), "persistent", mask)
+        _pump()
+        self.assertTrue(self.panel._mask_overlay_item.isVisible())
+
+        self.panel._mask_overlay_controls._toggle_button.click()
+        self.assertFalse(self.panel._mask_overlay_item.isVisible())
+
+        self.panel._mask_overlay_controls._toggle_button.click()
+        self.assertTrue(self.panel._mask_overlay_item.isVisible())
+
+    def test_mask_overlay_color_and_alpha_changes_redraw_without_a_new_render(self) -> None:
+        """Color/alpha are cosmetic-only: changing them must not touch the
+        async pixel-render pipeline (`_mask_overlay_state` cache is reused),
+        only the overlay tint itself - same "cosmetic vs computational"
+        distinction the rest of this rewrite already draws."""
+        self._load()
+        mask = np.zeros((64, 80), dtype=bool)
+        mask[10:20, 10:20] = True
+        self.mask.set_mask_change((0, 500.0), "persistent", mask)
+        _pump()
+
+        serial_before = self.panel._latest_serial
+        new_color = QColor("#38bdf8")
+        self.panel._mask_overlay_controls.color_changed.emit(new_color)
+        self.panel._mask_overlay_controls.alpha_changed.emit(0.2)
+
+        self.assertEqual(self.panel._latest_serial, serial_before)
+        overlay = self.panel._mask_overlay_item.image
+        self.assertEqual(tuple(overlay[15, 15]), (new_color.red(), new_color.green(), new_color.blue(), 51))
+
+    def test_mask_overlay_hides_while_a_preview_tool_is_active(self) -> None:
+        """Same "wrong coordinate space" reasoning as the ROI overlay: a
+        preview tool (rotate/crop) shows the uncropped image, a different
+        canvas than the authored mask was resolved against."""
+        self._load()
+        mask = np.zeros((64, 80), dtype=bool)
+        mask[10:20, 10:20] = True
+        self.mask.set_mask_change((0, 500.0), "persistent", mask)
+        _pump()
+        self.assertTrue(self.panel._mask_overlay_item.isVisible())
+
+        self.panel._active_tool.set_active(ImageTool.ROTATE, True)
+        _pump()
+        self.assertFalse(self.panel._mask_overlay_item.isVisible())
 
     def test_tool_info_and_cursor_icon_match_the_bars_other_icons(self) -> None:
         """"make cursor and i icon same as other icons in the bar... this
