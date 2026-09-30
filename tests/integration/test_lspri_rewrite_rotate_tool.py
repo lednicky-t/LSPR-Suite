@@ -52,7 +52,7 @@ try:
     from lspr_imaging_app.panels.image.image_controls import ImageViewBox, controls_for, controls_text
     from lspr_imaging_app.panels.workflow.transforms_settings import TransformsSection
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.selection import SelectionModule
+    from lspr_imaging_app.selection import ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
@@ -153,7 +153,7 @@ class RotateToolTest(unittest.TestCase):
         self.selection = SelectionModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(),
-            self.roi_toolbox, self.selection, self.active_tool,
+            self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(),
         )
         self.tool = self.panel._rotate_tool
         self.status_messages: list[str] = []

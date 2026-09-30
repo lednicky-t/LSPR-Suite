@@ -62,7 +62,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.crop_tool import CropTool
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.selection import SelectionModule
+    from lspr_imaging_app.selection import ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
@@ -419,7 +419,7 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         self.selection = SelectionModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(),
-            self.roi_toolbox, self.selection, self.active_tool,
+            self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(),
         )
         self.tool = self.panel._crop_tool
         self.enterContext(mock.patch.object(QtWidgets.QMenu, "exec", _pick_first_enabled_action))

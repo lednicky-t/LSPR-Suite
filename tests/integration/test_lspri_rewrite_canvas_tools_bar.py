@@ -50,7 +50,7 @@ try:
     from lspr_imaging_app.panels.image.canvas_tools import CanvasToolsBar, ToolVariant, _ToolGroupButton
     from lspr_imaging_app.panels.image.image_controls import controls_for, controls_text
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.selection import SelectionModule
+    from lspr_imaging_app.selection import ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
@@ -174,6 +174,43 @@ class CanvasToolsBarButtonsTest(unittest.TestCase):
         self.assertFalse(self.bar._add_roi_button.isChecked())
         self.assertTrue(self.bar._select_button.isChecked())
 
+    # -- sizing and border (2026-09-30, maintainer request) -----------------
+
+    def test_buttons_are_sized_to_hug_the_icons(self) -> None:
+        """Shrunk from the first pass's 28px (borrowed from the horizontal
+        Transforms row) - a vertical strip docked to the canvas edge should
+        read as a thin rail, not a second toolbar's worth of width."""
+        from lspr_imaging_app.panels.image.canvas_tools import _BUTTON_SIZE, _ICON_SIZE
+
+        self.assertEqual(self.bar._select_button.size().width(), _BUTTON_SIZE)
+        self.assertEqual(self.bar._select_button.iconSize().width(), _ICON_SIZE)
+        self.assertLess(_BUTTON_SIZE, 28)
+
+    def test_bar_width_is_close_to_one_buttons_width(self) -> None:
+        """The whole point of tightening the layout margins - the bar's own
+        width should not meaningfully exceed a single button's width plus
+        its margins, not leave visible slack around the icons."""
+        from lspr_imaging_app.panels.image.canvas_tools import _BAR_MARGIN, _BUTTON_SIZE
+
+        self.assertEqual(self.bar.sizeHint().width(), _BUTTON_SIZE + 2 * _BAR_MARGIN)
+
+    def test_right_edge_has_a_subtle_border_against_the_canvas(self) -> None:
+        """The reported bug: this bar and the canvas beside it share the
+        same background, so the seam between them was invisible. Only the
+        right edge (the one that actually touches the canvas) should be
+        bordered."""
+        style = self.bar.styleSheet()
+        self.assertIn("border-right: 1px solid", style)
+        self.assertNotIn("border-left", style)
+        self.assertNotIn("border-top", style)
+        self.assertNotIn("border-bottom", style)
+
+    def test_border_color_updates_on_a_live_theme_switch(self) -> None:
+        from lspr_ui import BRIGHT_THEME
+
+        self.bar.refresh_theme(BRIGHT_THEME)
+        self.assertIn(BRIGHT_THEME.toolbar_border, self.bar.styleSheet())
+
 
 class AddRoiToolTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -188,7 +225,7 @@ class AddRoiToolTest(unittest.TestCase):
         self.selection = SelectionModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(),
-            self.roi_toolbox, self.selection, self.active_tool,
+            self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(),
         )
         self.enterContext(mock.patch.object(QtWidgets.QMenu, "exec", _pick_first_enabled_action))
         self.panel.resize(900, 700)

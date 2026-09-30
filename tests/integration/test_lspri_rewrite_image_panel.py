@@ -49,7 +49,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.render import RenderRequest, RenderResult
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.selection import SelectionModule
+    from lspr_imaging_app.selection import ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
@@ -100,9 +100,11 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.background = BackgroundModule()
         self.roi_toolbox = RoiToolbox()
         self.selection = SelectionModule()
+        self.reference_frame = ReferenceFrameModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, ActiveToolModule(),
+            self.reference_frame,
         )
 
     def tearDown(self) -> None:
@@ -279,6 +281,192 @@ class RewriteImagePanelTest(unittest.TestCase):
         overlay.toggle()
         self.assertIsNone(overlay._value_at(-5.0, -5.0))
         self.assertIsNone(overlay._value_at(9999.0, 9999.0))
+
+    # -- Cube/Wavelength slider (ported 2026-09-30, docs/image_area_slider_
+    # redesign.md) --------------------------------------------------------
+
+    def test_cube_and_wavelength_sliders_are_ranged_on_load(self) -> None:
+        self._load()
+        self.assertTrue(self.panel._cube_slider.isEnabled())
+        self.assertEqual((self.panel._cube_slider.minimum(), self.panel._cube_slider.maximum()), (0, 1))
+        self.assertTrue(self.panel._wavelength_slider.isEnabled())
+        # cube 0 has all three wavelengths.
+        self.assertEqual((self.panel._wavelength_slider.minimum(), self.panel._wavelength_slider.maximum()), (0, 2))
+
+    def test_wavelength_slider_reranges_for_a_cube_short_a_wavelength(self) -> None:
+        """The rewrite's `wavelengths_for_cube` is per-cube, unlike the
+        stable app's single dataset-wide wavelength array - the slider must
+        re-tick on every cube change, not just once at dataset load."""
+        self._load()
+        self.panel._cube_spin.setValue(1)  # cube 1 only has 500.0/600.0
+        self.assertEqual(self.panel._wavelength_slider.maximum(), 1)
+
+    def test_dragging_the_cube_slider_drives_selection_and_spin(self) -> None:
+        """The slider is a second front door onto the same
+        `SelectionModule.set_cube` command the spin box already uses - never
+        a direct write to the spin box."""
+        self._load()
+        self.panel._cube_slider.setValue(1)  # click/drag, same signal a real gesture produces
+        self.assertEqual(self.selection.current_cube(), 1)
+        self.assertEqual(self.panel._cube_spin.value(), 1)
+
+    def test_dragging_the_wavelength_slider_drives_selection_and_spin(self) -> None:
+        self._load()
+        self.panel._wavelength_slider.setValue(2)  # index 2 -> 600.0 nm on cube 0
+        self.assertEqual(self.selection.current_wavelength(), 600.0)
+        self.assertEqual(self.panel._wavelength_spin.value(), 600.0)
+
+    def test_selection_changed_elsewhere_still_updates_the_nav_widgets(self) -> None:
+        """The one-way-flow property applied to the nav widgets themselves:
+        a change that did not come from this panel's own handlers (e.g. a
+        future ROI-table "go to this ROI's cube" action) must still be
+        reflected, not just changes the panel's own spin/slider caused."""
+        self._load()
+        self.selection.set_cube(1)  # bypasses the panel's own spin/slider handlers entirely
+        self.assertEqual(self.panel._cube_spin.value(), 1)
+        self.assertEqual(self.panel._cube_slider.value(), 1)
+
+    def test_reference_highlight_tracks_the_manual_reference_frame(self) -> None:
+        self._load()
+        self.reference_frame.set_manual_frame(1, 600.0)
+        self.panel._cube_spin.setValue(0)
+        self.panel._wavelength_spin.setValue(500.0)
+        self.assertIsNone(self.panel._cube_slider._reference_highlight_color)
+        self.assertIsNone(self.panel._wavelength_slider._reference_highlight_color)
+
+        self.panel._cube_spin.setValue(1)
+        self.panel._wavelength_spin.setValue(600.0)
+        self.assertIsNotNone(self.panel._cube_slider._reference_highlight_color)
+        self.assertIsNotNone(self.panel._wavelength_slider._reference_highlight_color)
+
+    def test_wavelength_jump_completer_lists_the_current_cubes_wavelengths(self) -> None:
+        self._load()
+        self.panel._cube_spin.setValue(1)  # 500.0 / 600.0 only
+        model = self.panel._wavelength_completer.model()
+        texts = {model.data(model.index(i, 0)) for i in range(model.rowCount())}
+        self.assertEqual(texts, {"500.0", "600.0"})
+
+    # -- navigation bar border (2026-09-30, maintainer request) --------------
+
+    def test_navigation_bar_has_a_subtle_border_against_the_canvas(self) -> None:
+        """The reported bug: this bar (Cube/λ rows + status row) and the
+        canvas above it (moved below the canvas 2026-09-30) share the same
+        background, so the seam between them was invisible. Only the top
+        edge (the one that actually touches the canvas) should be
+        bordered."""
+        style = self.panel._controls_bar.styleSheet()
+        self.assertIn("border-top: 1px solid", style)
+        self.assertNotIn("border-left", style)
+        self.assertNotIn("border-right", style)
+        self.assertNotIn("border-bottom", style)
+
+    def test_navigation_bar_border_updates_on_a_live_theme_switch(self) -> None:
+        from lspr_ui import APP_THEME, BRIGHT_THEME, set_active_theme
+
+        set_active_theme(BRIGHT_THEME)
+        try:
+            self.panel.refresh_theme()
+            self.assertIn(BRIGHT_THEME.toolbar_border, self.panel._controls_bar.styleSheet())
+        finally:
+            set_active_theme(APP_THEME)
+            self.panel.refresh_theme()
+
+    # -- wavelength slider tick labels (2026-09-30, real bug) ----------------
+
+    def test_wavelength_tick_labels_always_show_the_real_value_at_their_index(self) -> None:
+        """Real bug, not cosmetic: the first-pass port labeled a tick with
+        the nearest *round* 100 nm boundary ("400") while positioning it at
+        whichever real value happened to be closest to that boundary - for
+        this deliberately gappy set (nothing between 250 and 470), that put
+        "400" on the index whose real value is 470, so clicking "400"
+        actually selected 470 nm. Every label must now equal `values[index]`
+        exactly, for any gap shape - never a fabricated round number."""
+        values = (200.0, 250.0, 470.0, 500.0, 600.0)
+        majors = self.panel._wavelength_slider_major_ticks(values)
+        for index, label in majors.items():
+            self.assertEqual(label, f"{values[index]:.0f}")
+        # The exact reported symptom: the tick nearest 400 nm must read
+        # "470", never "400", once it is positioned at index 2.
+        self.assertEqual(majors[2], "470")
+        self.assertNotIn("400", majors.values())
+
+    def test_wavelength_tick_labels_cover_every_point_for_a_small_dataset(self) -> None:
+        """Below the "nice interval" target-ticks threshold, every index
+        gets its own label - matches `_cube_slider_major_ticks`'s identical
+        shape for the same reason."""
+        values = (405.3, 452.1, 498.9)
+        majors = self.panel._wavelength_slider_major_ticks(values)
+        self.assertEqual(majors, {0: "405", 1: "452", 2: "499"})
+
+    def test_wavelength_tick_labels_empty_for_fewer_than_two_points(self) -> None:
+        self.assertEqual(self.panel._wavelength_slider_major_ticks(()), {})
+        self.assertEqual(self.panel._wavelength_slider_major_ticks((500.0,)), {})
+
+    # -- wavelength axis gap break (2026-09-30, revised same day) -----------
+
+    def test_wavelength_ticks_label_both_sides_of_a_real_gap(self) -> None:
+        """Real scenario this was built for: a genuine 0 nm frame (a dark/
+        reference image, still a real, selectable index) followed by a big
+        jump to the first real spectral wavelength - `DataAxisSlider` draws
+        the break glyph between whichever two indices this labels, so both
+        must be labeled with their own real value, not left for the routine
+        every-Nth-index rule to maybe skip."""
+        values = (0.0, 470.0, 500.0, 550.0, 600.0)
+        majors = self.panel._wavelength_slider_major_ticks(values)
+        self.assertEqual(majors[0], "0")
+        self.assertEqual(majors[1], "470")
+
+    def test_wavelength_ticks_no_forced_labels_for_a_regular_grid(self) -> None:
+        """The forced-labeling-around-a-gap rule must not fire when there is
+        no real gap to mark - every label still comes from the ordinary
+        every-Nth-index rule."""
+        values = (470.0, 500.0, 550.0, 600.0, 650.0)
+        majors = self.panel._wavelength_slider_major_ticks(values)
+        self.assertEqual(majors, {index: f"{value:.0f}" for index, value in enumerate(values)})
+
+    # -- navigation row layout polish (2026-09-30, maintainer request) ------
+
+    def test_reference_jump_button_no_longer_exists(self) -> None:
+        self.assertFalse(hasattr(self.panel, "_reference_jump_button"))
+
+    def test_number_fields_show_plain_numbers_no_unit_text(self) -> None:
+        """"Cube "/" nm" removed from the fields themselves - the row's own
+        title label ("Cube" / "λ (nm)") already says what the number means,
+        so the field repeating it was redundant."""
+        self._load()
+        self.assertEqual(self.panel._cube_spin.prefix(), "")
+        self.assertEqual(self.panel._cube_spin.suffix(), "")
+        self.assertEqual(self.panel._wavelength_spin.prefix(), "")
+        self.assertEqual(self.panel._wavelength_spin.suffix(), "")
+        self.assertEqual(self.panel._cube_spin.text(), "0")
+        self.assertEqual(self.panel._wavelength_spin.text(), "500.0")
+
+    def test_titles_and_number_fields_share_one_width_each(self) -> None:
+        """"Cube" and "λ (nm)" are different lengths, and so are their
+        number fields' typical contents - without a shared fixed width,
+        the two sliders started at different x positions and the two
+        number fields didn't line up on the right."""
+        # Located by content rather than assuming child order.
+        labels = {label.text(): label for label in self.panel.findChildren(QtWidgets.QLabel)}
+        self.assertEqual(labels["Cube"].width(), labels["λ (nm)"].width())
+        self.assertEqual(self.panel._cube_spin.width(), self.panel._wavelength_spin.width())
+
+    def test_canvas_is_above_the_navigation_bar(self) -> None:
+        """Moved to the bottom of the panel (2026-09-30, maintainer
+        request) - the outer layout must place the canvas row before the
+        navigation bar, not after. `_canvas_tools` lives inside `canvas_row`,
+        an unnamed sub-layout, so find *that* sub-layout's position rather
+        than assuming a stored reference to it exists."""
+        outer_layout = self.panel.layout()
+        controls_index = outer_layout.indexOf(self.panel._controls_bar)
+        canvas_index = None
+        for i in range(outer_layout.count()):
+            sub_layout = outer_layout.itemAt(i).layout()
+            if sub_layout is not None and sub_layout.indexOf(self.panel._canvas_tools) != -1:
+                canvas_index = i
+                break
+        self.assertIsNotNone(canvas_index)
+        self.assertLess(canvas_index, controls_index)
 
 
 if __name__ == "__main__":

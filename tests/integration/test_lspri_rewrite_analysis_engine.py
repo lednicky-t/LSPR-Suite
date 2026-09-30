@@ -208,6 +208,98 @@ class RewriteAnalysisEngineTest(unittest.TestCase):
         self.assertEqual(len(self.engine.preview_recompute(AnalysisScope.ALL_ROIS).to_recompute), 4)
 
 
+def _write_dataset_with_dark_frame(root: Path) -> ImageDataset:
+    """One cube, three real spectral wavelengths plus a 0.0 nm dark/
+    background frame - what a dataset actually looks like when the LED-off
+    frame was acquired (see `dataset.model.DARK_FRAME_WAVELENGTH_NM`)."""
+    records = []
+    rng = np.random.default_rng(11)
+    base = rng.uniform(900.0, 1100.0, size=(64, 80)).astype(np.float32)
+    for wavelength in (0.0, 500.0, 550.0, 600.0):
+        path = root / f"cube0_wl{int(wavelength)}.tif"
+        frame = base + (wavelength - 500.0) * 0.5
+        frame[28:33, 38:43] += 5000.0
+        frame[32:37, 45:50] += 5000.0
+        tifffile.imwrite(str(path), frame)
+        records.append(
+            ImageRecord(key=ImageKey(wavelength_nm=wavelength, spectral_cube_index=0), path=path)
+        )
+    return ImageDataset(folder=root, records=records, source_format="image_stack")
+
+
+class RewriteDarkFrameExclusionTest(unittest.TestCase):
+    """The dark/background frame (0.0 nm, when present) must never become a
+    point in a stored spectrum - `dataset.model.is_dark_frame_wavelength`'s
+    contract, enforced in `AnalysisEngine._gather_wavelength_inputs`/
+    `_gather_current_inputs`/`_naming` (fixed 2026-09-30, see
+    `docs/dark_frame_wavelength_zero_policy.md`)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self._tmp.name)
+        self.dataset_model = _write_dataset_with_dark_frame(self.root)
+
+        self.dataset = DatasetModule()
+        self.geometry = GeometryModule()
+        self.mask = MaskModule()
+        self.chromatic = ChromaticModule()
+        self.background = BackgroundModule()
+        self.roi_toolbox = RoiToolbox()
+        self.engine = _build_analysis_engine(
+            self.dataset, self.geometry, self.mask, self.chromatic, self.background, self.roi_toolbox
+        )
+        self.dataset.load_dataset(self.dataset_model)
+        self.engine.set_storage_root(self.dataset_model.home)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _run_to_completion(self) -> None:
+        done: list[bool] = []
+        self.engine.analysis_complete.connect(lambda: done.append(True))
+        self.engine.run_analysis(AnalysisScope.ALL_ROIS)
+        deadline = time.monotonic() + _RUN_TIMEOUT_SECONDS
+        while not done and time.monotonic() < deadline:
+            _APP.processEvents()
+            time.sleep(0.01)
+        self.assertTrue(done, "analysis never completed")
+
+    def test_dark_frame_confirmed_present_in_the_dataset(self) -> None:
+        """Sanity check on the fixture itself - if this ever fails the rest
+        of the class is testing nothing."""
+        self.assertIn(0.0, self.dataset.wavelengths_for_cube(0))
+
+    def test_the_stored_cell_excludes_the_dark_frame(self) -> None:
+        roi = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0)
+        self._run_to_completion()
+
+        stored = self.engine.get_spectrum(roi, 0)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.wavelengths_nm, (500.0, 550.0, 600.0))
+        self.assertNotIn(0.0, stored.wavelengths_nm)
+
+    def test_the_formula_spectrum_and_metric_never_see_the_dark_frame(self) -> None:
+        roi = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0)
+        self._run_to_completion()
+
+        spectrum = self.engine.formula_spectrum(roi, 0)
+        self.assertNotIn(0.0, spectrum.wavelengths_nm.tolist())
+        metric_wavelength = self.engine.get_metric(roi, 0)
+        self.assertNotEqual(metric_wavelength, 0.0)
+
+    def test_planning_and_compute_agree_on_the_dark_frame_exclusion(self) -> None:
+        """The regression this class exists to guard against isn't just a
+        wrong stored value - it's `_gather_current_inputs` (planning) and
+        `_gather_wavelength_inputs` (compute) disagreeing about which
+        wavelengths exist, which would make every cell look permanently
+        stale (the same failure shape as the placeholder-mask-version bug
+        `RewriteAnalysisEngineTest` guards against)."""
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0)
+        self.assertEqual(len(self.engine.preview_recompute(AnalysisScope.ALL_ROIS).to_recompute), 1)
+        self._run_to_completion()
+        self.assertEqual(len(self.engine.preview_recompute(AnalysisScope.ALL_ROIS).to_recompute), 0)
+
+
 class RewriteBackgroundExclusionTest(unittest.TestCase):
     """The background-exclusion port gap, closed 2026-09-23.
 

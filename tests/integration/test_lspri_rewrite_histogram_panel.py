@@ -49,7 +49,7 @@ try:
     from lspr_imaging_app.panels.histogram import HistogramPanel
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.selection import HighlightRangeModule, SelectionModule
+    from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
 
@@ -96,7 +96,7 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.highlight_range = HighlightRangeModule()
         self.image_panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
-            self.background, self.roi_toolbox, self.selection, ActiveToolModule(),
+            self.background, self.roi_toolbox, self.selection, ActiveToolModule(), ReferenceFrameModule(),
         )
         self.panel = HistogramPanel(
             self.image_panel, self.geometry, self.mask, self.chromatic, self.roi_toolbox, self.highlight_range,
@@ -319,34 +319,73 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.assertNotEqual(list(y_range), [0, 1])
         self.assertGreater(y_range[1], 50.0)  # the real peak is ~100% in one bin
 
-    def test_auto_range_button_is_hidden(self) -> None:
-        """Every other plot in the stable app already hides pyqtgraph's own
-        "A" corner button; this one was missed when first built."""
-        self.assertTrue(self.panel._plot._plot_item.buttonsHidden)
+    def test_auto_range_button_is_not_permanently_hidden(self) -> None:
+        """Reversed 2026-09-30 (maintainer request: real X zoom/pan, so
+        "jump back to seeing everything" needs to be reachable again).
+        pyqtgraph's own `updateButtons()` decides moment-to-moment
+        show/hide (hover + not-already-at-auto-range) - this only pins that
+        nothing here forces it permanently off via `buttonsHidden`."""
+        self.assertFalse(self.panel._plot._plot_item.buttonsHidden)
 
-    def test_x_axis_survives_a_viewbox_autorange_call(self) -> None:
-        """Regression pin (maintainer's follow-up report, 2026-09-29):
-        hiding the "A" button alone was not enough - the right-click
-        context menu's "View All"/"Auto" actions reach the exact same
-        `ViewBox.autoRange()` by a different door, confirmed by direct
-        testing to ignore per-axis auto-range flags and refit X to the
-        data's own (padded, sometimes negative) bounds. `vb.autoRange()`
-        here is exactly what that menu action calls - not a proxy for it."""
+    def test_auto_range_resets_x_to_the_full_16bit_range_not_data_bounds(self) -> None:
+        """Reversed 2026-09-30: X used to be physically incapable of being
+        anything but [0, 65535] (`setLimits(minXRange=maxXRange=full_span)`),
+        so any `autoRange()` call trivially landed there. Now that X can
+        really zoom/pan, this pins the *replacement* mechanism - the
+        instance's wrapped `ViewBox.autoRange()` (`plot.py`'s `__init__`) -
+        actually resets X back to the full sensor range instead of fitting
+        to whatever data happens to be visible, exactly like the old
+        (now-removed) hard lock used to guarantee for free. Covers both
+        doors that reach it: the corner "A" button and the right-click
+        menu's "View All"/"Auto" (`vb.autoRange()` here is exactly what
+        that menu action calls, not a proxy for it)."""
         self._load()
         vb = self.panel._plot._plot_item.getViewBox()
+        vb.setXRange(10_000.0, 20_000.0, padding=0.0)  # zoom in first, so autoRange has to move X back
         vb.autoRange()
         x_range, y_range = vb.viewRange()
         self.assertEqual(list(x_range), [0.0, 65535.0])
-        self.assertGreater(y_range[1], 50.0)  # Y still auto-ranged normally, unaffected
+        self.assertGreater(y_range[1], 50.0)  # Y still auto-ranges normally, unaffected
 
-    def test_x_axis_mouse_interaction_is_disabled(self) -> None:
-        """Belt-and-braces alongside the reactive clamp above: prevents an
-        interactive drag/wheel-zoom from moving X in the first place, rather
-        than letting it happen and snapping back every intermediate step."""
+    def test_auto_button_click_resets_x_to_the_full_range(self) -> None:
+        """The corner "A" button's own click handler (`_on_auto_button_
+        clicked`) - a separate code path from `vb.autoRange()` above
+        (`PlotItem.autoBtnClicked`'s native behavior is `enableAutoRange()`,
+        not `autoRange()`), so both need their own pin."""
+        self._load()
+        vb = self.panel._plot._plot_item.getViewBox()
+        vb.setXRange(10_000.0, 20_000.0, padding=0.0)
+        self.panel._plot._on_auto_button_clicked()
+        x_range, _ = vb.viewRange()
+        self.assertEqual(list(x_range), [0.0, 65535.0])
+
+    def test_x_axis_mouse_interaction_is_enabled(self) -> None:
+        """Reversed 2026-09-30 (maintainer request): a drag/wheel-zoom on X
+        must actually move the view now, bounded only by `setLimits`
+        (`plot.py`'s `__init__`), not blocked outright."""
         vb = self.panel._plot._plot_item.getViewBox()
         mouse_enabled_x, mouse_enabled_y = vb.state["mouseEnabled"]
-        self.assertFalse(mouse_enabled_x)
+        self.assertTrue(mouse_enabled_x)
         self.assertTrue(mouse_enabled_y)
+
+    def test_x_axis_can_actually_zoom_in(self) -> None:
+        """The real-world behavior all of the above exists to enable -
+        `setXRange` is what a mouse-wheel zoom or a drag ultimately calls
+        under the hood, so this is the most direct proof X is no longer
+        physically incapable of moving."""
+        vb = self.panel._plot._plot_item.getViewBox()
+        vb.setXRange(1_000.0, 5_000.0, padding=0.0)
+        x_range, _ = vb.viewRange()
+        self.assertAlmostEqual(x_range[0], 1_000.0)
+        self.assertAlmostEqual(x_range[1], 5_000.0)
+
+    def test_x_axis_cannot_be_panned_outside_the_sensor_range(self) -> None:
+        """`setLimits(xMin=0, xMax=65535)` still bounds X - zoom/pan is now
+        real, not unlimited."""
+        vb = self.panel._plot._plot_item.getViewBox()
+        vb.setXRange(-5_000.0, 2_000.0, padding=0.0)
+        x_range, _ = vb.viewRange()
+        self.assertGreaterEqual(x_range[0], 0.0)
 
     def test_settings_icon_is_not_blank(self) -> None:
         button = self.panel._plot._settings_button
