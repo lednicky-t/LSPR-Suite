@@ -66,6 +66,7 @@ class AppSettingsTest(unittest.TestCase):
             layout_presets={"Analysis": "YmxvYg=="},
             auto_apply_preset_on_stage_change=True,
             active_workflow_stage="IMAGE_TOOLS",
+            expanded_subsections={"IMAGE_TOOLS:Transforms": True, "IMAGE_TOOLS:Mask": False},
         )
         save_app_settings(state, self.path)
         self.assertEqual(load_app_settings(self.path), state)
