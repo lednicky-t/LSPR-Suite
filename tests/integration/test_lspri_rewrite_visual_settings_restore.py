@@ -61,20 +61,20 @@ class VisualSettingsRestoreTests(unittest.TestCase):
 
     def test_no_saved_histogram_settings_fall_back_to_the_panel_defaults(self) -> None:
         panel = _panel(self._build(), "Histogram", HistogramPanel)
-        self.assertTrue(panel._percent_mode)
+        self.assertEqual(panel._y_mode, "percent")
         self.assertFalse(panel._log_y)
 
     def test_saved_histogram_settings_are_applied_at_launch(self) -> None:
         window = self._build(
             initial_settings=AppSettings(
-                histogram_percent_mode=False,
+                histogram_y_mode="counts",
                 histogram_log_y=True,
                 histogram_bin_width_px=128.0,
                 histogram_line_width_px=2.5,
             )
         )
         panel = _panel(window, "Histogram", HistogramPanel)
-        self.assertFalse(panel._percent_mode)
+        self.assertEqual(panel._y_mode, "counts")
         self.assertTrue(panel._log_y)
         self.assertEqual(panel._bin_width, 128.0)
         self.assertEqual(panel._line_width, 2.5)

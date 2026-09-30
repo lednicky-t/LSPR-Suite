@@ -154,6 +154,18 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         _, y = self.panel._plot._all_pixels_curve.getData()
         self.assertAlmostEqual(float(np.sum(y)), float(_IMAGE_SHAPE[0] * _IMAGE_SHAPE[1]), places=3)
 
+    def test_normalized_mode_peaks_at_one(self) -> None:
+        """Third Y-axis mode (maintainer's spec, 2026-09-30: "normalized
+        display (normalization would be towards highest value)") - each
+        curve normalizes to its own peak, not a shared one, so the tallest
+        bin of whichever population has any data reads as exactly 1.0."""
+        self._load()
+        self.panel._show_settings_dialog()
+        self.panel._settings_dialog.axis_mode_combo.setCurrentIndex(2)  # Normalized
+        _pump()
+        _, y = self.panel._plot._all_pixels_curve.getData()
+        self.assertAlmostEqual(float(np.max(y)), 1.0, places=6)
+
     def test_roi_adds_to_the_sample_curve(self) -> None:
         self._load()
         _, before = self.panel._plot._sample_curve.getData()
@@ -180,6 +192,70 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         _pump()
         x_after, _ = self.panel._plot._all_pixels_curve.getData()
         self.assertGreater(len(x_after), len(x_before))
+
+    def test_bin_spin_step_size_follows_the_non_uniform_table(self) -> None:
+        """Maintainer's spec, 2026-09-30: "can BIN jump by some reasonable
+        increments... 1..10 by one, then by 5 until 50, than by 10 until
+        100, and by 25 until 250, 50 until 500". `stepBy` is what a spin
+        arrow click or mouse-wheel notch actually calls - pinning it
+        directly rather than via a real click event, same as the line-width
+        spin box's own `valueChanged` tests elsewhere in this file."""
+        self.panel._show_settings_dialog()
+        spin = self.panel._settings_dialog.bin_spin
+        cases = [(1, 2), (9, 10), (10, 15), (49, 54), (50, 60), (99, 109), (100, 125), (249, 274), (250, 300)]
+        for start, expected_after_one_step_up in cases:
+            spin.setValue(start)
+            spin.stepBy(1)
+            self.assertEqual(spin.value(), expected_after_one_step_up, f"stepping up from {start}")
+
+    def test_changing_bin_width_refits_the_y_axis_even_after_a_manual_zoom(self) -> None:
+        """Regression pin (maintainer's report, 2026-09-30): "when I change
+        BIN size, the plot change but when I do autoscale it will [not] fit
+        the plot to area, it is stale." Reproduced by simulating the one
+        thing that actually disables pyqtgraph's own continuous Y auto-range
+        - a manual auto-range/zoom interaction - before changing the bin
+        size; without the fix, Y stays frozen at the pre-change fit."""
+        self._load()
+        vb = self.panel._plot._plot_item.getViewBox()
+        self.panel._plot._on_auto_button_clicked()  # disables continuous Y auto-range, same as a real zoom/pan would
+        self.assertFalse(vb.state["autoRange"][1])
+        self.panel._show_settings_dialog()
+        self.panel._settings_dialog.bin_spin.setValue(8192)  # one giant bin -> ~100% in it, very different from before
+        _pump()
+        _, y = self.panel._plot._all_pixels_curve.getData()
+        self.assertAlmostEqual(vb.viewRange()[1][1], float(np.max(y)), delta=float(np.max(y)) * 0.15)
+
+    def test_changing_axis_mode_refits_the_y_axis_even_after_a_manual_zoom(self) -> None:
+        """Same regression as above ("Same for changing axis to other
+        display"), for the Percent-of-total <-> Counts <-> Normalized combo
+        instead of bin size."""
+        self._load()
+        vb = self.panel._plot._plot_item.getViewBox()
+        self.panel._plot._on_auto_button_clicked()
+        self.panel._show_settings_dialog()
+        self.panel._settings_dialog.axis_mode_combo.setCurrentIndex(1)  # Counts - a much larger scale than Percent
+        _pump()
+        _, y = self.panel._plot._all_pixels_curve.getData()
+        self.assertAlmostEqual(vb.viewRange()[1][1], float(np.max(y)), delta=float(np.max(y)) * 0.15)
+
+    def test_double_clicking_the_y_axis_cycles_the_display_mode(self) -> None:
+        """Maintainer's spec, 2026-09-30: "can y axis be switchable also by
+        double clicking on it." Cycles Percent -> Counts -> Normalized ->
+        back to Percent, the same order as the settings dialog's combo."""
+        self._load()
+        self.assertEqual(self.panel._y_mode, "percent")
+        self.panel._plot.y_axis_double_clicked.emit()
+        self.assertEqual(self.panel._y_mode, "counts")
+        self.panel._plot.y_axis_double_clicked.emit()
+        self.assertEqual(self.panel._y_mode, "normalized")
+        self.panel._plot.y_axis_double_clicked.emit()
+        self.assertEqual(self.panel._y_mode, "percent")
+
+    def test_double_click_cycling_keeps_an_open_settings_dialog_in_sync(self) -> None:
+        self._load()
+        self.panel._show_settings_dialog()
+        self.panel._plot.y_axis_double_clicked.emit()
+        self.assertEqual(self.panel._settings_dialog.axis_mode_combo.currentIndex(), 1)
 
     def test_line_width_setting_applies_to_the_curves(self) -> None:
         self._load()
@@ -392,6 +468,25 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.assertFalse(button.icon().isNull())
         self.assertIn("border: none", button.styleSheet())
 
+    def test_settings_and_cursor_icons_match_the_image_panel_size(self) -> None:
+        """Regression pin (maintainer's report, 2026-09-30: "change cursor
+        and setting icon size to match size of icons in image panel") -
+        both go through `image/canvas_tools.style_bar_icon_button`, the one
+        shared place the Image panel's own overlay icons (crop apply,
+        canvas tools bar, its own cursor/"i" icons) get their size from, so
+        this pins the numbers against that function rather than duplicating
+        them here."""
+        from lspr_imaging_app.panels.image.canvas_tools import _BUTTON_SIZE, _ICON_SIZE
+
+        settings_button = self.panel._plot._settings_button
+        self.assertEqual(settings_button.iconSize().width(), _ICON_SIZE)
+        self.assertEqual(settings_button.height(), _BUTTON_SIZE)
+        self.assertEqual(settings_button.width(), _BUTTON_SIZE)
+
+        cursor_icon = self.panel._plot._cursor_overlay.icon_label
+        self.assertEqual(cursor_icon.iconSize().width(), _ICON_SIZE)
+        self.assertEqual(cursor_icon.height(), _BUTTON_SIZE)
+
     # -- display-settings persistence (2026-09-30) ---------------------------
 
     def test_initial_display_settings_are_applied_at_construction(self) -> None:
@@ -401,9 +496,9 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         for the full round trip through `build_main_window`."""
         panel = HistogramPanel(
             self.image_panel, self.geometry, self.mask, self.chromatic, self.roi_toolbox, self.highlight_range,
-            initial_percent_mode=False, initial_log_y=True, initial_bin_width=64, initial_line_width=3.0,
+            initial_y_mode="counts", initial_log_y=True, initial_bin_width=64, initial_line_width=3.0,
         )
-        self.assertFalse(panel._percent_mode)
+        self.assertEqual(panel._y_mode, "counts")
         self.assertTrue(panel._log_y)
         self.assertEqual(panel._bin_width, 64.0)
         self.assertEqual(panel._line_width, 3.0)
@@ -411,7 +506,7 @@ class RewriteHistogramPanelTest(unittest.TestCase):
 
     def test_changing_a_dialog_control_emits_display_settings_changed(self) -> None:
         self._load()
-        received: list[tuple[bool, bool, int, float]] = []
+        received: list[tuple[str, bool, int, float]] = []
         self.panel.display_settings_changed.connect(lambda *args: received.append(args))
         self.panel._show_settings_dialog()
         self.panel._settings_dialog.axis_mode_combo.setCurrentIndex(1)  # Counts, not Percent
@@ -419,8 +514,8 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.panel._settings_dialog.bin_spin.setValue(32)
         self.panel._settings_dialog.line_width_spin.setValue(4.0)
         self.assertEqual(len(received), 4)
-        percent_mode, log_y, bin_width, line_width = received[-1]
-        self.assertFalse(percent_mode)
+        y_mode, log_y, bin_width, line_width = received[-1]
+        self.assertEqual(y_mode, "counts")
         self.assertTrue(log_y)
         self.assertEqual(bin_width, 32)
         self.assertEqual(line_width, 4.0)
