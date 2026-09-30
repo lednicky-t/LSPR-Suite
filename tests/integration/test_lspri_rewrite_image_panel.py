@@ -44,6 +44,7 @@ try:
         BackgroundModule,
         ChromaticModule,
         GeometryModule,
+        ImageTool,
         MaskModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
@@ -542,17 +543,35 @@ class RewriteImagePanelTest(unittest.TestCase):
     def test_tool_info_and_cursor_icon_live_in_the_top_bar(self) -> None:
         """Both used to float as manually-`.move()`d overlays on the canvas
         itself; now they're ordinary widgets in the shared top bar, after
-        the Select/Add ROI tool buttons (`_canvas_tools`) with a stretch
-        between - tools on the left, utility icons on the right."""
+        the category ribbon (`_tool_ribbon`, added 2026-09-30 - see
+        `tool_ribbon.py`; `_canvas_tools`/Select/Add ROI now lives nested
+        inside it, under its "ROIs" tab, not directly in this layout) with a
+        stretch between - tools on the left, utility icons on the right."""
         top_bar_layout = self.panel._top_bar.layout()
         self.assertIs(self.panel._tool_info.parent(), self.panel._top_bar)
         self.assertIs(self.panel._cursor_overlay.icon_label.parent(), self.panel._top_bar)
-        canvas_tools_index = top_bar_layout.indexOf(self.panel._canvas_tools)
+        ribbon_index = top_bar_layout.indexOf(self.panel._tool_ribbon)
         cursor_index = top_bar_layout.indexOf(self.panel._cursor_overlay.icon_label)
         info_index = top_bar_layout.indexOf(self.panel._tool_info)
-        self.assertNotEqual(canvas_tools_index, -1)
-        self.assertLess(canvas_tools_index, cursor_index)
+        self.assertNotEqual(ribbon_index, -1)
+        self.assertLess(ribbon_index, cursor_index)
         self.assertLess(cursor_index, info_index)
+
+    def test_image_tools_tab_holds_a_transforms_section_wired_to_the_panels_own_modules(self) -> None:
+        """"duplicate transform tools and put them in image tools of image
+        panel" (maintainer request, 2026-09-30) - the ribbon's "Image tools"
+        tab is a second `TransformsSection` instance, not the Workflow
+        panel's own one moved here; it must share this panel's actual
+        `GeometryModule`/`ActiveToolModule` so the two rows stay in sync
+        (see `transforms_settings.py`'s module docstring)."""
+        from lspr_imaging_app.panels.workflow.transforms_settings import TransformsSection
+
+        section = self.panel._transforms_section
+        self.assertIsInstance(section, TransformsSection)
+        self.assertIs(self.panel._tool_ribbon._stack.widget(0), section)
+
+        section._rotate_button.click()
+        self.assertIs(self.panel._active_tool.active(), ImageTool.ROTATE)
 
     def test_tool_info_and_cursor_icon_match_the_bars_other_icons(self) -> None:
         """"make cursor and i icon same as other icons in the bar... this
@@ -660,9 +679,16 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         self.assertAlmostEqual(self._center(*y_range), 16.0, delta=0.5)
         self.assertGreaterEqual(x_range[1] - x_range[0], 39.5)
         self.assertGreaterEqual(y_range[1] - y_range[0], 27.5)
-        # And clearly not the full-image auto-fit (the test image is 80x64) -
-        # proof this is the restored range, not the pre-existing default.
-        self.assertLess(x_range[1] - x_range[0], 70.0)
+        # And clearly not the full-image auto-fit - proof this is the
+        # restored range, not the pre-existing default. The bound was 70.0
+        # before the Image panel's top bar grew a second ribbon row
+        # (`tool_ribbon.py`, 2026-09-30): that shrinks the canvas's share of
+        # this test's small fixed 280px panel height enough that the
+        # aspect-locked restore now lands around 75-76, still nowhere near
+        # a real auto-fit's ~200 (measured directly against this same
+        # fixture) - 150 keeps the assertion meaningful without being
+        # pinned to the exact pixel geometry of one particular toolbar height.
+        self.assertLess(x_range[1] - x_range[0], 150.0)
 
     def test_the_saved_range_is_never_reapplied_on_a_later_frame_change(self) -> None:
         """Restoring must be a one-shot: navigating to a different frame
