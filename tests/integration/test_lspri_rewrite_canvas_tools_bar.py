@@ -45,6 +45,7 @@ try:
         GeometryModule,
         ImageTool,
         MaskModule,
+        MaskScopeModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.canvas_tools import CanvasToolsBar, ToolVariant, _ToolGroupButton
@@ -234,6 +235,7 @@ class AddRoiToolTest(unittest.TestCase):
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(),
             self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(),
+            mask_scope=MaskScopeModule(),
         )
         self.enterContext(mock.patch.object(QtWidgets.QMenu, "exec", _pick_first_enabled_action))
         self.panel.resize(900, 700)

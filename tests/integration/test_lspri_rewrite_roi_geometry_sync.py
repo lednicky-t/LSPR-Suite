@@ -45,6 +45,7 @@ try:
         GeometryModule,
         ImageTool,
         MaskModule,
+        MaskScopeModule,
     )
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.panels.image import ImagePanel
@@ -227,6 +228,7 @@ class RoiGeometrySyncUndoBatchTest(unittest.TestCase):
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(),
             self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(),
+            mask_scope=MaskScopeModule(),
         )
         self.tool = self.panel._rotate_tool
         self.panel.resize(900, 700)

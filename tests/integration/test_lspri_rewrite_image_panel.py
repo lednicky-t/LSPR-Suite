@@ -47,6 +47,7 @@ try:
         GeometryModule,
         ImageTool,
         MaskModule,
+        MaskScopeModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.render import RenderRequest, RenderResult
@@ -103,10 +104,12 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.roi_toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.reference_frame = ReferenceFrameModule()
+        self.mask_scope = MaskScopeModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, ActiveToolModule(),
             self.reference_frame,
+            mask_scope=self.mask_scope,
         )
 
     def tearDown(self) -> None:
@@ -569,10 +572,11 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         section = self.panel._transforms_section
         self.assertIsInstance(section, TransformsSection)
-        # The tab's page is a small container (Transforms | mask-overlay
-        # controls, 2026-09-30 - see mask_overlay_controls.py), not the
-        # TransformsSection directly any more; it must still be reachable
-        # as a child of that page.
+        # The tab's page is a small container (Transforms, 2026-09-30 - see
+        # mask_overlay_controls.py for why the mask controls moved out to
+        # their own "Mask" tab, 2026-10-01), not the TransformsSection
+        # directly any more; it must still be reachable as a child of that
+        # page.
         self.assertIs(section.parentWidget(), self.panel._tool_ribbon._stack.widget(0))
 
         section._rotate_button.click()
@@ -581,18 +585,87 @@ class RewriteImagePanelTest(unittest.TestCase):
     # -- mask overlay (2026-09-30, maintainer request: "implement...the
     # mask overlay features" - show/hide + color + transparency, ported
     # from the stable app's `show_mask_check`/`mask_color_button`/
-    # `mask_alpha_slider`) -------------------------------------------------
+    # `mask_alpha_slider`; moved into its own "Mask" ribbon tab 2026-10-01,
+    # maintainer request - keep the mask icons out of "Image tools") -------
 
-    def test_mask_overlay_controls_live_in_the_image_tools_tab(self) -> None:
-        """Next to Transforms in the same "Image tools" tab, separated by a
-        vertical divider ("can be separated by |", maintainer request)."""
+    def test_mask_overlay_controls_live_in_the_mask_tab(self) -> None:
+        """Own "Mask" tab (index 1, right after "Image tools") - no longer
+        sharing "Image tools" with Transforms behind a vertical divider.
+        One level removed from the page itself (wrapped in its own
+        `_labeled_icon_group`, see the "State"/"Visibility" caption test
+        below), but still only ever a grandchild of this tab's page, never
+        of any other tab."""
         from lspr_imaging_app.panels.image.mask_overlay_controls import MaskOverlayControls
 
         controls = self.panel._mask_overlay_controls
         self.assertIsInstance(controls, MaskOverlayControls)
-        page = self.panel._tool_ribbon._stack.widget(0)
-        self.assertIs(controls.parentWidget(), page)
-        self.assertIs(self.panel._mask_overlay_separator.parentWidget(), page)
+        page = self.panel._tool_ribbon._stack.widget(1)
+        self.assertIs(controls.parentWidget().parentWidget(), page)
+
+    def test_mask_scope_toggle_sits_left_of_a_divider_before_the_overlay_controls(self) -> None:
+        """Maintainer request, 2026-10-02: "put them on the left side and
+        separate from rest by | line" - the Persistent/Individual toggle's
+        group, then the divider, then the overlay controls' group, left to
+        right, all inside the same "Mask" tab page."""
+        from lspr_imaging_app.panels.image.mask_scope_toggle import MaskScopeToggle
+
+        toggle = self.panel._mask_scope_toggle
+        self.assertIsInstance(toggle, MaskScopeToggle)
+        page = self.panel._tool_ribbon._stack.widget(1)
+        self.assertIs(self.panel._mask_scope_separator.parentWidget(), page)
+
+        # Each icon widget is now wrapped in its own `_labeled_icon_group`
+        # container (the caption-below-icons group, see the "State"/
+        # "Visibility" test below) - that wrapper, not the icon widget
+        # itself, is what sits directly in the page's row.
+        toggle_group = toggle.parentWidget()
+        overlay_group = self.panel._mask_overlay_controls.parentWidget()
+        self.assertIs(toggle_group.parentWidget(), page)
+        self.assertIs(overlay_group.parentWidget(), page)
+
+        layout = page.layout()
+        toggle_index = layout.indexOf(toggle_group)
+        separator_index = layout.indexOf(self.panel._mask_scope_separator)
+        overlay_index = layout.indexOf(overlay_group)
+        self.assertNotEqual(toggle_index, -1)
+        self.assertLess(toggle_index, separator_index)
+        self.assertLess(separator_index, overlay_index)
+
+    def test_mask_tab_groups_are_captioned_state_and_visibility(self) -> None:
+        """Maintainer request, 2026-10-02: "non-intrusive labels... under
+        [each group]... center of section" - a caption below each group's
+        icons, not above (unlike `lspr_ui`'s `toolbarSectionTitle`
+        convention used elsewhere in the suite)."""
+        state_label = self.panel._mask_state_label
+        visibility_label = self.panel._mask_visibility_label
+        self.assertEqual(state_label.text(), "State")
+        self.assertEqual(visibility_label.text(), "Visibility")
+
+        toggle = self.panel._mask_scope_toggle
+        toggle_group = toggle.parentWidget()
+        self.assertIs(state_label.parentWidget(), toggle_group)
+        group_layout = toggle_group.layout()
+        self.assertLess(group_layout.indexOf(toggle), group_layout.indexOf(state_label))
+
+        overlay_controls = self.panel._mask_overlay_controls
+        overlay_group = overlay_controls.parentWidget()
+        self.assertIs(visibility_label.parentWidget(), overlay_group)
+        overlay_group_layout = overlay_group.layout()
+        self.assertLess(overlay_group_layout.indexOf(overlay_controls), overlay_group_layout.indexOf(visibility_label))
+
+    def test_mask_scope_toggle_shares_live_state_with_the_shared_mask_scope_module(self) -> None:
+        """This toggle must never own its own private selection - clicking it
+        pushes straight to the shared `MaskScopeModule`, exactly what lets a
+        second copy elsewhere (the Workflow panel's `MaskHighlightActions`)
+        stay in sync for free."""
+        from lspr_imaging_app.image_tools import MaskScope
+
+        toggle = self.panel._mask_scope_toggle
+        toggle._individual_button.click()
+        self.assertIs(self.mask_scope.scope(), MaskScope.INDIVIDUAL)
+
+        self.mask_scope.set_scope(MaskScope.PERSISTENT)
+        self.assertTrue(toggle._persistent_button.isChecked())
 
     def test_mask_overlay_draws_the_chosen_color_over_masked_pixels(self) -> None:
         self._load()
@@ -726,7 +799,7 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         panel = ImagePanel(
             self.dataset, GeometryModule(), MaskModule(), ChromaticModule(),
             BackgroundModule(), RoiToolbox(), SelectionModule(), ActiveToolModule(),
-            ReferenceFrameModule(), initial_view_range=initial_view_range,
+            ReferenceFrameModule(), mask_scope=MaskScopeModule(), initial_view_range=initial_view_range,
         )
         self.panel = panel
         panel.resize(400, 280)

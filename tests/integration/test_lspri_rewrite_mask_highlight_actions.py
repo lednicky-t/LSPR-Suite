@@ -46,6 +46,7 @@ try:
         ChromaticModule,
         GeometryModule,
         MaskModule,
+        MaskScopeModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.workflow.mask_highlight_actions import MaskHighlightActions
@@ -97,12 +98,15 @@ class MaskHighlightActionsTest(unittest.TestCase):
         self.roi_toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.highlight_range = HighlightRangeModule()
+        self.mask_scope = MaskScopeModule()
         self.image_panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, ActiveToolModule(), ReferenceFrameModule(),
+            mask_scope=self.mask_scope,
         )
         self.actions = MaskHighlightActions(
             self.mask, self.geometry, self.chromatic, self.dataset, self.highlight_range, self.image_panel,
+            self.mask_scope,
         )
 
     def tearDown(self) -> None:
@@ -171,7 +175,7 @@ class MaskHighlightActionsTest(unittest.TestCase):
         self._load()
         self.selection.set_cube(0)
         self.highlight_range.set_range(*_HIGHLIGHT_RANGE)
-        self.assertTrue(self.actions._persistent_button.isChecked())
+        self.assertTrue(self.actions._scope_toggle._persistent_button.isChecked())
         self.actions._add_button.click()
 
         for cube in (0, 1):
@@ -183,8 +187,8 @@ class MaskHighlightActionsTest(unittest.TestCase):
         self._load()
         self.selection.set_cube(0)
         self.highlight_range.set_range(*_HIGHLIGHT_RANGE)
-        self.actions._individual_button.click()
-        self.assertFalse(self.actions._persistent_button.isChecked())
+        self.actions._scope_toggle._individual_button.click()
+        self.assertFalse(self.actions._scope_toggle._persistent_button.isChecked())
         self.actions._add_button.click()
 
         own_frame = self.mask.resolve_mask_source((0, 500.0))
@@ -195,13 +199,30 @@ class MaskHighlightActionsTest(unittest.TestCase):
         self.assertIsNone(other_cube, "an individual edit must not leak into another cube")
 
     def test_scope_toggle_is_mutually_exclusive(self) -> None:
-        self.actions._individual_button.click()
-        self.assertTrue(self.actions._individual_button.isChecked())
-        self.assertFalse(self.actions._persistent_button.isChecked())
+        self.actions._scope_toggle._individual_button.click()
+        self.assertTrue(self.actions._scope_toggle._individual_button.isChecked())
+        self.assertFalse(self.actions._scope_toggle._persistent_button.isChecked())
 
-        self.actions._persistent_button.click()
-        self.assertTrue(self.actions._persistent_button.isChecked())
-        self.assertFalse(self.actions._individual_button.isChecked())
+        self.actions._scope_toggle._persistent_button.click()
+        self.assertTrue(self.actions._scope_toggle._persistent_button.isChecked())
+        self.assertFalse(self.actions._scope_toggle._individual_button.isChecked())
+
+    def test_scope_toggle_stays_in_sync_with_the_image_panels_own_copy(self) -> None:
+        """The whole point of sharing `MaskScopeModule` rather than each
+        widget owning its own private buttons (maintainer request,
+        2026-10-02: copy the Persistent/Individual icons into the Image
+        panel's "Mask" tab too) - clicking either toggle must update both,
+        since Add/Subtract here always acts on whichever scope is selected
+        and the two toggles must never be able to disagree about it."""
+        image_panel_toggle = self.image_panel._mask_scope_toggle
+
+        image_panel_toggle._individual_button.click()
+        self.assertTrue(self.actions._scope_toggle._individual_button.isChecked())
+        self.assertEqual(self.mask_scope.scope().value, "individual")
+
+        self.actions._scope_toggle._persistent_button.click()
+        self.assertTrue(image_panel_toggle._persistent_button.isChecked())
+        self.assertEqual(self.mask_scope.scope().value, "persistent")
 
 
 if __name__ == "__main__":

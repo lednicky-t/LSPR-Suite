@@ -60,6 +60,7 @@ try:
         GeometryModule,
         ImageTool,
         MaskModule,
+        MaskScopeModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.workflow.transforms_settings import TransformsSection
@@ -142,6 +143,7 @@ class MeasureToolTest(unittest.TestCase):
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(),
             self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(),
+            mask_scope=MaskScopeModule(),
         )
         self.tool = self.panel._measure_tool
         self.controls = self.panel._measure_controls

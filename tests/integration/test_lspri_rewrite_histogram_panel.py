@@ -45,6 +45,7 @@ try:
         ChromaticModule,
         GeometryModule,
         MaskModule,
+        MaskScopeModule,
     )
     from lspr_imaging_app.panels.histogram import HistogramPanel
     from lspr_imaging_app.panels.image import ImagePanel
@@ -97,6 +98,7 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.image_panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, ActiveToolModule(), ReferenceFrameModule(),
+            mask_scope=MaskScopeModule(),
         )
         self.panel = HistogramPanel(
             self.image_panel, self.geometry, self.mask, self.chromatic, self.roi_toolbox, self.highlight_range,
