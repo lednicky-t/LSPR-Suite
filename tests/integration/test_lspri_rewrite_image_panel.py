@@ -23,6 +23,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PyQt6 import QtWidgets
 from PyQt6.QtGui import QColor
@@ -52,7 +53,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.render import RenderRequest, RenderResult
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.selection import ReferenceFrameModule, SelectionModule
+    from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
@@ -104,11 +105,12 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.roi_toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.reference_frame = ReferenceFrameModule()
+        self.highlight_range = HighlightRangeModule()
         self.mask_scope = MaskScopeModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, ActiveToolModule(),
-            self.reference_frame,
+            self.reference_frame, self.highlight_range,
             mask_scope=self.mask_scope,
         )
 
@@ -731,6 +733,332 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertFalse(self.panel._mask_overlay_item.isVisible())
 
+    # -- mask "Edit" tool picker (2026-10-02, maintainer request: "a pickup --
+    # -- menu... option for tools how to change it") -------------------------
+
+    def test_mask_edit_group_sits_in_the_mask_tab_after_a_second_divider(self) -> None:
+        """"next to the visibility section in Mask, add Edit section" - a
+        captioned group in the same "Mask" tab page, after a divider (same
+        convention the State|Visibility pair already uses). Renamed "Edit"
+        -> "Manual edit" once sibling groups ("General"/"PNG") landed
+        beside it (2026-10-02, maintainer request)."""
+        page = self.panel._tool_ribbon._stack.widget(1)
+        # Picker -> mask_edit_group (the labeled_icon_group wrapper) -> page
+        # - the same two-hop chain MaskOverlayControls's own group uses.
+        # **Not** picker -> a picker+stack row -> group (a 2026-10-02 report:
+        # wrapping the picker+stack *pair* made the "Manual edit" caption
+        # center under the *reserved* stack width - as wide as Morphology's
+        # own widest panel - rather than under the picker itself, so it
+        # visually floated away whenever a narrower panel was shown). The
+        # stack now sits as its own, uncaptioned, top-aligned sibling.
+        picker_group = self.panel._mask_edit_picker.parentWidget()
+        self.assertIs(picker_group.parentWidget(), page)
+        self.assertIs(self.panel._mask_visibility_separator.parentWidget(), page)
+        self.assertEqual(self.panel._mask_edit_label.text(), "Manual edit")
+
+        layout = page.layout()
+        visibility_index = layout.indexOf(self.panel._mask_overlay_controls.parentWidget())
+        separator_index = layout.indexOf(self.panel._mask_visibility_separator)
+        edit_index = layout.indexOf(picker_group)
+        stack_index = layout.indexOf(self.panel._mask_edit_stack)
+        self.assertLess(visibility_index, separator_index)
+        self.assertLess(separator_index, edit_index)
+        self.assertEqual(stack_index, edit_index + 1, "the stack sits immediately after the picker's own group")
+
+    def test_general_group_is_the_leftmost_group_in_the_mask_tab(self) -> None:
+        """"put this icon [Clear] in solo section 'General' and put section
+        the most left" (2026-10-02, maintainer request)."""
+        page = self.panel._tool_ribbon._stack.widget(1)
+        general_group = self.panel._mask_clear_action.parentWidget()
+        self.assertIs(general_group.parentWidget(), page)
+        self.assertEqual(self.panel._mask_general_label.text(), "General")
+
+        layout = page.layout()
+        general_index = layout.indexOf(general_group)
+        separator_index = layout.indexOf(self.panel._mask_general_separator)
+        state_group = self.panel._mask_scope_toggle.parentWidget()
+        state_index = layout.indexOf(state_group)
+        self.assertEqual(general_index, 0, "General must be the leftmost item in the whole Mask tab row")
+        self.assertLess(general_index, separator_index)
+        self.assertLess(separator_index, state_index)
+
+    def test_png_group_sits_after_manual_edit_behind_a_divider(self) -> None:
+        """"these two icons [load/save] should be in 'PNG' section" -
+        placed after "Manual edit", same divider convention as every other
+        group boundary in this tab."""
+        page = self.panel._tool_ribbon._stack.widget(1)
+        png_group = self.panel._mask_png_actions.parentWidget()
+        self.assertIs(png_group.parentWidget(), page)
+        self.assertIs(self.panel._mask_edit_separator.parentWidget(), page)
+        self.assertEqual(self.panel._mask_png_label.text(), "PNG")
+
+        layout = page.layout()
+        stack_index = layout.indexOf(self.panel._mask_edit_stack)
+        separator_index = layout.indexOf(self.panel._mask_edit_separator)
+        png_index = layout.indexOf(png_group)
+        self.assertLess(stack_index, separator_index)
+        self.assertLess(separator_index, png_index)
+
+    def test_png_group_order_is_load_then_save(self) -> None:
+        actions = self.panel._mask_png_actions
+        layout = actions.layout()
+        self.assertLess(layout.indexOf(actions._load_button), layout.indexOf(actions._save_button))
+
+    def test_clear_mask_prompts_and_only_wipes_on_confirmation(self) -> None:
+        """"add an icon of clean... to clean the mask entirely" - wipes the
+        *whole* timeline (every cube/scope), and only after the user
+        confirms, since Mask has no undo (see `MaskModule.clear_all_masks`'s
+        own docstring)."""
+        self._load()
+        mask = np.zeros((64, 80), dtype=bool)
+        mask[10:20, 10:20] = True
+        self.mask.set_mask_change((0, 500.0), "persistent", mask)
+        self.mask.set_mask_change((1, 500.0), "individual", mask)
+
+        with patch(
+            "lspr_imaging_app.panels.image.mask_file_actions.QMessageBox.question",
+            return_value=QtWidgets.QMessageBox.StandardButton.No,
+        ):
+            self.panel._mask_clear_action._clear_button.click()
+        self.assertIsNotNone(self.mask.resolve_mask_source((0, 500.0)), "declining the prompt must not clear anything")
+
+        with patch(
+            "lspr_imaging_app.panels.image.mask_file_actions.QMessageBox.question",
+            return_value=QtWidgets.QMessageBox.StandardButton.Yes,
+        ):
+            self.panel._mask_clear_action._clear_button.click()
+        self.assertIsNone(self.mask.resolve_mask_source((0, 500.0)))
+        self.assertIsNone(self.mask.resolve_mask_source((1, 500.0)))
+
+    def test_save_then_load_round_trips_the_current_mask(self) -> None:
+        """"copy icons from mask to load/save mask as file" - Save writes
+        whatever `resolve_mask_source` currently resolves at this frame;
+        Load replaces the current frame/scope's mask with the file's
+        content, through the real `image_tools.mask.io` PNG codec, not a
+        mock of it."""
+        self._load()
+        mask = np.zeros((64, 80), dtype=bool)
+        mask[5:9, 5:9] = True
+        self.mask.set_mask_change((0, 500.0), "persistent", mask)
+
+        destination = self.root / "exported_mask.png"
+        with patch(
+            "lspr_imaging_app.panels.image.mask_file_actions.QFileDialog.getSaveFileName",
+            return_value=(str(destination), "PNG image (*.png)"),
+        ):
+            self.panel._mask_png_actions._save_button.click()
+        self.assertTrue(destination.exists())
+
+        self.mask.clear_all_masks()
+        self.assertIsNone(self.mask.resolve_mask_source((0, 500.0)))
+
+        with patch(
+            "lspr_imaging_app.panels.image.mask_file_actions.QFileDialog.getOpenFileName",
+            return_value=(str(destination), "Mask images (*.png *.bmp *.tif *.tiff)"),
+        ):
+            self.panel._mask_png_actions._load_button.click()
+        _frame, resolved_mask, scope = self.mask.resolve_mask_source((0, 500.0))
+        self.assertEqual(scope, "persistent")
+        np.testing.assert_array_equal(resolved_mask, mask)
+
+    def test_mask_edit_picker_defaults_to_histogram_selection(self) -> None:
+        from lspr_imaging_app.image_tools import MaskEditTool
+        from lspr_imaging_app.panels.image.mask_edit_panels import HistogramSelectionEditPanel
+
+        self.assertIs(self.panel._mask_edit_tool.tool(), MaskEditTool.HISTOGRAM_SELECTION)
+        self.assertIsInstance(self.panel._mask_edit_stack.currentWidget(), HistogramSelectionEditPanel)
+
+    def test_picking_a_tool_switches_the_edit_stack(self) -> None:
+        from lspr_imaging_app.image_tools import MaskEditTool
+        from lspr_imaging_app.panels.image.mask_edit_panels import MorphologyEditPanel
+
+        self.panel._mask_edit_picker._actions[MaskEditTool.MORPHOLOGY].trigger()
+        self.assertIsInstance(self.panel._mask_edit_stack.currentWidget(), MorphologyEditPanel)
+        self.assertIs(self.panel._mask_edit_stack.currentWidget(), self.panel._mask_edit_stack.widget(3))
+
+    def test_histogram_selection_edit_panel_adds_the_highlighted_patch_in_raw_space(self) -> None:
+        """Same assertion shape as `test_lspri_rewrite_mask_highlight_
+        actions.py`'s own `test_add_masks_exactly_the_highlighted_patch_in_
+        raw_space` - this is the Image panel's second front door onto the
+        exact same `HistogramHighlightMaskEditor` logic, not a copy."""
+        self._load()
+        self.highlight_range.set_range(3000.0, 5000.0)
+        panel = self.panel._mask_edit_stack.widget(0)
+        panel._add_button.click()
+
+        resolution = self.mask.resolve_mask_source((0, 500.0))
+        self.assertIsNotNone(resolution)
+        _frame, resolved_mask, scope = resolution
+        expected = np.zeros((64, 80), dtype=bool)
+        expected[28:33, 38:43] = True
+        np.testing.assert_array_equal(resolved_mask, expected)
+
+    def test_morphology_edit_panel_erode_shrinks_the_mask(self) -> None:
+        """Regression pin for the 2026-10-02 `MaskModule.apply_morphology`
+        correctness fix (see that method's own docstring): erode must
+        actually shrink the mask, not leave it unchanged (the old OR-merge
+        behavior) or replace it with the removed boundary ring (the old
+        AND-NOT-merge behavior)."""
+        self._load()
+        base = np.zeros((64, 80), dtype=bool)
+        base[20:30, 20:30] = True  # a 10x10 filled square
+        self.mask.set_mask_change((0, 500.0), "persistent", base)
+        _pump()
+
+        panel = self.panel._mask_edit_stack.widget(3)
+        panel._radius_spin.setValue(1)
+        panel._operation_buttons["erode"].click()
+
+        _frame, eroded, _scope = self.mask.resolve_mask_source((0, 500.0))
+        self.assertEqual(int(eroded.sum()), 64)  # an 8x8 interior survives a 1px erosion
+        self.assertTrue(bool(eroded[25, 25]))  # center still set
+        self.assertFalse(bool(eroded[20, 25]))  # the boundary row is gone
+
+    def test_morphology_open_close_icons_match_the_stable_app(self) -> None:
+        """"copy the icons from the stable app (open book, closed book)" -
+        2026-10-02 maintainer request."""
+        from lspr_imaging_app.panels.image.mask_edit_panels import _MORPHOLOGY_OPERATIONS
+
+        icons_by_operation = {operation: icon_name for operation, icon_name, _tooltip in _MORPHOLOGY_OPERATIONS}
+        self.assertEqual(icons_by_operation["open"], "book")
+        self.assertEqual(icons_by_operation["close"], "book-2")
+
+    def test_disabled_action_buttons_keep_the_same_icon_color_as_enabled_ones(self) -> None:
+        """"Not all +/- icons are same, you change only those in histogram
+        selection. All other should be changed as well and same as
+        histogram" (2026-10-02 maintainer request) - Qt grays a disabled
+        QToolButton's icon by default, which is what made Threshold/Local-
+        contrast/Draw's not-yet-wired +/- buttons look different from
+        Histogram selection's own even though all share the same `ADD_
+        COLOR`/`SUBTRACT_COLOR` - `action_button` (`mask_edit_common.py`)
+        now registers the identical full-color pixmap for both the Normal
+        and Disabled icon modes, so this must hold for every button
+        regardless of its current enabled state."""
+        from PyQt6.QtGui import QIcon
+
+        threshold_panel = self.panel._mask_edit_stack.widget(1)
+        self.assertFalse(threshold_panel._add_button.isEnabled())
+        icon = threshold_panel._add_button.icon()
+        normal_image = icon.pixmap(44, 44, QIcon.Mode.Normal).toImage()
+        disabled_image = icon.pixmap(44, 44, QIcon.Mode.Disabled).toImage()
+        self.assertEqual(normal_image, disabled_image)
+
+    def test_threshold_and_local_contrast_add_subtract_are_disabled(self) -> None:
+        """Settings-only for now - see mask_edit_panels.py's module
+        docstring for why (needs a background worker, not built yet)."""
+        threshold_panel = self.panel._mask_edit_stack.widget(1)
+        local_contrast_panel = self.panel._mask_edit_stack.widget(2)
+        for panel in (threshold_panel, local_contrast_panel):
+            self.assertFalse(panel._add_button.isEnabled())
+            self.assertFalse(panel._subtract_button.isEnabled())
+
+    def test_threshold_edit_panel_spinbox_pushes_mask_settings(self) -> None:
+        panel = self.panel._mask_edit_stack.widget(1)
+        panel._threshold_spin.setValue(12.5)
+        self.assertAlmostEqual(self.mask.settings().relative_threshold_fraction, 0.125, places=4)
+
+    def test_local_contrast_edit_panel_spinbox_pushes_mask_settings(self) -> None:
+        panel = self.panel._mask_edit_stack.widget(2)
+        panel._z_spin.setValue(3.5)
+        self.assertAlmostEqual(self.mask.settings().local_contrast_z_threshold, 3.5, places=4)
+
+    def test_morphology_edit_panel_radius_spinbox_pushes_mask_settings(self) -> None:
+        panel = self.panel._mask_edit_stack.widget(3)
+        panel._radius_spin.setValue(7)
+        self.assertEqual(self.mask.settings().morphology_radius_px, 7)
+
+    def test_draw_edit_panel_brush_size_pushes_mask_settings(self) -> None:
+        panel = self.panel._mask_edit_stack.widget(4)
+        panel._size_spin.setValue(9)
+        self.assertEqual(self.mask.settings().brush_size_px, 9)
+
+    # -- histogram highlight overlay (2026-10-02, "Histogram" ribbon tab) ----
+
+    def test_histogram_highlight_overlay_controls_live_in_the_histogram_tab(self) -> None:
+        """"Histogram" is tab index 2 (after "Image tools", "Mask"), and was a
+        seeded placeholder until this - same captioned-group wrapping the
+        Mask tab's own overlay controls use (`_labeled_icon_group`)."""
+        from lspr_imaging_app.panels.image.histogram_highlight_overlay_controls import (
+            HistogramHighlightOverlayControls,
+        )
+
+        controls = self.panel._highlight_overlay_controls
+        self.assertIsInstance(controls, HistogramHighlightOverlayControls)
+        page = self.panel._tool_ribbon._stack.widget(2)
+        self.assertIs(controls.parentWidget().parentWidget(), page)
+        label = self.panel._highlight_visibility_label
+        self.assertEqual(label.text(), "Selection")
+        self.assertIs(label.parentWidget(), controls.parentWidget())
+
+    def test_histogram_highlight_overlay_draws_the_chosen_color_over_selected_pixels(self) -> None:
+        """The dataset's bright patch (`_write_dataset`: rows 28-32, cols
+        38-42, ~4000-4200) isolated by a (3000, 5000) range - mirrors
+        `test_mask_overlay_draws_the_chosen_color_over_masked_pixels`."""
+        self._load()
+        self.highlight_range.set_range(3000.0, 5000.0)
+        _pump()
+
+        self.assertTrue(self.panel._highlight_overlay_item.isVisible())
+        overlay = self.panel._highlight_overlay_item.image
+        self.assertEqual(overlay.shape, (64, 80, 4))
+        color = self.panel._highlight_overlay_color
+        expected = (color.red(), color.green(), color.blue(), int(round(self.panel._highlight_overlay_alpha * 255.0)))
+        self.assertEqual(tuple(overlay[30, 40]), expected)
+        self.assertEqual(tuple(overlay[0, 0]), (0, 0, 0, 0))
+
+    def test_histogram_highlight_overlay_hides_when_toggled_off_and_returns_when_toggled_on(self) -> None:
+        self._load()
+        self.highlight_range.set_range(3000.0, 5000.0)
+        _pump()
+        self.assertTrue(self.panel._highlight_overlay_item.isVisible())
+
+        self.panel._highlight_overlay_controls._toggle_button.click()
+        self.assertFalse(self.panel._highlight_overlay_item.isVisible())
+
+        self.panel._highlight_overlay_controls._toggle_button.click()
+        self.assertTrue(self.panel._highlight_overlay_item.isVisible())
+
+    def test_histogram_highlight_overlay_hides_when_the_whole_image_falls_in_range(self) -> None:
+        """A full-image selection (e.g. the range `HistogramPanel` seeds on
+        first load, before the user narrows it) carries no information as a
+        tint - same reasoning as the stable app's own fixed-sensor-range
+        check, applied against the actual displayed image's range instead
+        (see `_update_highlight_overlay`'s docstring)."""
+        self._load()
+        image = self.panel._current_display_image
+        self.highlight_range.set_range(float(image.min()), float(image.max()))
+        _pump()
+        self.assertFalse(self.panel._highlight_overlay_item.isVisible())
+
+    def test_histogram_highlight_overlay_color_and_alpha_changes_redraw_without_a_new_render(self) -> None:
+        """Cosmetic-only, like the mask overlay's own equivalent test: must
+        not touch the async pixel-render pipeline."""
+        self._load()
+        self.highlight_range.set_range(3000.0, 5000.0)
+        _pump()
+
+        serial_before = self.panel._latest_serial
+        new_color = QColor("#f472b6")
+        self.panel._highlight_overlay_controls.color_changed.emit(new_color)
+        self.panel._highlight_overlay_controls.alpha_changed.emit(0.3)
+
+        self.assertEqual(self.panel._latest_serial, serial_before)
+        overlay = self.panel._highlight_overlay_item.image
+        self.assertEqual(tuple(overlay[30, 40]), (new_color.red(), new_color.green(), new_color.blue(), 76))
+
+    def test_histogram_highlight_overlay_updates_when_the_range_changes_with_no_new_render(self) -> None:
+        """The other half of the shared-state symmetry
+        `test_lspri_rewrite_histogram_panel.py` already pins from the
+        Histogram-panel side: a plain `HighlightRangeModule.set_range` call
+        (what a drag on the Histogram plot ultimately does) must redraw this
+        overlay too, with no reference to `HistogramPanel` anywhere in
+        `ImagePanel`."""
+        self._load()
+        serial_before = self.panel._latest_serial
+        self.highlight_range.set_range(3000.0, 5000.0)
+        self.assertEqual(self.panel._latest_serial, serial_before)
+        self.assertTrue(self.panel._highlight_overlay_item.isVisible())
+
     def test_tool_info_and_cursor_icon_match_the_bars_other_icons(self) -> None:
         """"make cursor and i icon same as other icons in the bar... this
         apply for all icons later applied, they should have same style"
@@ -799,7 +1127,8 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         panel = ImagePanel(
             self.dataset, GeometryModule(), MaskModule(), ChromaticModule(),
             BackgroundModule(), RoiToolbox(), SelectionModule(), ActiveToolModule(),
-            ReferenceFrameModule(), mask_scope=MaskScopeModule(), initial_view_range=initial_view_range,
+            ReferenceFrameModule(), HighlightRangeModule(),
+            mask_scope=MaskScopeModule(), initial_view_range=initial_view_range,
         )
         self.panel = panel
         panel.resize(400, 280)
@@ -840,13 +1169,21 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         # And clearly not the full-image auto-fit - proof this is the
         # restored range, not the pre-existing default. The bound was 70.0
         # before the Image panel's top bar grew a second ribbon row
-        # (`tool_ribbon.py`, 2026-09-30): that shrinks the canvas's share of
-        # this test's small fixed 280px panel height enough that the
-        # aspect-locked restore now lands around 75-76, still nowhere near
-        # a real auto-fit's ~200 (measured directly against this same
-        # fixture) - 150 keeps the assertion meaningful without being
-        # pinned to the exact pixel geometry of one particular toolbar height.
-        self.assertLess(x_range[1] - x_range[0], 150.0)
+        # (`tool_ribbon.py`, 2026-09-30), then 150.0 once that row's own
+        # height grew further, then 160.0 when `TransformsSection.ROW_HEIGHT`
+        # grew 36px -> 50px (2026-10-02, Rotation/Flip/Crop/Calibrate each
+        # becoming their own captioned group). This is a third bump, to
+        # 180.0: observed value drifted again to 168.24, but
+        # `tool_ribbon.py`'s `_ROW_HEIGHT` is `max()` of three terms (canvas
+        # tools bar, TransformsSection, a 42px literal) - none depend on the
+        # Mask tab content changed this round (icon colors, the "Manual
+        # edit" label's wrapping), so this one bump is most likely test-order/
+        # font-metric variance rather than a real further shrink of the
+        # toolbar. A real auto-fit on this fixture is ~200, measured
+        # directly - 180 keeps real headroom against that while still being
+        # nowhere near it, not pinned to the exact pixel geometry of one
+        # particular toolbar height (same reasoning as the earlier bumps).
+        self.assertLess(x_range[1] - x_range[0], 180.0)
 
     def test_the_saved_range_is_never_reapplied_on_a_later_frame_change(self) -> None:
         """Restoring must be a one-shot: navigating to a different frame

@@ -65,7 +65,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.workflow.transforms_settings import TransformsSection
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.selection import ReferenceFrameModule, SelectionModule
+    from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
@@ -142,7 +142,7 @@ class MeasureToolTest(unittest.TestCase):
         self.selection = SelectionModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(),
-            self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(),
+            self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(), HighlightRangeModule(),
             mask_scope=MaskScopeModule(),
         )
         self.tool = self.panel._measure_tool
@@ -632,6 +632,52 @@ class MeasureButtonTest(unittest.TestCase):
         self.section._measure_button.click()
         self.active_tool.clear()
         self.assertFalse(self.section._measure_button.isChecked())
+
+
+class TransformsSectionCaptionedGroupsTest(unittest.TestCase):
+    """"you did not make rotation section containing 3 rotation icons, and
+    flip section containing flipping icons, and crop section containing 2
+    crop icons" (2026-10-02, maintainer request, a follow-up to the same
+    day's "Calibrate" split) - every cluster in the row is now its own
+    captioned group, not just Measure."""
+
+    def setUp(self) -> None:
+        self.geometry = GeometryModule()
+        self.active_tool = ActiveToolModule()
+        self.section = TransformsSection(self.geometry, self.active_tool)
+
+    def test_four_captioned_groups_in_order_rotation_flip_crop_calibrate(self) -> None:
+        layout = self.section.layout()
+        rotation_group = self.section._rotate_button.parentWidget().parentWidget()
+        flip_group = self.section._flip_h_button.parentWidget().parentWidget()
+        crop_group = self.section._crop_button.parentWidget().parentWidget()
+        calibrate_group = self.section._measure_button.parentWidget()
+
+        self.assertEqual(self.section._rotation_label.text(), "Rotation")
+        self.assertEqual(self.section._flip_label.text(), "Flip")
+        self.assertEqual(self.section._crop_label.text(), "Crop")
+        self.assertEqual(self.section._calibrate_label.text(), "Calibrate")
+
+        rotation_index = layout.indexOf(rotation_group)
+        flip_index = layout.indexOf(flip_group)
+        crop_index = layout.indexOf(crop_group)
+        calibrate_index = layout.indexOf(calibrate_group)
+        self.assertLess(rotation_index, flip_index)
+        self.assertLess(flip_index, crop_index)
+        self.assertLess(crop_index, calibrate_index)
+
+    def test_rotation_group_holds_its_three_icons(self) -> None:
+        rotation_row = self.section._rotate_button.parentWidget()
+        self.assertIs(self.section._reset_button.parentWidget(), rotation_row)
+        self.assertIs(self.section._fill_checkbox.parentWidget(), rotation_row)
+
+    def test_crop_group_holds_its_two_icons(self) -> None:
+        crop_row = self.section._crop_button.parentWidget()
+        self.assertIs(self.section._reset_crop_button.parentWidget(), crop_row)
+
+    def test_flip_group_holds_both_flip_icons(self) -> None:
+        flip_row = self.section._flip_h_button.parentWidget()
+        self.assertIs(self.section._flip_v_button.parentWidget(), flip_row)
 
 
 if __name__ == "__main__":

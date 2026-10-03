@@ -51,7 +51,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.roi_geometry_sync import RoiGeometrySync
-    from lspr_imaging_app.selection import ReferenceFrameModule, SelectionModule
+    from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
@@ -227,7 +227,7 @@ class RoiGeometrySyncUndoBatchTest(unittest.TestCase):
         self.selection = SelectionModule()
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(),
-            self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(),
+            self.roi_toolbox, self.selection, self.active_tool, ReferenceFrameModule(), HighlightRangeModule(),
             mask_scope=MaskScopeModule(),
         )
         self.tool = self.panel._rotate_tool

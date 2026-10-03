@@ -102,6 +102,7 @@ class MaskHighlightActionsTest(unittest.TestCase):
         self.image_panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, ActiveToolModule(), ReferenceFrameModule(),
+            self.highlight_range,
             mask_scope=self.mask_scope,
         )
         self.actions = MaskHighlightActions(

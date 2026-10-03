@@ -98,6 +98,7 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.image_panel = ImagePanel(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, ActiveToolModule(), ReferenceFrameModule(),
+            self.highlight_range,
             mask_scope=MaskScopeModule(),
         )
         self.panel = HistogramPanel(
@@ -347,21 +348,27 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.assertEqual(readout._min_edit.text(), "150")
         self.assertEqual(readout._max_edit.text(), "250")
 
-    def test_readout_stays_live_while_dragging_without_committing_early(self) -> None:
+    def test_readout_and_shared_module_both_stay_live_while_dragging(self) -> None:
         """Maintainer's regression report (2026-09-29): "when highlight
         range is moving make these fields live showing change, now they are
-        stale." Moving one edge of the region (`InfiniteLine.setValue`,
-        the same mechanism an in-progress mouse drag uses - fires
-        `sigRegionChanged` only, not `sigRegionChangeFinished`) must update
-        the readout immediately, but must NOT yet commit to the shared
-        module - that only happens once the drag finishes, so a future
-        Mask/ROI-detection subscriber never sees a flood of in-progress
-        values."""
+        stale." Moving one edge of the region (`InfiniteLine.setValue`, the
+        same mechanism an in-progress mouse drag uses - fires
+        `sigRegionChanged` only, not `sigRegionChangeFinished`) updates the
+        readout immediately.
+
+        **Revised 2026-10-02** (maintainer request: the Image panel's
+        histogram-highlight overlay should also track a drag live, not just
+        snap into place on release) - this used to also assert the shared
+        module was *not* yet updated at this point, deliberately deferring
+        the commit to drag-finish. That half is now the opposite on purpose:
+        see `HistogramPlot._on_region_changed_live`'s docstring for why the
+        original "avoid a flood of in-progress values" reasoning no longer
+        applies now that a real (cheap) reactive consumer exists."""
         self._load()
         self.highlight_range.set_range(100.0, 200.0)
         self.panel._plot._region.lines[0].setValue(150.0)
         self.assertEqual(self.panel._plot._range_readout._min_edit.text(), "150")
-        self.assertEqual(self.highlight_range.current_range(), (100.0, 200.0))
+        self.assertEqual(self.highlight_range.current_range(), (150.0, 200.0))
 
     def test_editing_one_readout_field_does_not_silently_move_the_other(self) -> None:
         """Regression pin: an earlier version routed both fields through
