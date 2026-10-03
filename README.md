@@ -41,7 +41,8 @@ See [`docs/README.md`](docs/README.md) for the full documentation map
 ## Local Setup
 
 Clone the suite with submodules, then create a virtual environment at the repo
-root and install the workspace packages in editable mode.
+root and install the workspace packages in editable mode. Python 3.12 or newer
+is required.
 
 On Windows, make sure `python` points to a normal Python install, not the
 Inkscape-bundled interpreter. If `python` resolves to the wrong executable,
