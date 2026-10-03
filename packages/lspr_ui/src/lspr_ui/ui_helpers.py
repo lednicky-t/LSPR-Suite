@@ -288,9 +288,21 @@ _EXPLICIT_MINIMUM_WIDTH_THRESHOLD = 24
 
 
 def _apply_content_based_minimum_width(spinbox: QAbstractSpinBox) -> None:
-    if spinbox.minimumWidth() > _EXPLICIT_MINIMUM_WIDTH_THRESHOLD:
-        return  # caller already set a real explicit minimum/fixed width - leave it alone
+    # The whole body is guarded, not just `setMinimumWidth` below - this
+    # runs from a deferred `QTimer.singleShot(0, ...)` (see
+    # `make_compact_spinbox`), so the widget can already be destroyed by
+    # the time it fires (e.g. a short-lived test widget torn down before
+    # the next event-loop tick) - 2026-10-02, found when several new
+    # LSPRi-rewrite spinboxes (`panels/image/mask_edit_panels.py`) started
+    # triggering it in test teardown. The comment on the narrower,
+    # previous version of this guard already stated this exact intent
+    # ("widget was deleted before this deferred call ran") but only wrapped
+    # `setMinimumWidth` - `spinbox.minimumWidth()` in the `if` below is
+    # itself a Qt call on the same C++ object and can raise the identical
+    # `RuntimeError` first, uncaught.
     try:
+        if spinbox.minimumWidth() > _EXPLICIT_MINIMUM_WIDTH_THRESHOLD:
+            return  # caller already set a real explicit minimum/fixed width - leave it alone
         spinbox.setMinimumWidth(_content_based_minimum_width(spinbox))
     except RuntimeError:
         pass  # widget was deleted before this deferred call ran
