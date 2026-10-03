@@ -159,15 +159,21 @@ class RewriteHistogramPanelTest(unittest.TestCase):
 
     def test_normalized_mode_peaks_at_one(self) -> None:
         """Third Y-axis mode (maintainer's spec, 2026-09-30: "normalized
-        display (normalization would be towards highest value)") - each
-        curve normalizes to its own peak, not a shared one, so the tallest
-        bin of whichever population has any data reads as exactly 1.0."""
+        display (normalization would be towards highest value)"), revised
+        2026-10-03: every curve is divided by the All-pixels peak, so All
+        pixels reads exactly 1.0 and no sub-population exceeds it."""
         self._load()
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
         self.panel._show_settings_dialog()
         self.panel._settings_dialog.axis_mode_combo.setCurrentIndex(2)  # Normalized
         _pump()
         _, y = self.panel._plot._all_pixels_curve.getData()
         self.assertAlmostEqual(float(np.max(y)), 1.0, places=6)
+        _, sample = self.panel._plot._sample_curve.getData()
+        self.assertGreater(float(np.max(sample)), 0.0)
+        self.assertLessEqual(float(np.max(sample)), 1.0 + 1e-9)
+        # Shared divisor: sample / all-pixels counts ratio is preserved.
+        self.assertTrue(np.all(sample <= y + 1e-9))
 
     def test_roi_adds_to_the_sample_curve(self) -> None:
         self._load()

@@ -547,21 +547,19 @@ class RewriteImagePanelTest(unittest.TestCase):
     # and "i" icons moved off the canvas corners and into this bar too).
 
     def test_tool_info_and_cursor_icon_live_in_the_top_bar(self) -> None:
-        """Both used to float as manually-`.move()`d overlays on the canvas
-        itself; now they're ordinary widgets in the shared top bar, after
-        the category ribbon (`_tool_ribbon`, added 2026-09-30 - see
-        `tool_ribbon.py`; `_canvas_tools`/Select/Add ROI now lives nested
-        inside it, under its "ROIs" tab, not directly in this layout) with a
-        stretch between - tools on the left, utility icons on the right."""
+        """The "i" icon is a plain widget in the shared top bar, right of the
+        ribbon. The cursor toggle moved (2026-10-03) into the always-visible
+        "General" group at the bar's left, before the ribbon; its readout text
+        now shows in the canvas's top-left corner instead of in the bar."""
         top_bar_layout = self.panel._top_bar.layout()
         self.assertIs(self.panel._tool_info.parent(), self.panel._top_bar)
-        self.assertIs(self.panel._cursor_overlay.icon_label.parent(), self.panel._top_bar)
+        self.assertIs(self.panel._cursor_overlay.icon_label.parent(), self.panel._general_row)
         ribbon_index = top_bar_layout.indexOf(self.panel._tool_ribbon)
-        cursor_index = top_bar_layout.indexOf(self.panel._cursor_overlay.icon_label)
         info_index = top_bar_layout.indexOf(self.panel._tool_info)
+        general_index = top_bar_layout.indexOf(self.panel._general_row.parentWidget())
         self.assertNotEqual(ribbon_index, -1)
-        self.assertLess(ribbon_index, cursor_index)
-        self.assertLess(cursor_index, info_index)
+        self.assertLess(general_index, ribbon_index)
+        self.assertLess(ribbon_index, info_index)
 
     def test_image_tools_tab_holds_a_transforms_section_wired_to_the_panels_own_modules(self) -> None:
         """"duplicate transform tools and put them in image tools of image
@@ -1060,23 +1058,22 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertTrue(self.panel._highlight_overlay_item.isVisible())
 
     def test_tool_info_and_cursor_icon_match_the_bars_other_icons(self) -> None:
-        """"make cursor and i icon same as other icons in the bar... this
-        apply for all icons later applied, they should have same style"
-        (maintainer request) - both now go through the same
-        `style_bar_icon_button` helper Select/Add ROI use, so they share
-        height, icon size, and hover chrome with the rest of this bar. The
-        cursor icon's *width* stays free (`fixed_width=False`) since it
-        must grow to show live text while enabled."""
+        """"make cursor and i icon same as other icons in the bar" (maintainer
+        request). The "i" icon still shares `style_bar_icon_button`'s look with
+        Select/Add ROI. The cursor toggle now sits in "General" and uses the
+        ribbon's 28px icon size (same as the area-selection picker beside it,
+        2026-10-03); it is fixed-width now, since its live text left the button."""
         from lspr_imaging_app.panels.image.canvas_tools import _BUTTON_SIZE, _ICON_SIZE
+        from lspr_imaging_app.panels.image.general_group import BUTTON_SIZE, ICON_SIZE
 
-        for widget in (self.panel._tool_info, self.panel._cursor_overlay.icon_label):
-            self.assertEqual(widget.height(), _BUTTON_SIZE)
-            self.assertEqual(widget.iconSize().width(), _ICON_SIZE)
-            self.assertEqual(widget.styleSheet(), self.panel._canvas_tools._select_button.styleSheet())
-        self.assertEqual(self.panel._tool_info.width(), _BUTTON_SIZE)
-        # The cursor icon's width is deliberately not clamped, unlike the
-        # "i" icon's - it must still grow to show live text.
-        self.assertGreater(self.panel._cursor_overlay.icon_label.maximumWidth(), _BUTTON_SIZE)
+        info = self.panel._tool_info
+        self.assertEqual(info.height(), _BUTTON_SIZE)
+        self.assertEqual(info.width(), _BUTTON_SIZE)
+        self.assertEqual(info.iconSize().width(), _ICON_SIZE)
+        self.assertEqual(info.styleSheet(), self.panel._canvas_tools._select_button.styleSheet())
+        cursor = self.panel._cursor_overlay.icon_label
+        self.assertEqual((cursor.width(), cursor.height()), (BUTTON_SIZE, BUTTON_SIZE))
+        self.assertEqual(cursor.iconSize().width(), ICON_SIZE)
 
     def test_top_bar_sits_above_the_view_with_a_bottom_border(self) -> None:
         """"make there a bo[r]der on the bottom to separate it from the
@@ -1183,7 +1180,7 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         # directly - 180 keeps real headroom against that while still being
         # nowhere near it, not pinned to the exact pixel geometry of one
         # particular toolbar height (same reasoning as the earlier bumps).
-        self.assertLess(x_range[1] - x_range[0], 180.0)
+        self.assertLess(x_range[1] - x_range[0], 190.0)  # 180 -> 190, 2026-10-03: the new left "General" group widens the top bar and so the canvas; real auto-fit is still ~200
 
     def test_the_saved_range_is_never_reapplied_on_a_later_frame_change(self) -> None:
         """Restoring must be a one-shot: navigating to a different frame
