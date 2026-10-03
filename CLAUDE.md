@@ -84,7 +84,6 @@ Never run `radon`, `pytest-cov`, `vulture`, `import-linter`, or `mypy` on your o
 
 - App source: `apps/<app>/src/<package>/`. Read the app's `docs/` before changing its architecture.
 - The main window is split across several files. Check all of them before assuming how a feature is wired.
-- **LSPRi:** GUI work targets the new generation (`panels/`, `roi/`, `analysis/`). The old `gui/main_window.py` is very large; prefer its `*_controller.py` files if you must touch it.
 
 ## Submodule Workflow
 

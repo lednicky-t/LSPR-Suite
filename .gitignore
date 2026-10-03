@@ -42,3 +42,7 @@ analysis/
 
 # Local scratch/spike experiment output (bench probes, benchmarks - not source)
 spikes/
+
+# Scratch workspace and generated output from external tools (not source)
+/tmp/
+/output/
