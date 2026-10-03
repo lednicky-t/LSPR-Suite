@@ -55,7 +55,7 @@ def _blob(shape: tuple[int, int], cx: float, cy: float, sigma: float = 1.5) -> n
 
 
 def _centroid(img: np.ndarray) -> tuple[float, float]:
-    ys, xs = np.nonzero(img > img.max() * 0.5)
+    ys, xs = np.nonzero(img > np.nanmax(img) * 0.5)  # rotation corners are NaN: never above
     return float(xs.mean()), float(ys.mean())
 
 

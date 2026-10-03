@@ -142,11 +142,10 @@ class RoiGeometrySyncTest(unittest.TestCase):
         self.assertNotEqual((roi.center_x, roi.center_y), pos_after_flip)
         self.assertEqual(len(self.statuses), 2)
 
-    def test_image_tools_enabled_and_rotation_fill_do_not_remap(self) -> None:
+    def test_image_tools_enabled_does_not_remap(self) -> None:
         self._load()
         roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_radius_px=5.0)
         self.geometry.set_image_tools_enabled(False)
-        self.geometry.set_rotation_fill_dark(True)
         roi = self.roi_toolbox.roi_by_id(roi_id)
         self.assertEqual((roi.center_x, roi.center_y), (10.0, 20.0))
         self.assertEqual(self.statuses, [])

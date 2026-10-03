@@ -489,23 +489,6 @@ class TransformsButtonsTest(unittest.TestCase):
         self.active_tool.clear()  # e.g. a dataset closing
         self.assertFalse(self.section._rotate_button.isChecked())
 
-    # -- rotation fill (2026-09-30, icon toggle -> plain checkbox: the old
-    # amber-filled-square icon used the same amber as the Rotate tool
-    # button's own "active" color, which read as ambiguous) -----------------
-
-    def test_fill_checkbox_starts_unchecked_for_default_edge_stretch_fill(self) -> None:
-        self.assertFalse(self.section._fill_checkbox.isChecked())
-
-    def test_fill_checkbox_drives_rotation_fill_dark(self) -> None:
-        self.section._fill_checkbox.click()
-        self.assertTrue(self.geometry.settings().rotation_fill_dark)
-        self.section._fill_checkbox.click()
-        self.assertFalse(self.geometry.settings().rotation_fill_dark)
-
-    def test_fill_checkbox_follows_an_outside_change(self) -> None:
-        self.geometry.set_rotation_fill_dark(True)
-        self.assertTrue(self.section._fill_checkbox.isChecked())
-
 
 if __name__ == "__main__":
     unittest.main()

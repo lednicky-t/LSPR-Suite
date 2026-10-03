@@ -666,10 +666,9 @@ class TransformsSectionCaptionedGroupsTest(unittest.TestCase):
         self.assertLess(flip_index, crop_index)
         self.assertLess(crop_index, calibrate_index)
 
-    def test_rotation_group_holds_its_three_icons(self) -> None:
+    def test_rotation_group_holds_its_two_icons(self) -> None:
         rotation_row = self.section._rotate_button.parentWidget()
         self.assertIs(self.section._reset_button.parentWidget(), rotation_row)
-        self.assertIs(self.section._fill_checkbox.parentWidget(), rotation_row)
 
     def test_crop_group_holds_its_two_icons(self) -> None:
         crop_row = self.section._crop_button.parentWidget()
