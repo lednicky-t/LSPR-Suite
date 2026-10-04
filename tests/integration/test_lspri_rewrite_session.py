@@ -117,7 +117,9 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         self.mask.set_mask_change((1, 600.0), "individual", individual)
 
         self.chromatic.restore_state(
-            self.chromatic.settings(),
+            # The correction must be switched on for `affine_for` to apply a model
+            # (gated since 2026-10-04, the Chromatic tab's "Apply correction" switch).
+            replace(self.chromatic.settings(), chromatic_correction_enabled=True),
             (ChromaticTransformModel(
                 spectral_cube_index=0, wavelength_nm=550.0,
                 affine_matrix=[[1.0, 0.0, 2.5], [0.0, 1.0, -1.5]], rmse_px=0.31),),

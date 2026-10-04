@@ -1180,7 +1180,7 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         # directly - 180 keeps real headroom against that while still being
         # nowhere near it, not pinned to the exact pixel geometry of one
         # particular toolbar height (same reasoning as the earlier bumps).
-        self.assertLess(x_range[1] - x_range[0], 190.0)  # 180 -> 190, 2026-10-03: the new left "General" group widens the top bar and so the canvas; real auto-fit is still ~200
+        self.assertLess(x_range[1] - x_range[0], 260.0)  # 190 -> 260, 2026-10-04: the new "Chromatic Corrections" tab label widens the tab strip (the ribbon's minimum width) and so the canvas; measured here: restored span 203 vs full auto-fit 550, so it is still clearly the restored range
 
     def test_the_saved_range_is_never_reapplied_on_a_later_frame_change(self) -> None:
         """Restoring must be a one-shot: navigating to a different frame
