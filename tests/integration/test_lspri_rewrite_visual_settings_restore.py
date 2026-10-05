@@ -19,9 +19,13 @@ theme/active_workflow_stage.
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 
 from PyQt6 import QtWidgets
+from PyQt6.QtTest import QTest
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -123,6 +127,100 @@ class VisualSettingsRestoreTests(unittest.TestCase):
              saved[-1].image_view_y_min, saved[-1].image_view_y_max),
             (3.0, 77.0, 4.0, 60.0),
         )
+
+    # -- Image panel: open ribbon tab, overlay look ------------------------
+
+    def test_the_open_ribbon_tab_is_restored_and_persisted(self) -> None:
+        saved: list[AppSettings] = []
+        window = self._build(
+            initial_settings=AppSettings(image_ribbon_category="Histogram"), on_settings_changed=saved.append
+        )
+        panel = _panel(window, "Image", ImagePanel)
+        self.assertEqual(panel.active_ribbon_category(), "Histogram")
+        panel._tool_ribbon.set_category("Mask")
+        self.assertEqual(saved[-1].image_ribbon_category, "Mask")
+
+    def test_an_unknown_saved_ribbon_tab_leaves_the_first_tab_open(self) -> None:
+        panel = _panel(self._build(initial_settings=AppSettings(image_ribbon_category="Gone")), "Image", ImagePanel)
+        self.assertEqual(panel.active_ribbon_category(), "Image tools")
+
+    def test_saved_overlay_looks_are_applied_at_launch(self) -> None:
+        window = self._build(
+            initial_settings=AppSettings(
+                mask_overlay_visible=False, mask_overlay_color="#112233", mask_overlay_alpha=0.3,
+                highlight_overlay_visible=False, highlight_overlay_color="#445566", highlight_overlay_alpha=0.7,
+            )
+        )
+        panel = _panel(window, "Image", ImagePanel)
+        self.assertFalse(panel._mask_overlay_visible)
+        self.assertEqual(panel._mask_overlay_color.name(), "#112233")
+        self.assertAlmostEqual(panel._mask_overlay_alpha, 0.3)
+        self.assertFalse(panel._highlight_overlay_visible)
+        self.assertEqual(panel._highlight_overlay_color.name(), "#445566")
+        self.assertAlmostEqual(panel._highlight_overlay_alpha, 0.7)
+
+    def test_changing_an_overlay_persists_it_after_a_short_pause(self) -> None:
+        saved: list[AppSettings] = []
+        window = self._build(on_settings_changed=saved.append)
+        panel = _panel(window, "Image", ImagePanel)
+        panel._highlight_overlay_controls.visibility_changed.emit(False)
+        panel._highlight_overlay_controls.alpha_changed.emit(0.9)
+        panel._highlight_overlay_controls.alpha_changed.emit(0.8)
+        self.assertEqual(saved, [])  # debounced: nothing written mid-burst
+        QTest.qWait(600)
+        self.assertFalse(saved[-1].highlight_overlay_visible)
+        self.assertAlmostEqual(saved[-1].highlight_overlay_alpha, 0.8)
+
+    # -- Histogram highlight range ----------------------------------------
+
+    def _homes(self) -> tuple[str, str]:
+        """Two real, empty dataset folders (loading a dataset writes a session index into its folder)."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d1, d2 = Path(tmp.name) / "D1", Path(tmp.name) / "D2"
+        d1.mkdir()
+        d2.mkdir()
+        return str(d1), str(d2)
+
+    def _loaded(self, window: QtWidgets.QMainWindow, home: str) -> None:
+        dataset = _panel(window, "Image", ImagePanel)._dataset
+        dataset.dataset_loaded.emit(SimpleNamespace(home=Path(home)))
+
+    def test_the_highlight_range_is_persisted_with_its_dataset(self) -> None:
+        saved: list[AppSettings] = []
+        d1, _d2 = self._homes()
+        window = self._build(
+            initial_settings=AppSettings(last_dataset_folder=d1, auto_reopen_last_dataset=False),
+            on_settings_changed=saved.append,
+        )
+        _panel(window, "Image", ImagePanel)._highlight_range.set_range(100.0, 900.0)
+        QTest.qWait(600)
+        self.assertEqual(
+            (saved[-1].highlight_range_min, saved[-1].highlight_range_max, saved[-1].highlight_range_dataset),
+            (100.0, 900.0, d1),
+        )
+
+    def test_the_saved_highlight_range_returns_when_the_same_dataset_loads(self) -> None:
+        d1, d2 = self._homes()
+        window = self._build(
+            initial_settings=AppSettings(
+                highlight_range_min=100.0, highlight_range_max=900.0, highlight_range_dataset=d1
+            )
+        )
+        module = _panel(window, "Image", ImagePanel)._highlight_range
+        self.assertIsNone(module.current_range())
+        self._loaded(window, d1)
+        self.assertEqual(module.current_range(), (100.0, 900.0))
+
+    def test_the_saved_highlight_range_is_not_applied_to_a_different_dataset(self) -> None:
+        d1, d2 = self._homes()
+        window = self._build(
+            initial_settings=AppSettings(
+                highlight_range_min=100.0, highlight_range_max=900.0, highlight_range_dataset=d1
+            )
+        )
+        self._loaded(window, d2)
+        self.assertIsNone(_panel(window, "Image", ImagePanel)._highlight_range.current_range())
 
 
 if __name__ == "__main__":
