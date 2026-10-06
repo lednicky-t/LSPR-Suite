@@ -350,7 +350,7 @@ class RewriteBackgroundExclusionTest(unittest.TestCase):
         self.background.set_flatten_background_settings(
             enabled=True, sigma_px=12.0, binning=1,
             exclude_area_rois=exclude_area_rois, exclude_mask=False,
-            exclusion_dilation_px=0, local_reference_normalization_enabled=False,
+            exclusion_dilation_px=0,
         )
 
     def _place_two_rois(self) -> tuple[int, int]:

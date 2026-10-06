@@ -106,7 +106,6 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         self.background.set_flatten_background_settings(
             enabled=True, sigma_px=42.0, binning=3, exclude_area_rois=True,
             exclude_mask=False, exclusion_dilation_px=2,
-            local_reference_normalization_enabled=True,
         )
 
         persistent = np.zeros((64, 80), dtype=bool)

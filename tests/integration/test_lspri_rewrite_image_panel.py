@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -121,6 +122,64 @@ class RewriteImagePanelTest(unittest.TestCase):
     def _load(self) -> None:
         self.dataset.load_dataset(self.dataset_model)
         _pump()
+
+    # -- Background tab -----------------------------------------------------
+
+    def test_background_tab_edits_reach_the_module_and_back(self) -> None:
+        tab = self.panel._background_tab
+        tab._sigma_spin.setValue(30)
+        tab._apply_button.setChecked(True)
+        settings = self.background.settings()
+        self.assertEqual(settings.flatten_background_sigma_px, 30.0)
+        self.assertTrue(settings.flatten_background_enabled)
+        # An external change (session restore) updates the controls without pushing back.
+        self.background.restore_settings(replace(settings, flatten_background_sigma_px=60.0, flatten_background_enabled=False))
+        self.assertEqual(tab._sigma_spin.value(), 60)
+        self.assertFalse(tab._apply_button.isChecked())
+
+    def test_info_icon_follows_the_open_ribbon_tab(self) -> None:
+        ribbon = self.panel._tool_ribbon
+        ribbon.set_category("Background")
+        self.assertIn("Time:", self.panel._tool_info.toolTip())
+        ribbon.set_category("ROIs")
+        self.assertNotIn("Time:", self.panel._tool_info.toolTip())
+        ribbon.set_category("Chromatic")
+        self.assertIn("Chromatic", self.panel._tool_info.toolTip())
+        self.assertFalse(hasattr(self.panel._background_tab, "_info_button"))
+
+    def test_lowering_sigma_lowers_the_binning_to_match(self) -> None:
+        tab = self.panel._background_tab
+        self.assertEqual(self.background.settings().flatten_background_binning, 8)
+        tab._sigma_spin.setValue(24)  # 24 / 6 = 4
+        self.assertEqual(self.background.settings().flatten_background_binning, 4)
+        self.assertEqual(tab._binning_combo.currentData(), 4)
+        tab._binning_combo.setCurrentIndex(tab._binning_combo.findData(8))  # user asks for too much
+        self.assertEqual(self.background.settings().flatten_background_binning, 4)
+        tab._sigma_spin.setValue(48)  # raising sigma never raises the binning by itself
+        self.assertEqual(self.background.settings().flatten_background_binning, 4)
+
+    def test_background_tab_turns_green_while_applied(self) -> None:
+        self.background.set_flatten_background_settings(
+            enabled=True, sigma_px=48.0, binning=2, exclude_area_rois=True,
+            exclude_mask=False, exclusion_dilation_px=0,
+        )
+        self.assertIn("Background", self.panel._tool_ribbon._applied)
+
+    def test_show_background_renders_the_estimate_not_the_data(self) -> None:
+        self._load()
+        data = np.array(self.panel._image_item.image, copy=True)
+        self.panel._background_tab._show_button.click()
+        _pump()
+        shown = np.asarray(self.panel._image_item.image)
+        self.assertEqual(shown.shape, data.shape)
+        # The 4000-count bright spot is smoothed away in the estimate (sigma 48 px).
+        self.assertLess(float(shown.max()), 1000.0)
+        self.assertGreater(float(data.max()), 3000.0)
+        # The Histogram/cursor keep describing the real frame.
+        self.assertGreater(float(self.panel._current_display_image.max()), 3000.0)
+        self.panel._background_tab._show_button.click()
+        _pump()
+        self.assertGreater(float(np.asarray(self.panel._image_item.image).max()), 3000.0)
 
     # -- lifecycle ------------------------------------------------------
 
