@@ -627,7 +627,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         panel's own one moved here; it must share this panel's actual
         `GeometryModule`/`ActiveToolModule` so the two rows stay in sync
         (see `transforms_settings.py`'s module docstring)."""
-        from lspr_imaging_app.panels.workflow.transforms_settings import TransformsSection
+        from lspr_imaging_app.panels.image.transforms_settings import TransformsSection
 
         section = self.panel._transforms_section
         self.assertIsInstance(section, TransformsSection)
@@ -733,11 +733,11 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.mask.set_mask_change((0, 500.0), "persistent", mask)
         _pump()
 
-        self.assertTrue(self.panel._mask_overlay_item.isVisible())
-        overlay = self.panel._mask_overlay_item.image
+        self.assertTrue(self.panel._mask_tint.item.isVisible())
+        overlay = self.panel._mask_tint.item.image
         self.assertEqual(overlay.shape, (64, 80, 4))
-        color = self.panel._mask_overlay_color
-        expected = (color.red(), color.green(), color.blue(), int(round(self.panel._mask_overlay_alpha * 255.0)))
+        color = self.panel._mask_tint.color
+        expected = (color.red(), color.green(), color.blue(), int(round(self.panel._mask_tint.alpha * 255.0)))
         self.assertEqual(tuple(overlay[15, 15]), expected)
         self.assertEqual(tuple(overlay[0, 0]), (0, 0, 0, 0))
 
@@ -747,13 +747,13 @@ class RewriteImagePanelTest(unittest.TestCase):
         mask[10:20, 10:20] = True
         self.mask.set_mask_change((0, 500.0), "persistent", mask)
         _pump()
-        self.assertTrue(self.panel._mask_overlay_item.isVisible())
+        self.assertTrue(self.panel._mask_tint.item.isVisible())
 
         self.panel._mask_overlay_controls._toggle_button.click()
-        self.assertFalse(self.panel._mask_overlay_item.isVisible())
+        self.assertFalse(self.panel._mask_tint.item.isVisible())
 
         self.panel._mask_overlay_controls._toggle_button.click()
-        self.assertTrue(self.panel._mask_overlay_item.isVisible())
+        self.assertTrue(self.panel._mask_tint.item.isVisible())
 
     def test_mask_overlay_color_and_alpha_changes_redraw_without_a_new_render(self) -> None:
         """Color/alpha are cosmetic-only: changing them must not touch the
@@ -772,7 +772,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.panel._mask_overlay_controls.alpha_changed.emit(0.2)
 
         self.assertEqual(self.panel._latest_serial, serial_before)
-        overlay = self.panel._mask_overlay_item.image
+        overlay = self.panel._mask_tint.item.image
         self.assertEqual(tuple(overlay[15, 15]), (new_color.red(), new_color.green(), new_color.blue(), 51))
 
     def test_mask_overlay_hides_while_a_preview_tool_is_active(self) -> None:
@@ -784,11 +784,11 @@ class RewriteImagePanelTest(unittest.TestCase):
         mask[10:20, 10:20] = True
         self.mask.set_mask_change((0, 500.0), "persistent", mask)
         _pump()
-        self.assertTrue(self.panel._mask_overlay_item.isVisible())
+        self.assertTrue(self.panel._mask_tint.item.isVisible())
 
         self.panel._active_tool.set_active(ImageTool.ROTATE, True)
         _pump()
-        self.assertFalse(self.panel._mask_overlay_item.isVisible())
+        self.assertFalse(self.panel._mask_tint.item.isVisible())
 
     # -- mask "Edit" tool picker (2026-10-02, maintainer request: "a pickup --
     # -- menu... option for tools how to change it") -------------------------
@@ -1050,13 +1050,13 @@ class RewriteImagePanelTest(unittest.TestCase):
         view_controls = self.panel._view_mask_overlay_controls
         mask_controls = self.panel._mask_overlay_controls
         self.assertEqual(self.panel._view_mask_label.text(), "Mask")
-        before = self.panel._mask_overlay_visible
+        before = self.panel._mask_tint.visible
         view_controls._toggle_button.click()
-        self.assertEqual(self.panel._mask_overlay_visible, not before)
+        self.assertEqual(self.panel._mask_tint.visible, not before)
         self.assertEqual(mask_controls._toggle_button.isChecked(), not before)
         mask_controls._alpha_slider.setValue(37)
         self.assertEqual(view_controls._alpha_slider.value(), 37)
-        self.assertAlmostEqual(self.panel._mask_overlay_alpha, 0.37)
+        self.assertAlmostEqual(self.panel._mask_tint.alpha, 0.37)
 
     def test_histogram_highlight_overlay_draws_the_chosen_color_over_selected_pixels(self) -> None:
         """The dataset's bright patch (`_write_dataset`: rows 28-32, cols
@@ -1066,11 +1066,11 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.highlight_range.set_range(3000.0, 5000.0)
         _pump()
 
-        self.assertTrue(self.panel._highlight_overlay_item.isVisible())
-        overlay = self.panel._highlight_overlay_item.image
+        self.assertTrue(self.panel._highlight_tint.item.isVisible())
+        overlay = self.panel._highlight_tint.item.image
         self.assertEqual(overlay.shape, (64, 80, 4))
-        color = self.panel._highlight_overlay_color
-        expected = (color.red(), color.green(), color.blue(), int(round(self.panel._highlight_overlay_alpha * 255.0)))
+        color = self.panel._highlight_tint.color
+        expected = (color.red(), color.green(), color.blue(), int(round(self.panel._highlight_tint.alpha * 255.0)))
         self.assertEqual(tuple(overlay[30, 40]), expected)
         self.assertEqual(tuple(overlay[0, 0]), (0, 0, 0, 0))
 
@@ -1078,13 +1078,13 @@ class RewriteImagePanelTest(unittest.TestCase):
         self._load()
         self.highlight_range.set_range(3000.0, 5000.0)
         _pump()
-        self.assertTrue(self.panel._highlight_overlay_item.isVisible())
+        self.assertTrue(self.panel._highlight_tint.item.isVisible())
 
         self.panel._highlight_overlay_controls._toggle_button.click()
-        self.assertFalse(self.panel._highlight_overlay_item.isVisible())
+        self.assertFalse(self.panel._highlight_tint.item.isVisible())
 
         self.panel._highlight_overlay_controls._toggle_button.click()
-        self.assertTrue(self.panel._highlight_overlay_item.isVisible())
+        self.assertTrue(self.panel._highlight_tint.item.isVisible())
 
     def test_histogram_highlight_overlay_hides_when_the_whole_image_falls_in_range(self) -> None:
         """A full-image selection (e.g. the range `HistogramPanel` seeds on
@@ -1096,7 +1096,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         image = self.panel._current_display_image
         self.highlight_range.set_range(float(image.min()), float(image.max()))
         _pump()
-        self.assertFalse(self.panel._highlight_overlay_item.isVisible())
+        self.assertFalse(self.panel._highlight_tint.item.isVisible())
 
     def test_histogram_highlight_overlay_color_and_alpha_changes_redraw_without_a_new_render(self) -> None:
         """Cosmetic-only, like the mask overlay's own equivalent test: must
@@ -1111,7 +1111,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.panel._highlight_overlay_controls.alpha_changed.emit(0.3)
 
         self.assertEqual(self.panel._latest_serial, serial_before)
-        overlay = self.panel._highlight_overlay_item.image
+        overlay = self.panel._highlight_tint.item.image
         self.assertEqual(tuple(overlay[30, 40]), (new_color.red(), new_color.green(), new_color.blue(), 76))
 
     def test_histogram_highlight_overlay_updates_when_the_range_changes_with_no_new_render(self) -> None:
@@ -1125,7 +1125,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         serial_before = self.panel._latest_serial
         self.highlight_range.set_range(3000.0, 5000.0)
         self.assertEqual(self.panel._latest_serial, serial_before)
-        self.assertTrue(self.panel._highlight_overlay_item.isVisible())
+        self.assertTrue(self.panel._highlight_tint.item.isVisible())
 
     def test_tool_info_and_cursor_icon_match_the_bars_other_icons(self) -> None:
         """"make cursor and i icon same as other icons in the bar" (maintainer

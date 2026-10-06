@@ -1,7 +1,7 @@
 """Tests for the LSPRimaging Evaluation rewrite's measurement/calibration
 tool (`panels/image/measure_line_tool.py`), the floating calibration
 controls it drives (`panels/image/measure_controls.py`), and the Workflow
-panel's Measure button (`panels/workflow/transforms_settings.py`).
+panel's Measure button (`panels/image/transforms_settings.py`).
 
 **Only runs on the `apps/LSPRi/eva` submodule's `rewrite` branch** - see
 `tests/unit/test_lspri_rewrite_analysis_core.py`'s docstring.
@@ -63,7 +63,7 @@ try:
         MaskScopeModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
-    from lspr_imaging_app.panels.workflow.transforms_settings import TransformsSection
+    from lspr_imaging_app.panels.image.transforms_settings import TransformsSection
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager

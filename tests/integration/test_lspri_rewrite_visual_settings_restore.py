@@ -158,12 +158,12 @@ class VisualSettingsRestoreTests(unittest.TestCase):
             )
         )
         panel = _panel(window, "Image", ImagePanel)
-        self.assertFalse(panel._mask_overlay_visible)
-        self.assertEqual(panel._mask_overlay_color.name(), "#112233")
-        self.assertAlmostEqual(panel._mask_overlay_alpha, 0.3)
-        self.assertFalse(panel._highlight_overlay_visible)
-        self.assertEqual(panel._highlight_overlay_color.name(), "#445566")
-        self.assertAlmostEqual(panel._highlight_overlay_alpha, 0.7)
+        self.assertFalse(panel._mask_tint.visible)
+        self.assertEqual(panel._mask_tint.color.name(), "#112233")
+        self.assertAlmostEqual(panel._mask_tint.alpha, 0.3)
+        self.assertFalse(panel._highlight_tint.visible)
+        self.assertEqual(panel._highlight_tint.color.name(), "#445566")
+        self.assertAlmostEqual(panel._highlight_tint.alpha, 0.7)
 
     def test_changing_an_overlay_persists_it_after_a_short_pause(self) -> None:
         saved: list[AppSettings] = []

@@ -51,7 +51,7 @@ try:
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.image_controls import ImageViewBox, controls_for, controls_text
-    from lspr_imaging_app.panels.workflow.transforms_settings import TransformsSection
+    from lspr_imaging_app.panels.image.transforms_settings import TransformsSection
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
