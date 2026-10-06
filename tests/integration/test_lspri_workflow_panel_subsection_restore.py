@@ -62,15 +62,14 @@ class WorkflowPanelSubsectionRestoreTests(unittest.TestCase):
         sections = dict(panel._subsections)
         # Hardcoded defaults from panel.py's builder functions.
         self.assertTrue(sections["IMAGE_TOOLS:Background removal"].is_expanded())
-        self.assertFalse(sections["IMAGE_TOOLS:Chromatic correction"].is_expanded())
         self.assertFalse(sections["ANALYSIS:Statistics"].is_expanded())
 
     def test_a_saved_subsection_state_overrides_the_hardcoded_default(self) -> None:
         window = self._build(
-            initial_settings=AppSettings(expanded_subsections={"IMAGE_TOOLS:Chromatic correction": True})
+            initial_settings=AppSettings(expanded_subsections={"ANALYSIS:Statistics": True})
         )
         sections = dict(_workflow_panel(window)._subsections)
-        self.assertTrue(sections["IMAGE_TOOLS:Chromatic correction"].is_expanded())
+        self.assertTrue(sections["ANALYSIS:Statistics"].is_expanded())
         # A key with no saved entry keeps its own hardcoded default.
         self.assertTrue(sections["IMAGE_TOOLS:Background removal"].is_expanded())
 
@@ -80,11 +79,11 @@ class WorkflowPanelSubsectionRestoreTests(unittest.TestCase):
         `panel.py`'s module docstring."""
         window = self._build(
             initial_settings=AppSettings(
-                expanded_subsections={"IMAGE_TOOLS:Chromatic correction": True, "IMAGE_TOOLS:Background removal": True}
+                expanded_subsections={"ANALYSIS:Statistics": True, "IMAGE_TOOLS:Background removal": True}
             )
         )
         sections = dict(_workflow_panel(window)._subsections)
-        self.assertTrue(sections["IMAGE_TOOLS:Chromatic correction"].is_expanded())
+        self.assertTrue(sections["ANALYSIS:Statistics"].is_expanded())
         self.assertTrue(sections["IMAGE_TOOLS:Background removal"].is_expanded())
 
     def test_an_unknown_saved_key_is_ignored_silently(self) -> None:
@@ -105,21 +104,21 @@ class WorkflowPanelSubsectionRestoreTests(unittest.TestCase):
         saved: list[AppSettings] = []
         window = self._build(on_settings_changed=saved.append)
         sections = dict(_workflow_panel(window)._subsections)
-        sections["IMAGE_TOOLS:Chromatic correction"].set_expanded(True)
+        sections["ANALYSIS:Statistics"].set_expanded(True)
         _APP.processEvents()
         self.assertTrue(saved)
-        self.assertEqual(saved[-1].expanded_subsections.get("IMAGE_TOOLS:Chromatic correction"), True)
+        self.assertEqual(saved[-1].expanded_subsections.get("ANALYSIS:Statistics"), True)
 
     def test_toggling_two_nested_sections_accumulates_rather_than_overwriting(self) -> None:
         saved: list[AppSettings] = []
         window = self._build(on_settings_changed=saved.append)
         sections = dict(_workflow_panel(window)._subsections)
-        sections["IMAGE_TOOLS:Chromatic correction"].set_expanded(True)
+        sections["ANALYSIS:Statistics"].set_expanded(True)
         _APP.processEvents()
         sections["IMAGE_TOOLS:Background removal"].set_expanded(False)
         _APP.processEvents()
         latest = saved[-1].expanded_subsections
-        self.assertEqual(latest.get("IMAGE_TOOLS:Chromatic correction"), True)
+        self.assertEqual(latest.get("ANALYSIS:Statistics"), True)
         self.assertEqual(latest.get("IMAGE_TOOLS:Background removal"), False)
 
 
