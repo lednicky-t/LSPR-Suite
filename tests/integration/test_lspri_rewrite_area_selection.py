@@ -263,9 +263,9 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
     def test_ribbon_announces_category_changes(self) -> None:
         seen: list[str] = []
         self.image_panel.ribbon_category_changed.connect(seen.append)
-        self.image_panel._tool_ribbon._tab_buttons[2].click()
-        self.assertEqual(seen, ["Histogram"])
-        self.assertEqual(self.image_panel.active_ribbon_category(), "Histogram")
+        self.image_panel._tool_ribbon._tab_buttons[1].click()
+        self.assertEqual(seen, ["Image tools"])
+        self.assertEqual(self.image_panel.active_ribbon_category(), "Image tools")
 
     # -- histogram -----------------------------------------------------------------
 
@@ -279,6 +279,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     def test_histogram_ignores_the_selection_unless_its_ribbon_tab_is_open(self) -> None:
         self._counts_mode()
+        self.image_panel._tool_ribbon._tab_buttons[1].click()
         self.area.set_rectangle(0, 0, 40, 64)
         _pump()
         self.assertEqual(self.image_panel.active_ribbon_category(), "Image tools")
@@ -286,7 +287,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     def test_histogram_narrows_to_the_selection_when_its_tab_is_open(self) -> None:
         self._counts_mode()
-        self.image_panel._tool_ribbon._tab_buttons[2].click()
+        self.assertEqual(self.image_panel.active_ribbon_category(), "View")  # the first tab, open at start
         self.area.set_rectangle(0, 0, 40, 64)
         _pump()
         self.assertAlmostEqual(self._all_total(), 40.0 * 64.0)
@@ -299,7 +300,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     def test_selection_does_not_move_the_highlight_range(self) -> None:
         before = self.highlight_range.current_range()
-        self.image_panel._tool_ribbon._tab_buttons[2].click()
+        self.image_panel._tool_ribbon._tab_buttons[0].click()
         self.area.set_rectangle(0, 0, 8, 8)  # only flat 150 px inside
         _pump()
         self.assertEqual(self.highlight_range.current_range(), before)

@@ -133,16 +133,22 @@ class VisualSettingsRestoreTests(unittest.TestCase):
     def test_the_open_ribbon_tab_is_restored_and_persisted(self) -> None:
         saved: list[AppSettings] = []
         window = self._build(
-            initial_settings=AppSettings(image_ribbon_category="Histogram"), on_settings_changed=saved.append
+            initial_settings=AppSettings(image_ribbon_category="ROIs"), on_settings_changed=saved.append
         )
         panel = _panel(window, "Image", ImagePanel)
-        self.assertEqual(panel.active_ribbon_category(), "Histogram")
+        self.assertEqual(panel.active_ribbon_category(), "ROIs")
         panel._tool_ribbon.set_category("Mask")
         self.assertEqual(saved[-1].image_ribbon_category, "Mask")
 
+    def test_the_old_histogram_tab_name_restores_as_view(self) -> None:
+        panel = _panel(
+            self._build(initial_settings=AppSettings(image_ribbon_category="Histogram")), "Image", ImagePanel
+        )
+        self.assertEqual(panel.active_ribbon_category(), "View")
+
     def test_an_unknown_saved_ribbon_tab_leaves_the_first_tab_open(self) -> None:
         panel = _panel(self._build(initial_settings=AppSettings(image_ribbon_category="Gone")), "Image", ImagePanel)
-        self.assertEqual(panel.active_ribbon_category(), "Image tools")
+        self.assertEqual(panel.active_ribbon_category(), "View")
 
     def test_saved_overlay_looks_are_applied_at_launch(self) -> None:
         window = self._build(
