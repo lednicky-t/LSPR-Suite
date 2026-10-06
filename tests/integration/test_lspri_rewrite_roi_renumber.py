@@ -166,21 +166,21 @@ class RoiRenumberFollowedByAnalysisTest(unittest.TestCase):
 
     # -- reorder --------------------------------------------------------
 
-    def test_a_swap_of_two_rois_keeps_each_result_with_its_roi(self) -> None:
-        """Simulates the user swapping rows 1 and 2: the ids exchange, and so
-        do the positions they refer to. Run in the mode that records every
-        ROI's circle in the fingerprint, which is where ids in the digest
-        used to mark every cell stale."""
+    def test_reordering_two_rois_keeps_each_result_with_its_roi(self) -> None:
+        """The user swaps rows 1 and 2 (`reorder_rois`). Run in the mode that
+        records every ROI's circle in the fingerprint, which is where ids in
+        the digest used to mark every cell stale."""
         self.engine._reference_exclusion_mode = lambda: "exclude_all_sample_rois"
         self._run_to_completion(self.engine)
         self.assertEqual(self._planned(self.engine), 0)
+        self.selection.set_roi_selection({self.id_a})
 
-        self.engine.remap_roi_ids({1: 2, 2: 1})
-        self.roi_toolbox.move_roi(1, *_B)
-        self.roi_toolbox.move_roi(2, *_A)
+        self.roi_toolbox.reorder_rois((self.id_b, self.id_a))
 
+        self.assertEqual(self.roi_toolbox.roi_by_id(1).center_x, _B[0])
         self.assertEqual(self.engine.get_spectrum(1, 0).sample_values, self.b_values)
         self.assertEqual(self.engine.get_spectrum(2, 0).sample_values, self.a_values)
+        self.assertEqual(self.selection.selected_roi_ids(), frozenset({2}), "the selection follows its ROI")
         self.assertEqual(self._planned(self.engine), 0, "same circles, different numbers: nothing is stale")
 
         restarted = self._restarted()
@@ -188,6 +188,11 @@ class RoiRenumberFollowedByAnalysisTest(unittest.TestCase):
         self.assertEqual(restarted.get_spectrum(1, 0).sample_values, self.b_values)
         self.assertEqual(restarted.get_spectrum(2, 0).sample_values, self.a_values)
         self.assertEqual(self._planned(restarted), 0)
+
+        undo_manager.undo()
+        self.assertEqual(self.engine.get_spectrum(1, 0).sample_values, self.a_values)
+        self.assertEqual(self.engine.get_spectrum(2, 0).sample_values, self.b_values)
+        self.assertEqual(self._planned(self.engine), 0)
 
     # -- concurrency ----------------------------------------------------
 
