@@ -113,7 +113,7 @@ class RoiGeometrySyncTest(unittest.TestCase):
 
     def test_no_dataset_loaded_logs_and_does_not_crash(self) -> None:
         # No dataset ever loaded - raw_shape is None throughout.
-        roi_id = self.roi_toolbox.add_roi(10.0, 10.0, sample_radius_px=5.0)
+        roi_id = self.roi_toolbox.add_roi(10.0, 10.0, sample_diameter_px=10.0)
         self.geometry.set_rotation(5.0)
         roi = self.roi_toolbox.roi_by_id(roi_id)
         self.assertEqual((roi.center_x, roi.center_y), (10.0, 10.0))  # unchanged
@@ -121,7 +121,7 @@ class RoiGeometrySyncTest(unittest.TestCase):
 
     def test_rotation_remaps_existing_rois(self) -> None:
         self._load()
-        roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_radius_px=5.0)
+        roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_diameter_px=10.0)
         self.geometry.set_rotation(12.0)
         roi = self.roi_toolbox.roi_by_id(roi_id)
         self.assertNotEqual((roi.center_x, roi.center_y), (10.0, 20.0))
@@ -131,7 +131,7 @@ class RoiGeometrySyncTest(unittest.TestCase):
 
     def test_flip_and_crop_also_remap(self) -> None:
         self._load()
-        roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_radius_px=5.0)
+        roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_diameter_px=10.0)
         self.geometry.set_flip(True, False)
         roi = self.roi_toolbox.roi_by_id(roi_id)
         self.assertNotEqual((roi.center_x, roi.center_y), (10.0, 20.0))
@@ -144,7 +144,7 @@ class RoiGeometrySyncTest(unittest.TestCase):
 
     def test_image_tools_enabled_does_not_remap(self) -> None:
         self._load()
-        roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_radius_px=5.0)
+        roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_diameter_px=10.0)
         self.geometry.set_image_tools_enabled(False)
         roi = self.roi_toolbox.roi_by_id(roi_id)
         self.assertEqual((roi.center_x, roi.center_y), (10.0, 20.0))
@@ -152,7 +152,7 @@ class RoiGeometrySyncTest(unittest.TestCase):
 
     def test_session_restore_does_not_remap_but_updates_the_baseline(self) -> None:
         self._load()
-        roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_radius_px=5.0)
+        roi_id = self.roi_toolbox.add_roi(10.0, 20.0, sample_diameter_px=10.0)
 
         restored = GeometrySettings(rotation_angle_deg=30.0)
         self.geometry.restore_settings(restored)
@@ -180,7 +180,7 @@ class RoiGeometrySyncTest(unittest.TestCase):
         try:
             second_dataset = _write_dataset(Path(second_tmp.name), shape=(50, 60))
             self.dataset.load_dataset(second_dataset)  # a fresh GeometryModule state is the app's job, not this test's
-            roi_id = self.roi_toolbox.add_roi(5.0, 5.0, sample_radius_px=3.0)
+            roi_id = self.roi_toolbox.add_roi(5.0, 5.0, sample_diameter_px=6.0)
             self.geometry.set_rotation(self.geometry.settings().rotation_angle_deg + 2.0)
             # No crash despite the raw shape having changed underneath - the
             # real assertion is just that this ran at all and remapped
@@ -197,7 +197,7 @@ class RoiGeometrySyncTest(unittest.TestCase):
         from lspr_imaging_app.roi.toolbox import RoiRemapReport
 
         self._load()
-        self.roi_toolbox.add_roi(10.0, 20.0, sample_radius_px=5.0)
+        self.roi_toolbox.add_roi(10.0, 20.0, sample_diameter_px=10.0)
         original = self.roi_toolbox.remap_all
         self.roi_toolbox.remap_all = lambda *a, **k: RoiRemapReport((1,), 0, (1,), ())
         try:
@@ -260,7 +260,7 @@ class RoiGeometrySyncUndoBatchTest(unittest.TestCase):
         self.panel._on_scene_clicked(_Click())
 
     def test_rotating_with_an_existing_roi_undoes_both_in_one_step(self) -> None:
-        roi_id = self.roi_toolbox.add_roi(20.0, 30.0, sample_radius_px=5.0)
+        roi_id = self.roi_toolbox.add_roi(20.0, 30.0, sample_diameter_px=10.0)
         undo_depth_before = len(undo_manager._undo_stack)
 
         self.active_tool.set_active(ImageTool.ROTATE, True)
@@ -287,7 +287,7 @@ class RoiGeometrySyncUndoBatchTest(unittest.TestCase):
         )
 
     def test_arrow_key_step_also_batches_the_roi_remap(self) -> None:
-        roi_id = self.roi_toolbox.add_roi(20.0, 30.0, sample_radius_px=5.0)
+        roi_id = self.roi_toolbox.add_roi(20.0, 30.0, sample_diameter_px=10.0)
         undo_depth_before = len(undo_manager._undo_stack)
 
         self.active_tool.set_active(ImageTool.ROTATE, True)

@@ -163,7 +163,7 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         2026-10-03: every curve is divided by the All-pixels peak, so All
         pixels reads exactly 1.0 and no sub-population exceeds it."""
         self._load()
-        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         self.panel._show_settings_dialog()
         self.panel._settings_dialog.axis_mode_combo.setCurrentIndex(2)  # Normalized
         _pump()
@@ -179,7 +179,7 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self._load()
         _, before = self.panel._plot._sample_curve.getData()
         self.assertEqual(float(np.sum(before)), 0.0)
-        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         _pump()
         _, after = self.panel._plot._sample_curve.getData()
         self.assertGreater(float(np.sum(after)), 0.0)

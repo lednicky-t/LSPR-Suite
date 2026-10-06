@@ -126,15 +126,15 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
                 landmark_id=7, spectral_cube_index=0, wavelength_nm=550.0, x_px=12.0, y_px=34.0),),
         )
 
-        self.roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
-        self.roi_b = self.roi_toolbox.add_roi(60.0, 45.0, sample_radius_px=7.0)
+        self.roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_b = self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=14.0)
         self.group_id = self.roi_toolbox.create_group("Row A", sample_color_hex="#112233")
         self.roi_toolbox.add_to_group(self.roi_a, self.group_id)
         # Give one ROI mask geometry and a per-wavelength nudge - the two
         # fields a naive JSON encoder loses silently.
         self.roi_toolbox.restore_state(
             replace(self.roi_toolbox.detection_settings(),
-                    reduction_method="median", reference_outer_radius_px=21.0),
+                    reduction_method="median", reference_outer_diameter_px=42.0),
             tuple(
                 replace(roi, sample_geometry_type="mask",
                         sample_mask=RoiMask(x0=3, y0=4, mask=self.patch),
@@ -250,7 +250,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         _geo, _mask, _chrom, _bg, roi_toolbox, _sel, _analysis = self._reload()
         self.assertEqual(len(roi_toolbox.rois()), 2)
         self.assertEqual(roi_toolbox.detection_settings().reduction_method, "median")
-        self.assertEqual(roi_toolbox.detection_settings().reference_outer_radius_px, 21.0)
+        self.assertEqual(roi_toolbox.detection_settings().reference_outer_diameter_px, 42.0)
 
         restored = roi_toolbox.roi_by_id(self.roi_a)
         self.assertEqual(restored.center_x, 40.0)

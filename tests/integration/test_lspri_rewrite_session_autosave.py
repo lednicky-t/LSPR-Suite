@@ -258,7 +258,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
 
     def test_an_edit_is_written_and_comes_back_after_a_restart(self) -> None:
         self.dataset.load_dataset(self.dataset_model)
-        self.roi_toolbox.add_roi(8.0, 6.0, sample_radius_px=2.0)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
         self.autosave.flush()
         self.assertTrue(self._active_session_path().is_file())
 
@@ -272,7 +272,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         """If the restore itself counted as an edit, every dataset open
         would rewrite the file it had just read."""
         self.dataset.load_dataset(self.dataset_model)
-        self.roi_toolbox.add_roi(8.0, 6.0, sample_radius_px=2.0)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
         self.autosave.flush()
         written_at = self._active_session_path().stat().st_mtime_ns
 
@@ -285,7 +285,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         """The whole point of sessions: a new one never sees the previous
         one's ROIs, and switching back restores them."""
         self.dataset.load_dataset(self.dataset_model)
-        self.roi_toolbox.add_roi(8.0, 6.0, sample_radius_px=2.0)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
         self.autosave.flush()
         first_session_id = self.coordinator.active_session_id()
 
@@ -311,7 +311,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
 
         with self.assertLogs("lspr_imaging_app.app_rewrite", level="ERROR"):
             self.dataset.load_dataset(self.dataset_model)
-        self.roi_toolbox.add_roi(8.0, 6.0, sample_radius_px=2.0)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
         self.autosave.flush()
 
         self.assertEqual(path.read_text(encoding="utf-8"), original)

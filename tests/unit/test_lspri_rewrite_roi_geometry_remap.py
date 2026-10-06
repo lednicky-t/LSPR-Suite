@@ -250,7 +250,7 @@ class RemapRoiShapeDispatchTest(unittest.TestCase):
     tested directly since it is plain logic over a dataclass (no Qt)."""
 
     def _roi(self, **overrides: object) -> AreaRoi:
-        defaults = dict(area_roi_id=1, center_x=0.0, center_y=0.0, sample_radius_px=5.0)
+        defaults = dict(area_roi_id=1, center_x=0.0, center_y=0.0, sample_diameter_px=10.0)
         defaults.update(overrides)
         return AreaRoi(**defaults)
 

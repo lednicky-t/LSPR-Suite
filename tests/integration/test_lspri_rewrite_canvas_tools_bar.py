@@ -293,7 +293,7 @@ class AddRoiToolTest(unittest.TestCase):
         """Add ROI is not a _PREVIEW_TOOLS member - it works in already-
         processed/cropped space, so unlike Rotate/Crop the ROI overlay must
         not be hidden while it is active."""
-        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         _pump()
         self.panel._canvas_tools._add_roi_button.click()
         _pump()

@@ -118,7 +118,7 @@ class TestIgnoreMaskDoesNotTouchTheImage(unittest.TestCase):
 
 class TestDetectionIgnoresInvalidPixels(unittest.TestCase):
     def _settings(self) -> AreaRoiDetectionSettings:
-        return AreaRoiDetectionSettings(sample_radius_px=5.0)
+        return AreaRoiDetectionSettings(sample_diameter_px=10.0)
 
     def test_non_finite_pixels_are_always_ignored(self) -> None:
         image = _particles_on_dark()

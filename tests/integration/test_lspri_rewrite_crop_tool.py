@@ -460,7 +460,7 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         self.assertIsNone(self.tool.rect())
 
     def test_plain_click_does_not_select_rois_while_crop_is_active(self) -> None:
-        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         self.assertIsNotNone(roi_id)
         _pump()
         self.active_tool.set_active(ImageTool.CROP, True)

@@ -116,8 +116,8 @@ class RewriteAnalysisEngineTest(unittest.TestCase):
 
     def _place_two_rois(self) -> tuple[int, int]:
         return (
-            self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0),
-            self.roi_toolbox.add_roi(47.0, 34.0, sample_radius_px=3.0),
+            self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0),
+            self.roi_toolbox.add_roi(47.0, 34.0, sample_diameter_px=6.0),
         )
 
     def _run_to_completion(self, engine) -> None:
@@ -270,7 +270,7 @@ class RewriteDarkFrameExclusionTest(unittest.TestCase):
         self.assertIn(0.0, self.dataset.wavelengths_for_cube(0))
 
     def test_the_stored_cell_excludes_the_dark_frame(self) -> None:
-        roi = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0)
+        roi = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0)
         self._run_to_completion()
 
         stored = self.engine.get_spectrum(roi, 0)
@@ -279,7 +279,7 @@ class RewriteDarkFrameExclusionTest(unittest.TestCase):
         self.assertNotIn(0.0, stored.wavelengths_nm)
 
     def test_the_formula_spectrum_and_metric_never_see_the_dark_frame(self) -> None:
-        roi = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0)
+        roi = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0)
         self._run_to_completion()
 
         spectrum = self.engine.formula_spectrum(roi, 0)
@@ -294,7 +294,7 @@ class RewriteDarkFrameExclusionTest(unittest.TestCase):
         wavelengths exist, which would make every cell look permanently
         stale (the same failure shape as the placeholder-mask-version bug
         `RewriteAnalysisEngineTest` guards against)."""
-        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0)
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0)
         self.assertEqual(len(self.engine.preview_recompute(AnalysisScope.ALL_ROIS).to_recompute), 1)
         self._run_to_completion()
         self.assertEqual(len(self.engine.preview_recompute(AnalysisScope.ALL_ROIS).to_recompute), 0)
@@ -355,8 +355,8 @@ class RewriteBackgroundExclusionTest(unittest.TestCase):
 
     def _place_two_rois(self) -> tuple[int, int]:
         return (
-            self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0),
-            self.roi_toolbox.add_roi(47.0, 34.0, sample_radius_px=3.0),
+            self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0),
+            self.roi_toolbox.add_roi(47.0, 34.0, sample_diameter_px=6.0),
         )
 
     def _run_to_completion(self) -> None:
@@ -469,7 +469,7 @@ class RewriteAnalysisFailureReportingTest(unittest.TestCase):
             raise RuntimeError("pixel loading blew up")
 
         self.engine._load_plane = _explode
-        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0)
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0)
 
         done: list[bool] = []
         self.engine.analysis_complete.connect(lambda: done.append(True))
@@ -512,7 +512,7 @@ class RewriteQueryLayerTest(unittest.TestCase):
         )
         self.dataset.load_dataset(self.dataset_model)
         self.engine.set_storage_root(self.dataset_model.home)
-        self.roi = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=3.0)
+        self.roi = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0)
         self._run_to_completion()
 
     def tearDown(self) -> None:
@@ -546,7 +546,7 @@ class RewriteQueryLayerTest(unittest.TestCase):
     def test_an_unanalyzed_cell_is_none_and_never_computes_on_read(self) -> None:
         """Sketch §7: a panel shows "needs analysis"; nothing computes
         behind the user's back."""
-        unknown_roi = self.roi_toolbox.add_roi(20.0, 20.0, sample_radius_px=3.0)
+        unknown_roi = self.roi_toolbox.add_roi(20.0, 20.0, sample_diameter_px=6.0)
         self.assertIsNone(self.engine.formula_spectrum(unknown_roi, 0))
         self.assertIsNone(self.engine.get_metric(unknown_roi, 0))
 
@@ -607,7 +607,7 @@ class RewriteQueryLayerTest(unittest.TestCase):
         """NaN, not a shorter array: every ROI's trace has to stay aligned
         to the same x axis for the group aggregation to stack them, and
         dropping a point would shift every later point left."""
-        lonely = self.roi_toolbox.add_roi(20.0, 20.0, sample_radius_px=3.0)
+        lonely = self.roi_toolbox.add_roi(20.0, 20.0, sample_diameter_px=6.0)
         trace = self.engine.metric_trace(lonely)
         self.assertEqual(trace.size, len(self.dataset.spectral_cubes()))
         self.assertTrue(np.all(np.isnan(trace)))

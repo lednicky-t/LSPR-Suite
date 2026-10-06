@@ -230,8 +230,8 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_overlay_draws_one_sample_and_two_reference_circles_per_roi(self) -> None:
         self._load()
-        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
-        self.roi_toolbox.add_roi(60.0, 45.0, sample_radius_px=5.0)
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=10.0)
         _pump()
 
         sample_x, _ = self.panel._sample_curve.getData()
@@ -242,8 +242,8 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_selection_moves_an_roi_to_the_highlight_curve(self) -> None:
         self._load()
-        roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
-        self.roi_toolbox.add_roi(60.0, 45.0, sample_radius_px=5.0)
+        roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=10.0)
         self.selection.set_roi_selection({roi_a})
         _pump()
 
@@ -254,8 +254,8 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_hit_testing_by_image_coordinate(self) -> None:
         self._load()
-        roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
-        roi_b = self.roi_toolbox.add_roi(60.0, 45.0, sample_radius_px=5.0)
+        roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        roi_b = self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=10.0)
 
         self.assertEqual(self.panel.roi_at(40.0, 30.0), roi_a)
         self.assertEqual(self.panel.roi_at(44.0, 30.0), roi_a)  # just inside the radius
@@ -267,7 +267,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         all; undo works because the drag went through `RoiToolbox`, whose
         `revert()` re-emits exactly what the original call emitted."""
         self._load()
-        roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
+        roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         reasons: list[str] = []
         self.roi_toolbox.geometry_changed.connect(lambda change: reasons.append(change.reason))
 
@@ -339,7 +339,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual((x, y), (38.5, 30.5))
         self.assertIn("(38, 30)", text)
         expected = float(self.panel._image_item.image[30, 38])
-        self.assertIn(f"{expected:.1f}", text)
+        self.assertIn(f"{expected:.0f}", text)  # whole numbers, see no_data.format_pixel_value
 
     def test_cursor_overlay_off_image_returns_none(self) -> None:
         self._load()
@@ -615,9 +615,10 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertIs(self.panel._cursor_overlay.icon_label.parent(), self.panel._general_row)
         ribbon_index = top_bar_layout.indexOf(self.panel._tool_ribbon)
         info_index = top_bar_layout.indexOf(self.panel._tool_info)
-        general_index = top_bar_layout.indexOf(self.panel._general_row.parentWidget())
         self.assertNotEqual(ribbon_index, -1)
-        self.assertLess(general_index, ribbon_index)
+        # The General group is the ribbon's pinned, always-visible leading
+        # section (2026-10-03), so it sits inside the ribbon, left of its tabs.
+        self.assertTrue(self.panel._tool_ribbon.isAncestorOf(self.panel._general_row))
         self.assertLess(ribbon_index, info_index)
 
     def test_image_tools_tab_holds_a_transforms_section_wired_to_the_panels_own_modules(self) -> None:

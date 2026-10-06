@@ -321,7 +321,7 @@ class MeasureToolTest(unittest.TestCase):
         self.assertFalse(self.controls.isVisible())
 
     def test_clicks_never_select_rois_while_measuring(self) -> None:
-        self.roi_toolbox.add_roi(40.0, 30.0, sample_radius_px=5.0)
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         _pump()
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(40.0, 30.0)

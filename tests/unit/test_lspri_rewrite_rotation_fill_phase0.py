@@ -101,7 +101,7 @@ def _straddling_cell(thresholds: CoverageThresholds, shared_dir: Path | None = N
     ys, xs = np.nonzero(~invalid)
     top = ys.min()
     cy, cx = int(top) + 2, int(xs[ys == top].mean())
-    roi = AreaRoi(area_roi_id=1, center_x=float(cx), center_y=float(cy), sample_radius_px=6.0)
+    roi = AreaRoi(area_roi_id=1, center_x=float(cx), center_y=float(cy), sample_diameter_px=12.0)
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = shared_dir if shared_dir is not None else Path(tmp)
         wl_input = WavelengthComputeInput(
@@ -118,8 +118,8 @@ def _straddling_cell(thresholds: CoverageThresholds, shared_dir: Path | None = N
             roi, 0, {500.0: wl_input},
             reduction_method="mean",
             trimmed_mean_fraction=0.1,
-            default_reference_inner_radius_px=12.0,
-            default_reference_outer_radius_px=18.0,
+            default_reference_inner_diameter_px=24.0,
+            default_reference_outer_diameter_px=36.0,
             masks_dir=tmp_path, chromatic_dir=tmp_path, settings_dir=tmp_path,
             naming=FrameNamingScheme(cube_digits=3, wavelength_decimals=1),
             coverage_thresholds=thresholds,

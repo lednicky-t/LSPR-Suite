@@ -40,7 +40,7 @@ try:
     from lspr_imaging_app.image_tools.geometry.transform import apply_spatial_mask
     from lspr_imaging_app.image_tools.preprocess import resolve_external_mask
     from lspr_imaging_app.roi.model import AreaRoi
-    from lspr_imaging_app.roi.rasterize import effective_reference_radii
+    from lspr_imaging_app.roi.rasterize import effective_reference_diameters
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
 
@@ -148,28 +148,28 @@ class ExternalMaskCoordinateSpaceTest(unittest.TestCase):
         self.assertLessEqual(abs(int(warped.sum()) - int(unwarped.sum())), int(0.10 * unwarped.sum()))
 
 
-class EffectiveReferenceRadiiTest(unittest.TestCase):
+class EffectiveReferenceDiametersTest(unittest.TestCase):
     """The Image panel draws the reference ring it is about to measure, so
     it calls this rather than re-deriving the override rule. Pinned so the
     drawn ring and the measured ring cannot drift apart."""
 
     def test_falls_back_to_the_shared_defaults(self) -> None:
-        roi = AreaRoi(area_roi_id=1, center_x=10.0, center_y=10.0, sample_radius_px=5.0)
-        self.assertEqual(effective_reference_radii(roi, 14.0, 18.0), (14.0, 18.0))
+        roi = AreaRoi(area_roi_id=1, center_x=10.0, center_y=10.0, sample_diameter_px=10.0)
+        self.assertEqual(effective_reference_diameters(roi, 14.0, 18.0), (14.0, 18.0))
 
-    def test_per_roi_diameter_overrides_win_and_halve(self) -> None:
+    def test_per_roi_diameter_overrides_win(self) -> None:
         roi = AreaRoi(
-            area_roi_id=1, center_x=10.0, center_y=10.0, sample_radius_px=5.0,
+            area_roi_id=1, center_x=10.0, center_y=10.0, sample_diameter_px=10.0,
             reference_inner_diameter_px=40.0, reference_outer_diameter_px=60.0,
         )
-        self.assertEqual(effective_reference_radii(roi, 14.0, 18.0), (20.0, 30.0))
+        self.assertEqual(effective_reference_diameters(roi, 14.0, 18.0), (40.0, 60.0))
 
     def test_one_override_does_not_drag_the_other(self) -> None:
         roi = AreaRoi(
-            area_roi_id=1, center_x=10.0, center_y=10.0, sample_radius_px=5.0,
+            area_roi_id=1, center_x=10.0, center_y=10.0, sample_diameter_px=10.0,
             reference_outer_diameter_px=60.0,
         )
-        self.assertEqual(effective_reference_radii(roi, 14.0, 18.0), (14.0, 30.0))
+        self.assertEqual(effective_reference_diameters(roi, 14.0, 18.0), (14.0, 60.0))
 
 
 if __name__ == "__main__":
