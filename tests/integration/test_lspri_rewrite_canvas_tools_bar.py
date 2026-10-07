@@ -297,7 +297,7 @@ class AddRoiToolTest(unittest.TestCase):
         _pump()
         self.panel._canvas_tools._add_roi_button.click()
         _pump()
-        xs = self.panel._sample_curve.getData()[0]
+        xs = self.panel._roi_overlay.sample_curve.getData()[0]
         self.assertIsNotNone(xs)
         self.assertGreater(len(xs), 0)
 

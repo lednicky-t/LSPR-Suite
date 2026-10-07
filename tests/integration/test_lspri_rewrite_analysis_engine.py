@@ -658,5 +658,21 @@ class RewriteDetectionSettingsOwnershipTest(unittest.TestCase):
         self.assertEqual(changes, [])
 
 
+class AnalysisEngineConstructionTest(unittest.TestCase):
+    def test_every_module_read_is_a_required_argument(self) -> None:
+        """A half-wired engine must not construct (it used to, with "unwired"
+        placeholders that raised only when called, 2026-10-07)."""
+        from lspr_imaging_app.analysis import AnalysisEngine
+
+        with self.assertRaises(TypeError) as caught:
+            AnalysisEngine()
+        message = str(caught.exception)
+        for name in ("load_plane", "rois", "cube_indices", "wavelengths_for_cube", "geometry_settings",
+                     "background_settings", "chromatic_affine", "resolve_mask", "reduction_method",
+                     "default_reference_diameters", "detection_settings"):
+            self.assertIn(name, message)
+        self.assertNotIn("chromatic_affine_between", message)  # the one optional read
+
+
 if __name__ == "__main__":
     unittest.main()

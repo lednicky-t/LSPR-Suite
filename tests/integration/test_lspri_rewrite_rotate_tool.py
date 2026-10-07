@@ -407,14 +407,14 @@ class RotateToolTest(unittest.TestCase):
     def test_roi_overlay_is_hidden_while_rotating_and_restored_after(self) -> None:
         self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         _pump()
-        self.assertGreater(len(self.panel._sample_curve.getData()[0]), 0)
+        self.assertGreater(len(self.panel._roi_overlay.sample_curve.getData()[0]), 0)
         self.active_tool.set_active(ImageTool.ROTATE, True)
         _pump()
-        xs = self.panel._sample_curve.getData()[0]
+        xs = self.panel._roi_overlay.sample_curve.getData()[0]
         self.assertTrue(xs is None or len(xs) == 0)
         self.active_tool.set_active(ImageTool.ROTATE, False)
         _pump()
-        self.assertGreater(len(self.panel._sample_curve.getData()[0]), 0)
+        self.assertGreater(len(self.panel._roi_overlay.sample_curve.getData()[0]), 0)
 
     def test_clicks_never_select_rois_while_rotating(self) -> None:
         roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)

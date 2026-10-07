@@ -184,6 +184,43 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         _, after = self.panel._plot._sample_curve.getData()
         self.assertGreater(float(np.sum(after)), 0.0)
 
+    def test_selecting_a_roi_does_not_rebuild_the_roi_masks(self) -> None:
+        """Selecting re-renders the image (so the Histogram redraws) but changes
+        no ROI: the masks must come from the cache (0.9 s per rebuild at 1000
+        ROIs before this was cached)."""
+        from unittest import mock
+
+        from lspr_imaging_app.panels.histogram import roi_masks
+
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.add_roi(20.0, 20.0, sample_diameter_px=10.0)
+        _pump()
+        with mock.patch.object(roi_masks, "union_roi_masks", wraps=roi_masks.union_roi_masks) as union:
+            self.selection.set_roi_selection({roi_id})
+            _pump()
+            self.selection.set_roi_selection(set())
+            _pump()
+            self.assertEqual(union.call_count, 0)
+            self.roi_toolbox.move_roi(roi_id, 41.0, 30.0)  # a real change does rebuild
+            _pump()
+            self.assertGreaterEqual(union.call_count, 1)
+
+    def test_many_rois_draw_their_curves_when_the_background_build_finishes(self) -> None:
+        from unittest import mock
+
+        from lspr_imaging_app.panels.histogram import roi_masks
+
+        self._load()
+        with mock.patch.object(roi_masks, "SYNC_ROI_LIMIT", 1):
+            for x in (10.0, 25.0, 40.0, 55.0, 70.0):
+                self.roi_toolbox.add_roi(x, 30.0, sample_diameter_px=8.0)
+            _pump(1.5)
+        _, sample = self.panel._plot._sample_curve.getData()
+        self.assertGreater(float(np.sum(sample)), 0.0)
+        _, reference = self.panel._plot._reference_curve.getData()
+        self.assertGreater(float(np.sum(reference)), 0.0)
+
     def test_an_authored_mask_adds_to_the_ignore_curve(self) -> None:
         self._load()
         raw_mask = np.zeros(_IMAGE_SHAPE, dtype=bool)

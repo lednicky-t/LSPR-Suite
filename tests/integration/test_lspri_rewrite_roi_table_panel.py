@@ -37,9 +37,10 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_ui import get_active_theme, load_tabler_icon, set_active_theme, transparent_icon_button_stylesheet
 
-    from lspr_imaging_app.analysis.engine import AnalysisEngine
+    from lspr_imaging_app.app_rewrite import _build_analysis_engine
+    from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.gui.app_theme import LSPRI_BRIGHT_THEME, LSPRI_DARK_THEME, apply_app_theme
-    from lspr_imaging_app.image_tools import GeometryModule
+    from lspr_imaging_app.image_tools import BackgroundModule, ChromaticModule, GeometryModule, MaskModule
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.panels.image.general_group import style_general_icon_button
     from lspr_imaging_app.panels.roi_table import RoiTablePanel
@@ -78,7 +79,10 @@ class _PanelCase(unittest.TestCase):
         self.toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.geometry = GeometryModule()
-        self.engine = AnalysisEngine()
+        # A real engine, wired as the app wires it (its constructor takes every read as a required argument).
+        self.engine = _build_analysis_engine(
+            DatasetModule(), self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(), self.toolbox
+        )
         self.toolbox.roi_ids_renumbered.connect(self.selection.remap_roi_ids)  # as the app wires it
         for x in (10.0, 20.0, 30.0, 40.0, 50.0):
             self.toolbox.add_roi(x, 5.0, sample_diameter_px=6.0)

@@ -135,109 +135,109 @@ class RoiOverlayControlsTest(unittest.TestCase):
         self.two_rois()
         self.selection.set_roi_selection({2})
         _pump(0.2)
-        self.assertTrue(all(curve.isVisible() for curve in self.panel._sample_curves.values()))
-        self.assertTrue(self.panel._selection_curve.isVisible())
+        self.assertTrue(all(curve.isVisible() for curve in self.panel._roi_overlay.sample_curves.values()))
+        self.assertTrue(self.panel._roi_overlay.selection_curve.isVisible())
 
         self.sample._toggle_button.click()
-        self.assertFalse(any(curve.isVisible() for curve in self.panel._sample_curves.values()))
-        self.assertFalse(self.panel._selection_curve.isVisible())
-        self.assertTrue(self.panel._reference_curve.isVisible())
+        self.assertFalse(any(curve.isVisible() for curve in self.panel._roi_overlay.sample_curves.values()))
+        self.assertFalse(self.panel._roi_overlay.selection_curve.isVisible())
+        self.assertTrue(self.panel._roi_overlay.reference_curve.isVisible())
 
         self.sample._toggle_button.click()
-        self.assertTrue(all(curve.isVisible() for curve in self.panel._sample_curves.values()))
-        self.assertTrue(self.panel._selection_curve.isVisible())
+        self.assertTrue(all(curve.isVisible() for curve in self.panel._roi_overlay.sample_curves.values()))
+        self.assertTrue(self.panel._roi_overlay.selection_curve.isVisible())
 
     def test_a_curve_made_while_the_circles_are_hidden_stays_hidden(self) -> None:
         self.two_rois()
         self.sample._toggle_button.click()
         self.roi_toolbox.set_roi_colors((1,), "#112233")  # a colour no curve exists for yet
         _pump(0.3)
-        self.assertIn("#112233", self.panel._sample_curves)
-        self.assertFalse(self.panel._sample_curves["#112233"].isVisible())
+        self.assertIn("#112233", self.panel._roi_overlay.sample_curves)
+        self.assertFalse(self.panel._roi_overlay.sample_curves["#112233"].isVisible())
 
     def test_the_sample_colour_is_the_colour_of_rois_with_none_of_their_own(self) -> None:
         self.two_rois()
         own = self.roi_toolbox.roi_by_id(1).sample_color_hex
         with mock.patch(_DIALOG, return_value=QColor("#00ff00")):
             self.sample._color_button.click()
-        self.assertEqual(self.points(self.panel._sample_curves["#00ff00"]), 48, "ROI 2 moved to the new default colour")
-        self.assertEqual(self.points(self.panel._sample_curves[own]), 48, "ROI 1 keeps its group tint")
-        self.assertEqual(self.points(self.panel._sample_curve), 0, "nothing is left on the old default")
+        self.assertEqual(self.points(self.panel._roi_overlay.sample_curves["#00ff00"]), 48, "ROI 2 moved to the new default colour")
+        self.assertEqual(self.points(self.panel._roi_overlay.sample_curves[own]), 48, "ROI 1 keeps its group tint")
+        self.assertEqual(self.points(self.panel._roi_overlay.sample_curve), 0, "nothing is left on the old default")
 
     def test_a_cancelled_colour_dialog_changes_nothing(self) -> None:
         self.two_rois()
         with mock.patch(_DIALOG, return_value=QColor()):
             self.sample._color_button.click()
-        self.assertEqual(self.panel._roi_sample_color, "#f59e0b")
+        self.assertEqual(self.panel._roi_overlay.sample.color, "#f59e0b")
 
     def test_sample_transparency_applies_to_every_sample_curve_including_new_ones(self) -> None:
         self.two_rois()
         self.sample._alpha_slider.setValue(50)
-        self.assertAlmostEqual(self.panel._roi_sample_alpha, 0.5)
-        for color, curve in self.panel._sample_curves.items():
+        self.assertAlmostEqual(self.panel._roi_overlay.sample.alpha, 0.5)
+        for color, curve in self.panel._roi_overlay.sample_curves.items():
             self.assertAlmostEqual(self.pen_color(curve).alphaF(), 0.5, delta=0.01, msg=color)
         self.roi_toolbox.set_roi_colors((2,), "#445566")
         _pump(0.3)
-        self.assertAlmostEqual(self.pen_color(self.panel._sample_curves["#445566"]).alphaF(), 0.5, delta=0.01)
-        self.assertEqual(self.pen_color(self.panel._sample_curves["#445566"]).name(), "#445566", "alpha does not touch the colour")
+        self.assertAlmostEqual(self.pen_color(self.panel._roi_overlay.sample_curves["#445566"]).alphaF(), 0.5, delta=0.01)
+        self.assertEqual(self.pen_color(self.panel._roi_overlay.sample_curves["#445566"]).name(), "#445566", "alpha does not touch the colour")
 
     def test_the_selection_highlight_is_not_made_transparent(self) -> None:
         self.two_rois()
         self.sample._alpha_slider.setValue(10)
-        self.assertEqual(self.pen_color(self.panel._selection_curve).alphaF(), 1.0)
+        self.assertEqual(self.pen_color(self.panel._roi_overlay.selection_curve).alphaF(), 1.0)
 
     # -- reference rings ---------------------------------------------------------------------
 
     def test_the_reference_toggle_hides_only_the_rings(self) -> None:
         self.two_rois()
         self.reference._toggle_button.click()
-        self.assertFalse(self.panel._reference_curve.isVisible())
-        self.assertTrue(self.panel._sample_curve.isVisible())
+        self.assertFalse(self.panel._roi_overlay.reference_curve.isVisible())
+        self.assertTrue(self.panel._roi_overlay.sample_curve.isVisible())
         self.reference._toggle_button.click()
-        self.assertTrue(self.panel._reference_curve.isVisible())
+        self.assertTrue(self.panel._roi_overlay.reference_curve.isVisible())
 
     def test_reference_colour_and_transparency(self) -> None:
         self.two_rois()
         with mock.patch(_DIALOG, return_value=QColor("#ff00ff")):
             self.reference._color_button.click()
         self.reference._alpha_slider.setValue(30)
-        pen = self.pen_color(self.panel._reference_curve)
+        pen = self.pen_color(self.panel._roi_overlay.reference_curve)
         self.assertEqual(pen.name(), "#ff00ff")
         self.assertAlmostEqual(pen.alphaF(), 0.3, delta=0.01)
-        self.assertEqual(self.pen_color(self.panel._sample_curve).alphaF(), 1.0, "sample circles untouched")
+        self.assertEqual(self.pen_color(self.panel._roi_overlay.sample_curve).alphaF(), 1.0, "sample circles untouched")
 
     # -- labels ----------------------------------------------------------------------------------
 
     def test_labels_are_off_until_toggled_then_show_number_and_name(self) -> None:
         self.two_rois()
-        self.assertEqual(self.panel._roi_label_item.labels(), [])
+        self.assertEqual(self.panel._roi_overlay.label_item.labels(), [])
         self.roi_toolbox.set_roi_label(2, "spot B")
         _pump(0.3)
         self.panel._roi_labels_button.click()
-        texts = {text for _x, _y, _r, text in self.panel._roi_label_item.labels()}
+        texts = {text for _x, _y, _r, text in self.panel._roi_overlay.label_item.labels()}
         self.assertEqual(texts, {"1", "2 spot B"})
-        x, y, radius, _ = next(entry for entry in self.panel._roi_label_item.labels() if entry[3] == "1")
+        x, y, radius, _ = next(entry for entry in self.panel._roi_overlay.label_item.labels() if entry[3] == "1")
         self.assertEqual((x, y, radius), (40.0, 30.0, 5.0), "anchored at the right edge of the circle")
         self.panel._roi_labels_button.click()
-        self.assertEqual(self.panel._roi_label_item.labels(), [])
+        self.assertEqual(self.panel._roi_overlay.label_item.labels(), [])
 
     def test_labels_follow_the_rois(self) -> None:
         self.two_rois()
         self.panel._roi_labels_button.click()
         self.roi_toolbox.add_roi(20.0, 15.0, sample_diameter_px=10.0)
         _pump(0.3)
-        self.assertEqual(len(self.panel._roi_label_item.labels()), 3)
+        self.assertEqual(len(self.panel._roi_overlay.label_item.labels()), 3)
         self.roi_toolbox.delete_rois((3,))
         _pump(0.3)
-        self.assertEqual(len(self.panel._roi_label_item.labels()), 2)
+        self.assertEqual(len(self.panel._roi_overlay.label_item.labels()), 2)
 
     def test_labels_are_hidden_with_the_circles_while_a_preview_tool_is_active(self) -> None:
         self.two_rois()
         self.panel._roi_labels_button.click()
-        self.assertEqual(len(self.panel._roi_label_item.labels()), 2)
+        self.assertEqual(len(self.panel._roi_overlay.label_item.labels()), 2)
         self.active_tool.set_active(ImageTool.CROP, True)
         _pump(0.3)
-        self.assertEqual(self.panel._roi_label_item.labels(), [])
+        self.assertEqual(self.panel._roi_overlay.label_item.labels(), [])
 
     def test_the_label_text(self) -> None:
         self.assertEqual(label_text(7, None), "7")
@@ -253,7 +253,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
         image = QImage(900, 700, QImage.Format.Format_ARGB32)
         image.fill(0)
         painter = QPainter(image)
-        self.panel._roi_label_item.paint(painter)
+        self.panel._roi_overlay.label_item.paint(painter)
         painter.end()
         self.panel.hide()
 
@@ -283,8 +283,8 @@ class RoiOverlayControlsTest(unittest.TestCase):
             self.assertEqual(fresh._roi_sample_controls._color.name(), "#abcdef")
             self.assertEqual(fresh._roi_reference_controls._alpha_slider.value(), 40)
             self.assertTrue(fresh._roi_labels_button.isChecked())
-            self.assertFalse(fresh._sample_curve.isVisible(), "the restored state is applied, not just shown")
-            self.assertAlmostEqual(fresh._reference_curve.opts["pen"].color().alphaF(), 0.4, delta=0.01)
+            self.assertFalse(fresh._roi_overlay.sample_curve.isVisible(), "the restored state is applied, not just shown")
+            self.assertAlmostEqual(fresh._roi_overlay.reference_curve.opts["pen"].color().alphaF(), 0.4, delta=0.01)
         finally:
             fresh._renderer.stop()
 
@@ -301,18 +301,18 @@ class RoiOverlayControlsTest(unittest.TestCase):
             "image/roi_reference_alpha": True, "image/roi_labels": 1,
         })
         self.panel.restore_ui_state(store)
-        self.assertTrue(self.panel._roi_sample_visible)
-        self.assertEqual(self.panel._roi_sample_color, "#f59e0b")
-        self.assertEqual(self.panel._roi_sample_alpha, 1.0)
-        self.assertEqual(self.panel._roi_reference_alpha, 1.0)
-        self.assertFalse(self.panel._roi_labels_visible)
+        self.assertTrue(self.panel._roi_overlay.sample.visible)
+        self.assertEqual(self.panel._roi_overlay.sample.color, "#f59e0b")
+        self.assertEqual(self.panel._roi_overlay.sample.alpha, 1.0)
+        self.assertEqual(self.panel._roi_overlay.reference.alpha, 1.0)
+        self.assertFalse(self.panel._roi_overlay.labels_visible)
 
     def test_clearing_the_dataset_empties_the_labels(self) -> None:
         self.two_rois()
         self.panel._roi_labels_button.click()
         self.dataset.clear_dataset()
         _pump(0.3)
-        self.assertEqual(self.panel._roi_label_item.labels(), [])
+        self.assertEqual(self.panel._roi_overlay.label_item.labels(), [])
 
     @staticmethod
     def _painted_width(button: QToolButton) -> int:
