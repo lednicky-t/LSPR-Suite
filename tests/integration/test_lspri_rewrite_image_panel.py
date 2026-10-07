@@ -250,6 +250,83 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(len(self.panel._selection_curve.getData()[0]), _CIRCLE_POINTS)
         self.assertEqual(len(self.panel._sample_curve.getData()[0]), _CIRCLE_POINTS)
 
+    def _points(self, curve) -> int:
+        """Circles on a curve, counted by its points (NaN separators between them)."""
+        xs = curve.getData()[0]
+        return 0 if xs is None else int(np.isfinite(xs).sum())
+
+    def test_each_roi_is_drawn_in_its_own_colour(self) -> None:
+        self._load()
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=10.0)
+        self.roi_toolbox.add_roi(20.0, 15.0, sample_diameter_px=10.0)
+        self.roi_toolbox.group_rois((1, 2), "A")  # each member gets its own tint
+        _pump()
+
+        first, second = (self.roi_toolbox.roi_by_id(i).sample_color_hex for i in (1, 2))
+        self.assertNotEqual(first, second)
+        for color in (first, second):
+            curve = self.panel._sample_curves[color]
+            self.assertEqual(self._points(curve), _CIRCLE_POINTS, color)
+            self.assertEqual(curve.opts["pen"].color().name(), color)
+        self.assertEqual(self._points(self.panel._sample_curve), _CIRCLE_POINTS, "the ungrouped ROI keeps the default colour")
+
+    def test_recolouring_moves_a_roi_to_another_curve_and_empties_the_old_one(self) -> None:
+        self._load()
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.set_roi_colors((1,), "#112233")
+        _pump()
+        self.assertEqual(self._points(self.panel._sample_curves["#112233"]), _CIRCLE_POINTS)
+        self.assertEqual(self._points(self.panel._sample_curve), 0)
+
+        self.roi_toolbox.set_roi_colors((1,), "#445566")
+        _pump()
+        self.assertEqual(self._points(self.panel._sample_curves["#112233"]), 0)
+        self.assertEqual(self._points(self.panel._sample_curves["#445566"]), _CIRCLE_POINTS)
+
+        self.roi_toolbox.set_roi_colors((1,), None)
+        _pump()
+        self.assertEqual(self._points(self.panel._sample_curve), _CIRCLE_POINTS)
+
+    def test_a_selected_roi_is_drawn_in_the_highlight_colour_whatever_its_own(self) -> None:
+        self._load()
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=10.0)
+        self.roi_toolbox.group_rois((1, 2), "A")
+        self.selection.set_roi_selection({1})
+        _pump()
+
+        self.assertEqual(self._points(self.panel._selection_curve), _CIRCLE_POINTS)
+        own_curve = self.panel._sample_curves.get(self.roi_toolbox.roi_by_id(1).sample_color_hex)
+        self.assertTrue(own_curve is None or self._points(own_curve) == 0, "not also drawn in its own colour")
+        self.assertEqual(self._points(self.panel._sample_curves[self.roi_toolbox.roi_by_id(2).sample_color_hex]), _CIRCLE_POINTS)
+
+    def test_a_stored_colour_that_is_not_a_colour_falls_back_to_the_default(self) -> None:
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.roi_by_id(roi_id).sample_color_hex = "not-a-colour"  # e.g. a damaged session file
+        self.panel._draw_overlays()
+        self.assertEqual(self._points(self.panel._sample_curve), _CIRCLE_POINTS)
+
+    def test_emptied_colour_curves_are_capped_so_recolouring_cannot_pile_up_items(self) -> None:
+        self._load()
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        for i in range(60):
+            self.roi_toolbox.set_roi_colors((1,), f"#{i + 1:02x}{i + 1:02x}ff")
+            self.panel._draw_overlays()
+        # the default curve, the one in use, and at most the idle cap
+        self.assertLessEqual(len(self.panel._sample_curves), 2 + 24)
+        self.assertEqual(self._points(self.panel._sample_curves["#3c3cff"]), _CIRCLE_POINTS)
+
+    def test_clearing_the_dataset_empties_every_roi_curve(self) -> None:
+        self._load()
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.set_roi_colors((1,), "#112233")
+        _pump()
+        self.dataset.clear_dataset()
+        _pump(0.2)
+        self.assertTrue(all(self._points(curve) == 0 for curve in self.panel._sample_curves.values()))
+
     # -- interaction ----------------------------------------------------
 
     def test_hit_testing_by_image_coordinate(self) -> None:
