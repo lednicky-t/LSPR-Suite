@@ -240,7 +240,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(len(sample_x), 2 * _CIRCLE_POINTS + 1)
         self.assertEqual(len(reference_x), 4 * _CIRCLE_POINTS + 3)
 
-    def test_selection_moves_an_roi_to_the_highlight_curve(self) -> None:
+    def test_selection_adds_a_highlight_border_without_removing_the_roi_from_its_curve(self) -> None:
         self._load()
         roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=10.0)
@@ -248,7 +248,8 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
 
         self.assertEqual(len(self.panel._roi_overlay.selection_curve.getData()[0]), _CIRCLE_POINTS)
-        self.assertEqual(len(self.panel._roi_overlay.sample_curve.getData()[0]), _CIRCLE_POINTS)
+        # Since fa61b11 the selected ROI stays on its own curve too (border on top): 2 circles + 1 separator.
+        self.assertEqual(len(self.panel._roi_overlay.sample_curve.getData()[0]), 2 * _CIRCLE_POINTS + 1)
 
     def test_overlay_follows_the_chromatic_affine_once(self) -> None:
         """At a wavelength with a chromatic correction the circle must sit where
@@ -307,7 +308,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertEqual(self._points(self.panel._roi_overlay.sample_curve), _CIRCLE_POINTS)
 
-    def test_a_selected_roi_is_drawn_in_the_highlight_colour_whatever_its_own(self) -> None:
+    def test_a_selected_roi_keeps_its_own_colour_and_gets_a_highlight_border(self) -> None:
         self._load()
         self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=10.0)
@@ -316,8 +317,9 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
 
         self.assertEqual(self._points(self.panel._roi_overlay.selection_curve), _CIRCLE_POINTS)
-        own_curve = self.panel._roi_overlay.sample_curves.get(self.roi_toolbox.roi_by_id(1).sample_color_hex)
-        self.assertTrue(own_curve is None or self._points(own_curve) == 0, "not also drawn in its own colour")
+        # Since fa61b11 the selected ROI keeps its own colour and fill; the highlight is a border drawn on top.
+        own_curve = self.panel._roi_overlay.sample_curves[self.roi_toolbox.roi_by_id(1).sample_color_hex]
+        self.assertGreater(self._points(own_curve), 0, "still drawn in its own colour")
         self.assertEqual(self._points(self.panel._roi_overlay.sample_curves[self.roi_toolbox.roi_by_id(2).sample_color_hex]), _CIRCLE_POINTS)
 
     def test_a_stored_colour_that_is_not_a_colour_falls_back_to_the_default(self) -> None:
