@@ -418,6 +418,102 @@ class EditingTest(_PanelCase):
         self.assertEqual(self.text(2, COLUMN_SAMPLE), "6.0")
 
 
+class ExcelStyleEditingTest(_PanelCase):
+    """Ctrl+C / Ctrl+V / Ctrl+D on the current cell, and the diameter step."""
+
+    def current(self, roi_id: int, column: int) -> None:
+        self.refresh()  # edits rebuild the table after a short pause, which drops the current cell
+        self.tree.selectionModel().setCurrentIndex(self.cell(roi_id, column), QItemSelectionModel.SelectionFlag.NoUpdate)
+
+    def diameters(self, *ids: int) -> list[float]:
+        return [self.toolbox.roi_by_id(i).sample_diameter_px for i in ids]
+
+    def test_copy_then_paste_sets_that_column_on_every_selected_roi(self) -> None:
+        self.edit(5, COLUMN_SAMPLE, "9")
+        self.current(5, COLUMN_SAMPLE)
+        self.panel._copy_cell()
+        self.selection.set_roi_selection({1, 2})
+        self.current(1, COLUMN_SAMPLE)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(1, 2, 3), [9.0, 9.0, 6.0])
+        undo_manager.undo()
+        self.assertEqual(self.diameters(1, 2), [6.0, 6.0], "one undo step")
+
+    def test_paste_with_no_selection_goes_to_the_current_row_only(self) -> None:
+        QtWidgets.QApplication.clipboard().setText("8")
+        self.current(3, COLUMN_SAMPLE)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(2, 3, 4), [6.0, 8.0, 6.0])
+
+    def test_paste_takes_the_first_value_of_a_spreadsheet_clipboard(self) -> None:
+        QtWidgets.QApplication.clipboard().setText("7\t99\n1\t2")
+        self.selection.set_roi_selection({1})
+        self.current(1, COLUMN_SAMPLE)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(1), [7.0])
+
+    def test_paste_into_the_name_column_is_refused(self) -> None:
+        QtWidgets.QApplication.clipboard().setText("7")
+        self.current(1, COLUMN_NAME)
+        self.panel._paste_cells()
+        self.assertIn("Paste works on", self.messages[-1])
+
+    def test_a_bad_clipboard_value_is_refused_and_shown(self) -> None:
+        QtWidgets.QApplication.clipboard().setText("abc")
+        self.current(1, COLUMN_SAMPLE)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(1), [6.0])
+        self.assertIn("not a number", self.messages[-1])
+
+    def test_fill_down_copies_the_topmost_selected_row_to_the_others(self) -> None:
+        self.edit(2, COLUMN_SAMPLE, "11")
+        self.selection.set_roi_selection({2, 3, 4})
+        self.current(4, COLUMN_SAMPLE)
+        self.panel._fill_down()
+        self.assertEqual(self.diameters(2, 3, 4, 5), [11.0, 11.0, 11.0, 6.0])
+
+    def test_fill_down_needs_two_rows(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.current(2, COLUMN_SAMPLE)
+        self.panel._fill_down()
+        self.assertIn("two or more", self.messages[-1])
+
+    def test_ctrl_wheel_step_applies_to_the_selection(self) -> None:
+        self.selection.set_roi_selection({1, 2})
+        self.panel._step_cell(self.cell(1, COLUMN_SAMPLE), 1, False)
+        self.assertEqual(self.diameters(1, 2, 3), [6.5, 6.5, 6.0])
+
+    def test_stepping_below_the_minimum_is_refused_not_clamped(self) -> None:
+        self.panel._step_cell(self.cell(1, COLUMN_SAMPLE), -1, True)  # 6 - 5 = 1 px < the 2 px minimum
+        self.assertEqual(self.diameters(1), [6.0])
+        self.assertIn("at least", self.messages[-1])
+
+    def test_the_editor_steps_a_diameter_with_up_and_down(self) -> None:
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        editor = self.tree.itemDelegate().createEditor(self.tree, QStyleOptionViewItem(), self.cell(1, COLUMN_SAMPLE))
+        editor.setText("6")
+        QTest.keyClick(editor, Qt.Key.Key_Up)
+        self.assertEqual(editor.text(), "6.5")
+        QTest.keyClick(editor, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual(editor.text(), "1.5")
+
+    def test_the_editor_of_a_position_does_not_step(self) -> None:
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        editor = self.tree.itemDelegate().createEditor(self.tree, QStyleOptionViewItem(), self.cell(1, COLUMN_X))
+        editor.setText("6")
+        QTest.keyClick(editor, Qt.Key.Key_Up)
+        self.assertEqual(editor.text(), "6")
+
+    def test_the_step_is_half_a_pixel_in_micrometres_too(self) -> None:
+        from lspr_imaging_app.panels.roi_table.rows import micrometers, step_text
+
+        self.assertEqual(step_text("3", 1, False, micrometers(0.5)), "3.25")  # 3 um = 6 px; +0.5 px = 0.25 um
+        self.assertEqual(step_text("0", -1, False, micrometers(0.5)), "0", "never below zero")
+        self.assertIsNone(step_text("x", 1, False, micrometers(0.5)))
+
+
 class SortAndReorderTest(_PanelCase):
     def test_clicking_a_header_sorts_ascending_then_descending(self) -> None:
         self.panel._on_header_clicked(COLUMN_X)

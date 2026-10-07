@@ -1,5 +1,6 @@
 """Image panel, ROIs tab, no tool armed (2026-10-07): left-drag rubber-band select,
-right-drag move (live, one undo step) and the right-click ROI menu.
+move (from inside a selected ROI) and resize (from its border), each live and one undo
+step, the hover cursors, and the right-click ROI menu.
 
 Events are faked the way `test_lspri_rewrite_crop_tool.py` does it (a real panel,
 a real view range, hand-built event objects, no mouse); the menu's choice is
@@ -62,12 +63,16 @@ _NAME_DIALOG = "lspr_imaging_app.panels.image.interaction.QInputDialog.getText"
 class _Drag:
     def __init__(
         self, scene_pos: QPointF, button: Qt.MouseButton, *, start: bool, finish: bool,
-        modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier,
+        modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier, down: QPointF | None = None,
     ) -> None:
         self._pos, self._button, self._start, self._finish, self._mods = scene_pos, button, start, finish, modifiers
+        self._down = scene_pos if down is None else down
 
     def scenePos(self) -> QPointF:  # noqa: N802
         return self._pos
+
+    def buttonDownScenePos(self) -> QPointF:  # noqa: N802
+        return self._down
 
     def button(self) -> Qt.MouseButton:
         return self._button
@@ -134,13 +139,14 @@ class RoiGesturesTest(unittest.TestCase):
 
     def drag(self, button: Qt.MouseButton, points: list[tuple[float, float]], **kw) -> bool:
         """Start at the first point, move through the rest, finish at the last; returns whether the start was claimed."""
-        handler = self.panel._on_left_drag_event if button == Qt.MouseButton.LeftButton else self.panel._on_right_drag_event
-        claimed = handler(_Drag(self.scene(*points[0]), button, start=True, finish=False, **kw))
+        handler = self.panel._on_left_drag_event
+        down = self.scene(*points[0])
+        claimed = handler(_Drag(down, button, start=True, finish=False, down=down, **kw))
         if not claimed:
             return False
         for x, y in points[1:]:
-            handler(_Drag(self.scene(x, y), button, start=False, finish=False, **kw))
-        handler(_Drag(self.scene(*points[-1]), button, start=False, finish=True, **kw))
+            handler(_Drag(self.scene(x, y), button, start=False, finish=False, down=down, **kw))
+        handler(_Drag(self.scene(*points[-1]), button, start=False, finish=True, down=down, **kw))
         return True
 
     def centre(self, roi_id: int) -> tuple[float, ...]:
@@ -179,21 +185,34 @@ class RoiGesturesTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self.assertFalse(self.drag(Qt.MouseButton.LeftButton, [(10.0, 10.0), (30.0, 30.0)]))
 
-    # -- right-drag move --------------------------------------------------------------
+    # -- left-drag move (from inside a selected ROI) ------------------------------------
 
-    def test_right_drag_moves_every_selected_roi_by_the_cursor_delta(self) -> None:
+    def test_dragging_a_selected_roi_moves_every_selected_roi_by_the_cursor_delta(self) -> None:
         self.selection.set_roi_selection({1, 2})
-        self.assertTrue(self.drag(Qt.MouseButton.RightButton, [(40.0, 30.0), (45.0, 33.0), (50.0, 38.0)]))
+        self.assertTrue(self.drag(Qt.MouseButton.LeftButton, [(40.0, 30.0), (45.0, 33.0), (50.0, 38.0)]))
         self.assertEqual(self.centre(1), (30.0, 28.0))
         self.assertEqual(self.centre(2), (50.0, 38.0))
         self.assertEqual(self.centre(3), (60.0, 45.0), "an unselected ROI stays")
+        self.assertEqual(self.selection.selected_roi_ids(), frozenset({1, 2}), "moving does not change the selection")
 
     def test_the_move_is_live_during_the_drag(self) -> None:
-        handler = self.panel._on_right_drag_event
-        handler(_Drag(self.scene(40.0, 30.0), Qt.MouseButton.RightButton, start=True, finish=False))
-        handler(_Drag(self.scene(44.0, 30.0), Qt.MouseButton.RightButton, start=False, finish=False))
+        self.selection.set_roi_selection({2})
+        handler = self.panel._on_left_drag_event
+        down = self.scene(40.0, 30.0)
+        handler(_Drag(down, Qt.MouseButton.LeftButton, start=True, finish=False, down=down))
+        handler(_Drag(self.scene(44.0, 30.0), Qt.MouseButton.LeftButton, start=False, finish=False, down=down))
         self.assertAlmostEqual(self.centre(2)[0], 44.0)
-        handler(_Drag(self.scene(44.0, 30.0), Qt.MouseButton.RightButton, start=False, finish=True))
+        handler(_Drag(self.scene(44.0, 30.0), Qt.MouseButton.LeftButton, start=False, finish=True, down=down))
+
+    def test_the_movement_before_pyqtgraph_reports_the_drag_is_not_lost(self) -> None:
+        """pyqtgraph reports a drag only after a few pixels: the start event's position is
+        already past the press. The ROI must follow the press point, not jump."""
+        self.selection.set_roi_selection({2})
+        down = self.scene(40.0, 30.0)
+        handler = self.panel._on_left_drag_event
+        handler(_Drag(self.scene(42.0, 30.0), Qt.MouseButton.LeftButton, start=True, finish=False, down=down))
+        self.assertAlmostEqual(self.centre(2)[0], 42.0)
+        handler(_Drag(self.scene(42.0, 30.0), Qt.MouseButton.LeftButton, start=False, finish=True, down=down))
 
     def test_the_overlay_follows_each_drag_event_without_waiting_for_the_redraw_timer(self) -> None:
         """The panel's redraw is debounced (a timer every change restarts), so it cannot
@@ -203,42 +222,138 @@ class RoiGesturesTest(unittest.TestCase):
         curve = self.panel._roi_overlay.selection_curve
         before = float(curve.getData()[0][~np.isnan(curve.getData()[0])].mean())
         self.panel._redraw_timer.stop()
-        handler = self.panel._on_right_drag_event
-        handler(_Drag(self.scene(40.0, 30.0), Qt.MouseButton.RightButton, start=True, finish=False))
-        handler(_Drag(self.scene(46.0, 30.0), Qt.MouseButton.RightButton, start=False, finish=False))
+        handler = self.panel._on_left_drag_event
+        down = self.scene(40.0, 30.0)
+        handler(_Drag(down, Qt.MouseButton.LeftButton, start=True, finish=False, down=down))
+        handler(_Drag(self.scene(46.0, 30.0), Qt.MouseButton.LeftButton, start=False, finish=False, down=down))
         xs = curve.getData()[0]
         after = float(xs[~np.isnan(xs)].mean())
-        handler(_Drag(self.scene(46.0, 30.0), Qt.MouseButton.RightButton, start=False, finish=True))
+        handler(_Drag(self.scene(46.0, 30.0), Qt.MouseButton.LeftButton, start=False, finish=True, down=down))
         self.assertAlmostEqual(after - before, 6.0, places=3)
 
-    def test_the_whole_drag_is_one_undo_step(self) -> None:
+    def test_the_whole_move_is_one_undo_step(self) -> None:
         self.selection.set_roi_selection({1, 2})
-        self.drag(Qt.MouseButton.RightButton, [(40.0, 30.0), (42.0, 31.0), (45.0, 33.0), (50.0, 38.0)])
+        self.drag(Qt.MouseButton.LeftButton, [(40.0, 30.0), (42.0, 31.0), (45.0, 33.0), (50.0, 38.0)])
         undo_manager.undo()
         self.assertEqual(self.centre(1), (20.0, 20.0))
         self.assertEqual(self.centre(2), (40.0, 30.0))
         self.assertFalse(undo_manager.can_undo, "one entry, not one per mouse move")
 
-    def test_dragging_an_unselected_roi_selects_only_it_and_moves_it(self) -> None:
+    def test_dragging_an_unselected_roi_draws_a_rectangle_instead_of_moving_it(self) -> None:
         self.selection.set_roi_selection({1})
-        self.drag(Qt.MouseButton.RightButton, [(60.0, 45.0), (62.0, 45.0)])
-        self.assertEqual(self.selection.selected_roi_ids(), frozenset({3}))
-        self.assertEqual(self.centre(3), (62.0, 45.0))
+        self.drag(Qt.MouseButton.LeftButton, [(60.0, 45.0), (62.0, 47.0)])
+        self.assertEqual(self.centre(3), (60.0, 45.0))
         self.assertEqual(self.centre(1), (20.0, 20.0))
 
-    def test_right_drag_starting_on_empty_image_is_not_claimed(self) -> None:
-        self.selection.set_roi_selection({1})
-        self.assertFalse(self.drag(Qt.MouseButton.RightButton, [(5.0, 60.0), (10.0, 60.0)]))
-        self.assertEqual(self.centre(1), (20.0, 20.0))
+    def test_ctrl_drag_from_a_selected_roi_is_a_rectangle_not_a_move(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.drag(Qt.MouseButton.LeftButton, [(40.0, 30.0), (62.0, 47.0)], modifiers=Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(self.centre(2), (40.0, 30.0))
+        self.assertEqual(self.selection.selected_roi_ids(), frozenset({2, 3}))
 
     def test_a_moved_roi_may_leave_the_area_selection(self) -> None:
         self.panel._area_selection.set_rectangle(0, 0, 30, 30)
-        self.drag(Qt.MouseButton.RightButton, [(20.0, 20.0), (50.0, 50.0)])
+        self.selection.set_roi_selection({1})
+        self.drag(Qt.MouseButton.LeftButton, [(20.0, 20.0), (50.0, 50.0)])
         self.assertEqual(self.centre(1), (50.0, 50.0))
 
-    def test_right_drag_is_not_claimed_off_the_rois_tab(self) -> None:
+    def test_right_drag_does_nothing_any_more(self) -> None:
+        self.selection.set_roi_selection({1})
+        event = _Drag(self.scene(20.0, 20.0), Qt.MouseButton.RightButton, start=True, finish=False)
+        event.ignore = mock.Mock()
+        self.panel._plot.vb.mouseDragEvent(event)
+        event.ignore.assert_called_once()
+        self.assertEqual(self.centre(1), (20.0, 20.0))
+
+    # -- left-drag resize (from a selected ROI's border) ---------------------------------
+
+    def test_dragging_the_border_sets_the_diameter_from_the_cursor_distance(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.assertTrue(self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (47.0, 30.0), (48.0, 30.0)]))
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 16.0)
+        self.assertEqual(self.centre(2), (40.0, 30.0), "resizing does not move the ROI")
+
+    def test_every_selected_roi_gets_the_dragged_diameter(self) -> None:
+        self.selection.set_roi_selection({1, 2})
+        self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (46.5, 30.0)])
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(1).sample_diameter_px, 13.0)
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 13.0)
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(3).sample_diameter_px, 10.0, msg="unselected stays")
+
+    def test_the_diameter_never_drops_below_the_minimum(self) -> None:
+        from lspr_imaging_app.roi.toolbox import MIN_SAMPLE_DIAMETER_PX
+
+        self.selection.set_roi_selection({2})
+        self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (40.2, 30.0)])
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, MIN_SAMPLE_DIAMETER_PX)
+
+    def test_the_whole_resize_is_one_undo_step(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (46.0, 30.0), (48.0, 30.0)])
+        undo_manager.undo()
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 10.0)
+        self.assertFalse(undo_manager.can_undo)
+
+    def test_the_border_of_an_unselected_roi_is_not_a_handle(self) -> None:
+        self.selection.set_roi_selection({1})
+        self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (48.0, 30.0)])
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 10.0)
+
+    def test_hit_test_pulls_the_cursor_back_through_the_affine(self) -> None:
+        """Display is 2x the stored size: a stored diameter of 10 is drawn with radius 10."""
+        from lspr_imaging_app.panels.image.roi_gestures import SelectedApertures, hit_test
+
+        selected = SelectedApertures(
+            ids=np.array([7]), centers=np.array([[50.0, 50.0]]), diameters=np.array([10.0]), resizable=np.array([True])
+        )
+        linear = np.diag([2.0, 2.0])
+        self.assertEqual(hit_test(60.0, 50.0, selected, linear, 1.0).zone, "edge")
+        self.assertEqual(hit_test(55.0, 50.0, selected, linear, 1.0).zone, "body")
+        self.assertIsNone(hit_test(65.0, 50.0, selected, linear, 1.0))
+
+    def test_a_small_roi_keeps_a_grabbable_middle_and_a_mask_has_no_border(self) -> None:
+        from lspr_imaging_app.panels.image.roi_gestures import SelectedApertures, hit_test
+
+        small = SelectedApertures(
+            ids=np.array([1]), centers=np.array([[0.0, 0.0]]), diameters=np.array([4.0]), resizable=np.array([True])
+        )
+        self.assertEqual(hit_test(0.0, 0.0, small, np.eye(2), 10.0).zone, "body")  # huge tolerance, centre still moves
+        mask = SelectedApertures(
+            ids=np.array([1]), centers=np.array([[0.0, 0.0]]), diameters=np.array([10.0]), resizable=np.array([False])
+        )
+        self.assertEqual(hit_test(5.0, 0.0, mask, np.eye(2), 1.0).zone, "body")
+
+    # -- hover cursor -------------------------------------------------------------------
+
+    def hover_cursor(self, x: float, y: float) -> Qt.CursorShape | None:
+        self.panel._on_scene_moved(self.scene(x, y))
+        cursor = self.panel._view.viewport().cursor().shape()
+        return None if cursor == Qt.CursorShape.ArrowCursor else cursor
+
+    def test_hovering_a_selected_rois_border_shows_a_resize_arrow_along_the_radius(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.assertEqual(self.hover_cursor(45.0, 30.0), Qt.CursorShape.SizeHorCursor)
+        self.assertEqual(self.hover_cursor(40.0, 35.0), Qt.CursorShape.SizeVerCursor)
+
+    def test_hovering_inside_a_selected_roi_shows_the_move_cursor(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.assertEqual(self.hover_cursor(40.0, 30.0), Qt.CursorShape.SizeAllCursor)
+
+    def test_no_special_cursor_over_unselected_rois_or_empty_image(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.assertIsNone(self.hover_cursor(60.0, 45.0))
+        self.assertIsNone(self.hover_cursor(5.0, 60.0))
+
+    def test_the_cursor_is_dropped_when_the_roi_tab_is_left(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.hover_cursor(45.0, 30.0)
         self.panel._tool_ribbon.set_category("Mask")
-        self.assertFalse(self.drag(Qt.MouseButton.RightButton, [(20.0, 20.0), (30.0, 30.0)]))
+        self.assertIsNone(self.hover_cursor(45.0, 30.0))
+
+    def test_left_drag_is_not_claimed_over_a_selected_roi_off_the_rois_tab(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.panel._tool_ribbon.set_category("Mask")
+        self.assertFalse(self.drag(Qt.MouseButton.LeftButton, [(40.0, 30.0), (45.0, 30.0)]))
 
     # -- right-click menu -------------------------------------------------------------
 
