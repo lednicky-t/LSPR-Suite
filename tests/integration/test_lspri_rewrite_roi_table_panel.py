@@ -19,10 +19,10 @@ import unittest
 from unittest import mock
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QItemSelectionModel, Qt
+from PyQt6.QtCore import QItemSelectionModel, QMimeData, QModelIndex, Qt
 from PyQt6.QtGui import QColor, QFontMetrics, QImage
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QDialog, QInputDialog, QMenu
+from PyQt6.QtWidgets import QDialog, QInputDialog, QMenu, QToolButton
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -35,15 +35,17 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_ui import get_active_theme, set_active_theme
+    from lspr_ui import get_active_theme, load_tabler_icon, set_active_theme, transparent_icon_button_stylesheet
 
     from lspr_imaging_app.analysis.engine import AnalysisEngine
-    from lspr_imaging_app.gui.app_theme import LSPRI_BRIGHT_THEME
+    from lspr_imaging_app.gui.app_theme import LSPRI_BRIGHT_THEME, LSPRI_DARK_THEME, apply_app_theme
     from lspr_imaging_app.image_tools import GeometryModule
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
+    from lspr_imaging_app.panels.image.general_group import style_general_icon_button
     from lspr_imaging_app.panels.roi_table import RoiTablePanel
     from lspr_imaging_app.panels.roi_table.dialogs import ShiftDialog
     from lspr_imaging_app.panels.roi_table.model import (
+        MIME_TYPE,
         ALL_SELECTED_ROLE,
         COLOR_ROLE,
         INHERITED_ROLE,
@@ -194,7 +196,7 @@ class AppearanceTest(_PanelCase):
             GeometrySettings(calibration_enabled=True, microns_per_pixel_x=0.5, microns_per_pixel_y=0.5, display_units="um")
         )
         self.refresh()
-        self.assertEqual(self.panel._unit_label.text(), "µm")
+        self.assertEqual(self.panel._unit_toggle.text(), "µm")
         self.assertEqual(self.text(2, COLUMN_X), "10.0")  # 20 px * 0.5
         self.edit(2, COLUMN_SAMPLE, "10")  # typed in µm
         self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 20.0)
@@ -202,6 +204,68 @@ class AppearanceTest(_PanelCase):
     def test_the_footer_counts_rois_and_the_selection(self) -> None:
         self.selection.set_roi_selection({1, 2})
         self.assertEqual(self.footer(), "5 ROIs  ·  2 selected")
+
+
+class UnitToggleTest(_PanelCase):
+    """The px/µm toggle in the toolbar: the same control as the Image ribbon's
+    View tab, driving the one Geometry display unit."""
+
+    def calibrate(self, display_units: str = "px") -> None:
+        self.geometry.restore_settings(
+            GeometrySettings(calibration_enabled=True, microns_per_pixel_x=0.5, microns_per_pixel_y=0.5, display_units=display_units)
+        )
+
+    def test_without_a_calibration_it_shows_px_and_is_disabled_with_a_reason(self) -> None:
+        toggle = self.panel._unit_toggle
+        self.assertEqual(toggle.text(), "px")
+        self.assertFalse(toggle.isEnabled())
+        self.assertIn("calibration", toggle.toolTip())
+
+    def test_clicking_it_switches_the_geometry_unit_and_the_table_follows(self) -> None:
+        self.calibrate()
+        toggle = self.panel._unit_toggle
+        self.assertTrue(toggle.isEnabled())
+        self.assertEqual(self.text(2, COLUMN_X), "20.0")
+
+        toggle.click()
+        self.assertEqual(self.geometry.settings().display_units, "um")
+        self.assertEqual(toggle.text(), "µm")
+        self.assertTrue(toggle.isChecked())
+        self.refresh()
+        self.assertEqual(self.text(2, COLUMN_X), "10.0")  # 20 px at 0.5 µm/px
+
+        toggle.click()
+        self.assertEqual(self.geometry.settings().display_units, "px")
+        self.assertEqual(toggle.text(), "px")
+        self.refresh()
+        self.assertEqual(self.text(2, COLUMN_X), "20.0")
+
+    def test_a_change_made_elsewhere_moves_the_toggle_and_schedules_a_refresh(self) -> None:
+        self.calibrate()
+        self.panel._redraw_timer.stop()
+        self.geometry.set_display_units("um")  # as the ribbon's own units button does
+        self.assertEqual(self.panel._unit_toggle.text(), "µm")
+        self.assertTrue(self.panel._unit_toggle.isChecked())
+        self.assertTrue(self.panel._redraw_timer.isActive())
+
+    def test_a_restored_session_in_micrometers_shows_micrometers(self) -> None:
+        self.calibrate("um")
+        self.assertEqual(self.panel._unit_toggle.text(), "µm")
+        self.refresh()
+        self.assertEqual(self.text(2, COLUMN_X), "10.0")
+
+    def test_losing_the_calibration_puts_it_back_to_px_and_disabled(self) -> None:
+        self.calibrate("um")
+        self.geometry.restore_settings(GeometrySettings(calibration_enabled=False, display_units="px"))
+        self.assertEqual(self.panel._unit_toggle.text(), "px")
+        self.assertFalse(self.panel._unit_toggle.isEnabled())
+
+    def test_it_keeps_its_own_look_when_the_theme_switches(self) -> None:
+        set_active_theme(LSPRI_BRIGHT_THEME)
+        self.panel.refresh_theme()
+        ribbon_style = transparent_icon_button_stylesheet()
+        self.assertEqual(self.panel._unit_toggle.styleSheet(), ribbon_style)
+        self.assertEqual(self.panel._flat_button.styleSheet(), ribbon_style, "the ribbon's icon-button style, not a private one")
 
 
 class SelectionSyncTest(_PanelCase):
@@ -588,6 +652,58 @@ class LayoutAndPaintTest(_PanelCase):
             colors = {image.pixel(x, y) for x in range(0, 360, 9) for y in range(0, 260, 9)}
             self.assertGreater(len(colors), 3, "something was painted")
 
+    @staticmethod
+    def _painted_extent(button: QToolButton) -> int:
+        """Width in pixels of what the button actually paints for its icon
+        (the pixels that differ from the button's own background)."""
+        image = button.grab().toImage()
+        background = QColor(image.pixel(1, 1))
+        columns = [
+            x
+            for x in range(image.width())
+            for y in range(image.height())
+            if sum(abs(a - b) for a, b in zip(QColor(image.pixel(x, y)).getRgb()[:3], background.getRgb()[:3])) > 120
+        ]
+        return (max(columns) - min(columns) + 1) if columns else 0
+
+    def test_toolbar_icons_are_painted_as_large_as_the_ribbons(self) -> None:
+        """Regression (maintainer's screenshot): under the app-wide style a
+        private button stylesheet without `padding: 0` shrank a 22 px icon to
+        about 4 px. Measured on what is painted, next to a button built exactly
+        as the Image ribbon builds its own; needs the app theme applied, which
+        is where the shrinking came from."""
+        saved = (_APP.styleSheet(), _APP.palette(), _APP.style().objectName())
+        apply_app_theme(_APP, LSPRI_DARK_THEME)
+        set_active_theme(LSPRI_DARK_THEME)
+        try:
+            self.panel.refresh_theme()
+            self.panel.resize(460, 300)
+            self.panel.show()
+            buttons = {
+                "group": self.panel._group_button, "ungroup": self.panel._ungroup_button, "color": self.panel._color_button,
+                "up": self.panel._up_button, "down": self.panel._down_button, "delete": self.panel._delete_button,
+                "flat": self.panel._flat_button,
+            }
+            _APP.processEvents()
+            for name, button in buttons.items():
+                button.setEnabled(True)  # a disabled icon is greyed, not smaller; measure them all alike
+                reference = QToolButton()  # the same icon, built exactly as the Image ribbon builds its own
+                reference.setIcon(
+                    load_tabler_icon(str(button.property("icon_name")), color=get_active_theme().text_secondary, size=44, stroke_width=2.1)
+                )
+                style_general_icon_button(reference)
+                reference.show()
+                _APP.processEvents()
+                expected = self._painted_extent(reference)
+                self.assertGreaterEqual(expected, 10, f"{name}: the reference itself must be a normal-sized icon")
+                self.assertGreaterEqual(self._painted_extent(button), expected - 1, f"{name} icon is smaller than the ribbon's")
+                reference.hide()
+        finally:
+            self.panel.hide()
+            _APP.setStyleSheet(saved[0])
+            _APP.setPalette(saved[1])
+            _APP.setStyle(saved[2])
+
     def test_the_toolbar_buttons_get_icons_and_follow_the_theme(self) -> None:
         for button in (self.panel._group_button, self.panel._delete_button, self.panel._flat_button):
             self.assertFalse(button.icon().isNull())
@@ -595,6 +711,163 @@ class LayoutAndPaintTest(_PanelCase):
         self.panel.refresh_theme()
         self.assertFalse(self.panel._group_button.icon().isNull())
 
+
+
+_MOVE = Qt.DropAction.MoveAction
+
+
+class DragAndDropTest(_PanelCase):
+    """What Qt calls during a drag, driven directly: the real mouse gesture
+    cannot be simulated headless, so `dropMimeData` is what these pin."""
+
+    def mime(self, *roi_ids: int) -> QMimeData:
+        indexes = [self.model.roi_index(roi_id, column) for roi_id in roi_ids for column in range(3)]
+        return self.model.mimeData(indexes)
+
+    def drop(self, roi_ids, row: int, parent: QModelIndex = QModelIndex()) -> bool:
+        return self.model.dropMimeData(self.mime(*roi_ids), _MOVE, row, -1, parent)
+
+    def grouped(self) -> None:
+        self.toolbox.group_rois((1, 3, 5), "odd")
+        self.toolbox.group_rois((2,), "two")
+        self.refresh()
+
+    # -- what can be dragged and dropped where ---------------------------------------------
+
+    def test_roi_rows_can_be_dragged_and_headers_accept_drops(self) -> None:
+        self.grouped()
+        roi_flags = self.model.flags(self.cell(1, COLUMN_NAME))
+        self.assertTrue(roi_flags & Qt.ItemFlag.ItemIsDragEnabled)
+        self.assertFalse(roi_flags & Qt.ItemFlag.ItemIsDropEnabled, "a drop lands between ROI rows, not on one")
+        header_flags = self.model.flags(self.header("group_1"))
+        self.assertTrue(header_flags & Qt.ItemFlag.ItemIsDropEnabled)
+        self.assertFalse(header_flags & Qt.ItemFlag.ItemIsDragEnabled)
+
+    def test_the_view_is_set_up_for_dragging(self) -> None:
+        self.assertTrue(self.tree.dragEnabled())
+        self.assertTrue(self.tree.acceptDrops())
+        self.assertTrue(self.tree.showDropIndicator())
+        self.assertEqual(self.tree.dragDropMode(), type(self.tree.dragDropMode()).DragDrop)
+        self.assertGreater(self.tree.autoExpandDelay(), 0)
+
+    def test_the_drag_carries_the_roi_ids_once_each(self) -> None:
+        data = self.mime(4, 2, 4)
+        self.assertEqual(self.model.mimeTypes(), [MIME_TYPE])
+        import json
+
+        self.assertEqual(json.loads(bytes(data.data(MIME_TYPE)).decode()), [2, 4])
+
+    def test_group_headers_are_not_dragged(self) -> None:
+        self.grouped()
+        data = self.model.mimeData([self.header("group_1")])
+        import json
+
+        self.assertEqual(json.loads(bytes(data.data(MIME_TYPE)).decode()), [])
+
+    def test_which_drops_are_accepted(self) -> None:
+        data = self.mime(2)
+        self.assertTrue(self.model.canDropMimeData(data, _MOVE, 1, -1, QModelIndex()), "between flat rows")
+        self.assertTrue(self.model.canDropMimeData(data, _MOVE, -1, -1, QModelIndex()), "empty space: the end of the flat list")
+        self.grouped()
+        header = self.header("group_1")
+        self.assertTrue(self.model.canDropMimeData(data, _MOVE, -1, -1, header), "on a header")
+        self.assertTrue(self.model.canDropMimeData(data, _MOVE, 1, -1, header), "between a group's rows")
+        self.assertFalse(self.model.canDropMimeData(data, _MOVE, 1, -1, QModelIndex()), "between two headers")
+        self.assertFalse(self.model.canDropMimeData(data, _MOVE, -1, -1, self.cell(1, 0)), "on a ROI row")
+        other = QMimeData()
+        other.setText("not rois")
+        self.assertFalse(self.model.canDropMimeData(other, _MOVE, -1, -1, header))
+        self.assertFalse(self.model.canDropMimeData(data, Qt.DropAction.CopyAction, -1, -1, header))
+
+    def test_a_drop_never_asks_qt_to_remove_the_source_rows(self) -> None:
+        self.assertFalse(self.drop([2], 0), "the new arrangement comes back from the toolbox, not from Qt")
+        self.assertEqual(len(self.toolbox.rois()), 5)
+
+    def test_rubbish_mime_data_is_ignored(self) -> None:
+        bad = QMimeData()
+        bad.setData(MIME_TYPE, b"not json")
+        self.assertFalse(self.model.dropMimeData(bad, _MOVE, 0, -1, QModelIndex()))
+        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
+
+    # -- reordering ---------------------------------------------------------------------------
+
+    def test_dragging_a_roi_to_the_top_of_the_flat_list(self) -> None:
+        self.drop([4], 0)
+        self.assertEqual(self.xs(), [40.0, 10.0, 20.0, 30.0, 50.0])
+
+    def test_dragging_a_roi_down_to_before_a_later_row(self) -> None:
+        self.drop([1], 3)  # dropped just above the row that shows ROI 4
+        self.assertEqual(self.xs(), [20.0, 30.0, 10.0, 40.0, 50.0])
+
+    def test_dropping_on_empty_space_moves_to_the_end_and_a_block_stays_together(self) -> None:
+        self.drop([2, 3], -1)
+        self.assertEqual(self.xs(), [10.0, 40.0, 50.0, 20.0, 30.0])
+
+    def test_dropping_a_roi_where_it_already_is_changes_nothing(self) -> None:
+        last_step = undo_manager.undo_label
+        self.drop([3], 2)
+        self.drop([3], 3)
+        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
+        self.assertEqual(undo_manager.undo_label, last_step, "nothing was recorded")
+
+    def test_a_reorder_by_dragging_undoes_in_one_step(self) -> None:
+        self.drop([4, 5], 0)
+        self.assertEqual(self.xs(), [40.0, 50.0, 10.0, 20.0, 30.0])
+        undo_manager.undo()
+        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
+
+    def test_dragging_within_a_group_stays_inside_it(self) -> None:
+        self.grouped()
+        self.drop([5], 0, self.header("group_1"))  # to the top of the group [1, 3, 5]
+        self.assertEqual(self.xs(), [50.0, 20.0, 10.0, 40.0, 30.0])
+        self.assertEqual(self.toolbox.groups()[0].area_roi_ids, [1, 3, 5])
+
+    def test_reordering_by_dragging_needs_the_list_sorted_by_number(self) -> None:
+        self.panel._on_header_clicked(COLUMN_X)
+        self.drop([4], 0)
+        self.assertIn("Sort by #", self.footer())
+        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
+
+    def test_nothing_is_reordered_by_dragging_while_an_analysis_runs(self) -> None:
+        with mock.patch.object(self.engine, "is_running", return_value=True):
+            self.drop([4], 0)
+        self.assertIn("analysis to finish", self.footer())
+        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
+
+    # -- groups ------------------------------------------------------------------------------------
+
+    def test_dropping_on_a_header_puts_the_rois_in_that_group(self) -> None:
+        self.grouped()
+        self.drop([4], -1, self.header("group_2"))
+        self.assertEqual(self.toolbox.groups()[1].area_roi_ids, [2, 4])
+        self.assertIsNotNone(self.toolbox.roi_by_id(4).sample_color_hex, "it gets a tint of the group colour")
+        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0], "membership only: nobody was renumbered")
+
+    def test_putting_rois_in_a_group_works_whatever_the_sort_and_during_an_analysis(self) -> None:
+        self.grouped()
+        self.panel._on_header_clicked(COLUMN_X)
+        with mock.patch.object(self.engine, "is_running", return_value=True):
+            self.drop([4], -1, self.header("group_2"))
+        self.assertEqual(self.toolbox.groups()[1].area_roi_ids, [2, 4])
+
+    def test_dropping_between_the_rows_of_another_group_puts_the_roi_in_that_group(self) -> None:
+        self.grouped()
+        self.drop([2], 1, self.header("group_1"))  # ROI 2 comes from the other group
+        self.assertEqual(self.toolbox.groups()[0].area_roi_ids, [1, 2, 3, 5])
+        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0], "put in the group, not renumbered")
+
+    def test_dropping_on_ungrouped_takes_rois_out_of_their_groups(self) -> None:
+        self.grouped()
+        self.drop([1, 3], -1, self.model.group_index(None))
+        self.assertEqual([g.area_roi_ids for g in self.toolbox.groups()], [[5], [2]])
+        self.assertIsNone(self.toolbox.roi_by_id(1).sample_color_hex)
+
+    def test_a_drop_into_an_unknown_group_is_reported_not_swallowed(self) -> None:
+        self.grouped()
+        from lspr_imaging_app.panels.roi_table.model import DropTarget
+
+        self.panel._on_roi_dropped([1], DropTarget("header", "group_404"))
+        self.assertIn("group_404", self.footer())
 
 if __name__ == "__main__":
     unittest.main()
