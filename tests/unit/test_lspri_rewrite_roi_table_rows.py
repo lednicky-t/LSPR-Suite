@@ -59,14 +59,14 @@ class LengthUnitTest(unittest.TestCase):
         unit = micrometers(0.5)  # 0.5 µm per px
         self.assertEqual(unit.label, "µm")
         self.assertEqual(to_display(20.0, unit), 10.0)
-        self.assertEqual(format_length(20.0, unit), "10.0")
+        self.assertEqual(format_length(20.0, unit), "10")
         self.assertEqual(parse_length("10", unit), 20.0)  # typed in µm, stored in px
         self.assertEqual(from_display(10.0, unit), 20.0)
 
-    def test_an_edit_round_trips_without_losing_precision(self) -> None:
+    def test_edit_text_has_the_displayed_precision(self) -> None:
         unit = micrometers(0.37)
-        px = 17.123
-        self.assertAlmostEqual(parse_length(edit_text(px, unit), unit), px, delta=0.0015 / 0.37)
+        self.assertEqual(edit_text(17.123, unit), "6")  # 6.33 um, no decimals
+        self.assertEqual(edit_text(17.123, PIXELS), "17.1")
 
     def test_edit_text_drops_trailing_zeros_and_negative_zero(self) -> None:
         self.assertEqual(edit_text(12.0, PIXELS), "12")

@@ -201,7 +201,7 @@ class AppearanceTest(_PanelCase):
         )
         self.refresh()
         self.assertEqual(self.panel._unit_toggle.text(), "µm")
-        self.assertEqual(self.text(2, COLUMN_X), "10.0")  # 20 px * 0.5
+        self.assertEqual(self.text(2, COLUMN_X), "10")  # 20 px * 0.5
         self.edit(2, COLUMN_SAMPLE, "10")  # typed in µm
         self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 20.0)
 
@@ -267,7 +267,7 @@ class UnitToggleTest(_PanelCase):
         self.assertEqual(toggle.text(), "µm")
         self.assertTrue(toggle.isChecked())
         self.refresh()
-        self.assertEqual(self.text(2, COLUMN_X), "10.0")  # 20 px at 0.5 µm/px
+        self.assertEqual(self.text(2, COLUMN_X), "10")  # 20 px at 0.5 µm/px
 
         toggle.click()
         self.assertEqual(self.geometry.settings().display_units, "px")
@@ -287,7 +287,7 @@ class UnitToggleTest(_PanelCase):
         self.calibrate("um")
         self.assertEqual(self.panel._unit_toggle.text(), "µm")
         self.refresh()
-        self.assertEqual(self.text(2, COLUMN_X), "10.0")
+        self.assertEqual(self.text(2, COLUMN_X), "10")
 
     def test_losing_the_calibration_puts_it_back_to_px_and_disabled(self) -> None:
         self.calibrate("um")
@@ -506,10 +506,10 @@ class ExcelStyleEditingTest(_PanelCase):
         QTest.keyClick(editor, Qt.Key.Key_Up)
         self.assertEqual(editor.text(), "6")
 
-    def test_the_step_is_half_a_pixel_in_micrometres_too(self) -> None:
+    def test_the_step_is_a_whole_micrometre_in_micrometres(self) -> None:
         from lspr_imaging_app.panels.roi_table.rows import micrometers, step_text
 
-        self.assertEqual(step_text("3", 1, False, micrometers(0.5)), "3.25")  # 3 um = 6 px; +0.5 px = 0.25 um
+        self.assertEqual(step_text("3", 1, False, micrometers(0.5)), "4")  # no decimals in um, so 1 um per step
         self.assertEqual(step_text("0", -1, False, micrometers(0.5)), "0", "never below zero")
         self.assertIsNone(step_text("x", 1, False, micrometers(0.5)))
 

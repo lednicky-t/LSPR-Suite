@@ -190,7 +190,18 @@ class RoiOverlayControlsTest(unittest.TestCase):
             self.assertFalse(fill.path().isEmpty(), f"{color}: the circle is filled, not just outlined")
             self.assertEqual(fill.brush().color().name(), color)
         self.sample._alpha_slider.setValue(50)
-        self.assertAlmostEqual(overlay.sample_fills[own].brush().color().alphaF(), 0.5 * 0.3, delta=0.01)
+        self.assertAlmostEqual(overlay.sample_fills[own].brush().color().alphaF(), 0.5, delta=0.01, msg="default maximum fill opacity is 100 %")
+
+    def test_fill_maximum_opacity_preference_caps_the_fill_and_is_remembered(self) -> None:
+        self.two_rois()
+        overlay = self.panel._roi_overlay
+        own = self.roi_toolbox.roi_by_id(1).sample_color_hex
+        self.sample._alpha_slider.setValue(100)
+        self.assertAlmostEqual(overlay.sample_fills[own].brush().color().alphaF(), 1.0, delta=0.01)
+        self.panel.set_roi_fill_max_opacity(0.3)
+        self.assertAlmostEqual(overlay.sample_fills[own].brush().color().alphaF(), 0.3, delta=0.01)
+        self.assertAlmostEqual(overlay.reference_fill.brush().color().alphaF(), 0.3, delta=0.01)
+        self.assertAlmostEqual(self.pen_color(overlay.sample_curves[own]).alphaF(), 1.0, delta=0.01, msg="outline unaffected")
 
     def test_reference_rings_are_filled_as_rings_and_follow_their_own_transparency(self) -> None:
         self.two_rois()
@@ -199,7 +210,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
         from PyQt6.QtCore import QPointF
         self.assertFalse(fill.path().contains(QPointF(60.0, 45.0)), "the ring's inner opening is empty")
         self.reference._alpha_slider.setValue(40)
-        self.assertAlmostEqual(fill.brush().color().alphaF(), 0.4 * 0.3, delta=0.01)
+        self.assertAlmostEqual(fill.brush().color().alphaF(), 0.4, delta=0.01)
         self.assertEqual(fill.brush().color().name(), self.panel._roi_overlay.reference.color)
 
     def test_the_selection_highlight_is_not_made_transparent(self) -> None:
