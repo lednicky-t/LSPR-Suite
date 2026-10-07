@@ -1230,6 +1230,8 @@ class RewriteImagePanelTest(unittest.TestCase):
         Select/Add ROI. The cursor toggle now sits in "General" and uses the
         ribbon's 28px icon size (same as the area-selection picker beside it,
         2026-10-03); it is fixed-width now, since its live text left the button."""
+        from lspr_ui import transparent_icon_button_stylesheet
+
         from lspr_imaging_app.panels.image.canvas_tools import _BUTTON_SIZE, _ICON_SIZE
         from lspr_imaging_app.panels.image.general_group import BUTTON_SIZE, ICON_SIZE
 
@@ -1237,7 +1239,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(info.height(), _BUTTON_SIZE)
         self.assertEqual(info.width(), _BUTTON_SIZE)
         self.assertEqual(info.iconSize().width(), _ICON_SIZE)
-        self.assertEqual(info.styleSheet(), self.panel._canvas_tools._select_button.styleSheet())
+        self.assertEqual(info.styleSheet(), transparent_icon_button_stylesheet())
         cursor = self.panel._cursor_overlay.icon_label
         self.assertEqual((cursor.width(), cursor.height()), (BUTTON_SIZE, BUTTON_SIZE))
         self.assertEqual(cursor.iconSize().width(), ICON_SIZE)
@@ -1258,14 +1260,6 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertLess(canvas_column.indexOf(self.panel._top_bar), canvas_column.indexOf(self.panel._view))
         style = self.panel._top_bar.styleSheet()
         self.assertIn("border-bottom: 1px solid", style)
-
-    def test_canvas_tools_bar_is_horizontal_with_no_border_of_its_own(self) -> None:
-        """Flipped from a vertical strip (2026-09-30, maintainer request) -
-        Select and Add ROI now sit side by side; the border moved to the
-        wrapping top bar, so this widget draws none itself."""
-        self.assertIsInstance(self.panel._canvas_tools.layout(), QtWidgets.QHBoxLayout)
-        self.assertIn("border: none", self.panel._canvas_tools.styleSheet())
-        self.assertNotIn("border-right", self.panel._canvas_tools.styleSheet())
 
 
 class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):

@@ -261,7 +261,7 @@ class AddRoiToolTest(unittest.TestCase):
         self.assertEqual(self.roi_toolbox.rois(), ())
 
     def test_click_places_a_real_roi_at_the_clicked_point(self) -> None:
-        self.panel._canvas_tools._add_roi_button.click()
+        self.active_tool.set_active(ImageTool.ADD_ROI, True)  # no icon any more: armed from code
         self._click(40.0, 30.0)
         rois = self.roi_toolbox.rois()
         self.assertEqual(len(rois), 1)
@@ -269,14 +269,14 @@ class AddRoiToolTest(unittest.TestCase):
         self.assertAlmostEqual(rois[0].center_y, 30.0, places=5)
 
     def test_tool_stays_active_for_placing_several_rois_in_a_row(self) -> None:
-        self.panel._canvas_tools._add_roi_button.click()
+        self.active_tool.set_active(ImageTool.ADD_ROI, True)  # no icon any more: armed from code
         self._click(20.0, 20.0)
         self.assertIs(self.active_tool.active(), ImageTool.ADD_ROI)
         self._click(50.0, 40.0)
         self.assertEqual(len(self.roi_toolbox.rois()), 2)
 
     def test_each_placement_is_its_own_undo_step(self) -> None:
-        self.panel._canvas_tools._add_roi_button.click()
+        self.active_tool.set_active(ImageTool.ADD_ROI, True)  # no icon any more: armed from code
         self._click(20.0, 20.0)
         self._click(50.0, 40.0)
         self.assertEqual(len(self.roi_toolbox.rois()), 2)
@@ -284,7 +284,7 @@ class AddRoiToolTest(unittest.TestCase):
         self.assertEqual(len(self.roi_toolbox.rois()), 1)
 
     def test_right_click_menu_exit_tool_action_exits_the_tool(self) -> None:
-        self.panel._canvas_tools._add_roi_button.click()
+        self.active_tool.set_active(ImageTool.ADD_ROI, True)  # no icon any more: armed from code
         self._click(0.0, 0.0, Qt.MouseButton.RightButton)
         self.assertIsNone(self.active_tool.active())
         self.assertEqual(self.roi_toolbox.rois(), ())  # right-click placed nothing
@@ -295,7 +295,7 @@ class AddRoiToolTest(unittest.TestCase):
         not be hidden while it is active."""
         self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         _pump()
-        self.panel._canvas_tools._add_roi_button.click()
+        self.active_tool.set_active(ImageTool.ADD_ROI, True)  # no icon any more: armed from code
         _pump()
         xs = self.panel._roi_overlay.sample_curve.getData()[0]
         self.assertIsNotNone(xs)
@@ -303,11 +303,10 @@ class AddRoiToolTest(unittest.TestCase):
 
     def test_mutually_exclusive_with_rotate(self) -> None:
         self.active_tool.set_active(ImageTool.ROTATE, True)
-        self.panel._canvas_tools._add_roi_button.click()
+        self.active_tool.set_active(ImageTool.ADD_ROI, True)  # no icon any more: armed from code
         self.assertIs(self.active_tool.active(), ImageTool.ADD_ROI)
         self.active_tool.set_active(ImageTool.ROTATE, True)
         self.assertIs(self.active_tool.active(), ImageTool.ROTATE)
-        self.assertFalse(self.panel._canvas_tools._add_roi_button.isChecked())
 
     def test_help_text_lists_the_tools_controls(self) -> None:
         text = controls_text(ImageTool.ADD_ROI)
