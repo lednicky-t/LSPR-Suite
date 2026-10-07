@@ -243,9 +243,13 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         self.assertIs(self.image_panel._cursor_overlay.icon_label.parent(), general)
         self.assertIs(self._picker().parent(), general)
         ribbon = self.image_panel._tool_ribbon
+        # The General row is the ribbon's own pinned leading column (2026-10-03), so it
+        # sits inside the ribbon, left of the first tab - no longer left of the ribbon.
+        self.assertTrue(ribbon.isAncestorOf(general))
+        first_tab = ribbon._tab_buttons[0]
         self.assertLess(
             general.mapTo(self.image_panel, general.rect().topLeft()).x(),
-            ribbon.mapTo(self.image_panel, ribbon.rect().topLeft()).x(),
+            first_tab.mapTo(self.image_panel, first_tab.rect().topLeft()).x(),
         )
         # Same icon-button size for both, as requested.
         self.assertEqual(self.image_panel._cursor_overlay.icon_label.size(), self._picker().size())

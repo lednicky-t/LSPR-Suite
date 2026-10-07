@@ -201,7 +201,9 @@ class TestHistogramAndDisplayHelpers(unittest.TestCase):
         rgba = no_data_overlay_rgba(image)
         np.testing.assert_array_equal(rgba[..., 3] == 255, np.isnan(image))
         self.assertEqual(format_pixel_value(float("nan")), "no data")
-        self.assertEqual(format_pixel_value(12.34), "12.3")
+        # Whole numbers since 2026-10-03 (cursor readout; see no_data.format_pixel_value).
+        self.assertEqual(format_pixel_value(12.34), "12")
+        self.assertEqual(format_pixel_value(12.6), "13")
 
 
 class TestStoreCoverageRoundTrip(unittest.TestCase):

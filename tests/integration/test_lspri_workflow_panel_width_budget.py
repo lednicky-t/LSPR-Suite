@@ -43,6 +43,10 @@ from tests._paths import REPO_ROOT, ensure_repo_paths
 
 ensure_repo_paths()
 
+from tests._qt_fonts import load_system_fonts  # noqa: E402
+
+load_system_fonts()  # offscreen Qt on Windows has no fonts of its own; the text-width checks below need real ones
+
 APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))

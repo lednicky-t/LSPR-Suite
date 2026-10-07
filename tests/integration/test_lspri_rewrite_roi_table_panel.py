@@ -206,6 +206,37 @@ class AppearanceTest(_PanelCase):
         self.assertEqual(self.footer(), "5 ROIs  ·  2 selected")
 
 
+class RowHeightTest(_PanelCase):
+    """Row heights come from the delegate's `sizeHint` of column 0 alone (the
+    other columns return no height) - asking every column and the base class
+    made rebuilding a 1500-ROI table take 1.3 s instead of 0.2 s."""
+
+    def test_roi_and_group_rows_get_their_own_heights_from_column_zero(self) -> None:
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from lspr_imaging_app.panels.roi_table.delegate import group_row_height, row_height
+
+        self.toolbox.group_rois((1, 2), "A")
+        self.refresh()
+        delegate = self.tree.itemDelegate()
+        option = QStyleOptionViewItem()
+        option.font = self.tree.font()
+        option.fontMetrics = QFontMetrics(option.font)
+        header = self.header(self.model.group_id(self.model.group_headers()[0]))
+        roi_cell = self.cell(1, COLUMN_ID)
+
+        self.assertEqual(delegate.sizeHint(option, header).height(), group_row_height(option.fontMetrics))
+        self.assertEqual(delegate.sizeHint(option, roi_cell).height(), row_height(option.fontMetrics))
+        self.assertEqual(delegate.sizeHint(option, self.cell(1, COLUMN_X)).height(), 0)
+
+    def test_the_view_still_lays_rows_out_at_those_heights(self) -> None:
+        from lspr_imaging_app.panels.roi_table.delegate import row_height
+
+        self.refresh()
+        expected = row_height(QFontMetrics(self.tree.font()))
+        self.assertEqual(self.tree.rowHeight(self.cell(1, COLUMN_ID)), expected)
+
+
 class UnitToggleTest(_PanelCase):
     """The px/µm toggle in the toolbar: the same control as the Image ribbon's
     View tab, driving the one Geometry display unit."""

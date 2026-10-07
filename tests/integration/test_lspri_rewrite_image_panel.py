@@ -250,6 +250,25 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(len(self.panel._selection_curve.getData()[0]), _CIRCLE_POINTS)
         self.assertEqual(len(self.panel._sample_curve.getData()[0]), _CIRCLE_POINTS)
 
+    def test_overlay_follows_the_chromatic_affine_once(self) -> None:
+        """At a wavelength with a chromatic correction the circle must sit where
+        `display_position` says (and where the mask is measured) - the affine's
+        translation applied once, not twice (bug found 2026-10-07: the drawn
+        circle was off by the translation, and click hit-testing disagreed with
+        what was drawn)."""
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        shifted = np.array([[1.0, 0.0, 3.0], [0.0, 1.0, -2.0]])
+        with patch.object(self.chromatic, "affine_for", return_value=shifted):
+            self.panel._draw_roi_overlay()
+            frame = (self.panel._current_cube(), self.panel._current_wavelength())
+            center = self.roi_toolbox.display_position(roi_id, frame, shifted)
+            xs, ys = self.panel._sample_curve.getData()
+            self.assertEqual(center, (43.0, 28.0))
+            self.assertAlmostEqual(float(np.nanmean(xs[:-1])), center[0], places=6)
+            self.assertAlmostEqual(float(np.nanmean(ys[:-1])), center[1], places=6)
+            self.assertEqual(self.panel.roi_at(*center), roi_id)  # clicking where it is drawn selects it
+
     def _points(self, curve) -> int:
         """Circles on a curve, counted by its points (NaN separators between them)."""
         xs = curve.getData()[0]

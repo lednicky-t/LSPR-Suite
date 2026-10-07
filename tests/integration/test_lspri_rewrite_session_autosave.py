@@ -189,6 +189,32 @@ class SessionAutosaveDebounceTest(unittest.TestCase):
         self.autosave.flush()
         self.assertEqual(len(attempts), 2)
 
+    def test_a_failed_write_is_reported_to_the_user_not_only_logged(self) -> None:
+        """Disk full / locked file / permissions: the app shows `save_failed` in
+        its status bar, so the user does not believe the session is on disk."""
+        reported: list[str] = []
+        self.autosave.save_failed.connect(reported.append)
+
+        def _always_failing(root, state, naming):
+            raise OSError("disk full")
+
+        self.autosave._save = _always_failing
+        self.autosave.set_root(self.root)
+        self.autosave.schedule()
+        with self.assertLogs("lspr_imaging_app.storage.session_autosave", level="ERROR"):
+            self.autosave.flush()
+        self.assertEqual(len(reported), 1)
+        self.assertIn("disk full", reported[0])
+        self.assertIn("not saved", reported[0])
+
+    def test_a_successful_write_reports_nothing(self) -> None:
+        reported: list[str] = []
+        self.autosave.save_failed.connect(reported.append)
+        self.autosave.set_root(self.root)
+        self.autosave.schedule()
+        self.autosave.flush()
+        self.assertEqual(reported, [])
+
 
 def _write_dataset(root: Path) -> ImageDataset:
     path = root / "cube0_wl500.tif"

@@ -323,6 +323,9 @@ class RotateToolTest(unittest.TestCase):
         self.assertFalse(self.tool._band.isVisible())
 
     def test_deactivating_drops_a_pending_point(self) -> None:
+        # The info icon shows the open ribbon tab's text; only "Image tools" (and "ROIs")
+        # show the canvas controls, and "View" has been the first tab since 2026-10-06.
+        self.panel._tool_ribbon.set_category("Image tools")
         self.active_tool.set_active(ImageTool.ROTATE, True)
         self._click(10.0, 20.0)
         self.active_tool.set_active(ImageTool.ROTATE, False)
