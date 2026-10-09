@@ -323,6 +323,61 @@ class RoiGesturesTest(unittest.TestCase):
         )
         self.assertEqual(hit_test(5.0, 0.0, mask, np.eye(2), 1.0).zone, "body")
 
+    # -- reference ring borders (default ring: diameters 28 / 36, i.e. radii 14 / 18) ----------
+
+    def ring(self, roi_id: int) -> tuple[float, float]:
+        from lspr_imaging_app.roi.rasterize import effective_reference_diameters
+
+        defaults = self.roi_toolbox.detection_settings()
+        return effective_reference_diameters(
+            self.roi_toolbox.roi_by_id(roi_id), defaults.reference_inner_diameter_px, defaults.reference_outer_diameter_px
+        )
+
+    def test_dragging_the_inner_ring_border_moves_the_outer_one_with_it(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.assertTrue(self.drag(Qt.MouseButton.LeftButton, [(54.0, 30.0), (55.0, 30.0), (56.0, 30.0)]))
+        inner, outer = self.ring(2)
+        self.assertAlmostEqual(inner, 32.0)
+        self.assertAlmostEqual(outer - inner, 8.0, msg="thickness unchanged")
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 10.0, msg="sample untouched")
+
+    def test_dragging_the_outer_ring_border_changes_only_the_thickness(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.assertTrue(self.drag(Qt.MouseButton.LeftButton, [(58.0, 30.0), (60.0, 30.0)]))
+        inner, outer = self.ring(2)
+        self.assertAlmostEqual(inner, 28.0)
+        self.assertAlmostEqual(outer, 40.0)
+
+    def test_the_outer_ring_border_cannot_cross_the_inner_one(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.drag(Qt.MouseButton.LeftButton, [(58.0, 30.0), (45.0, 30.0)])
+        inner, outer = self.ring(2)
+        self.assertAlmostEqual(inner, 28.0)
+        self.assertGreater(outer, inner)
+
+    def test_the_ring_resize_is_one_undo_step_and_needs_visible_rings(self) -> None:
+        self.selection.set_roi_selection({2})
+        self.drag(Qt.MouseButton.LeftButton, [(54.0, 30.0), (55.0, 30.0), (56.0, 30.0)])
+        undo_manager.undo()
+        self.assertEqual(self.ring(2), (28.0, 36.0))
+        self.assertFalse(undo_manager.can_undo)
+        self.panel._on_roi_overlay_changed("reference", "visible", False)
+        self.drag(Qt.MouseButton.LeftButton, [(54.0, 30.0), (56.0, 30.0)])
+        self.assertEqual(self.ring(2), (28.0, 36.0), "a hidden ring has no handle")
+
+    def test_hit_test_finds_the_ring_borders(self) -> None:
+        from lspr_imaging_app.panels.image.roi_gestures import SelectedApertures, hit_test
+
+        selected = SelectedApertures(
+            ids=np.array([1]), centers=np.array([[0.0, 0.0]]), diameters=np.array([10.0]), resizable=np.array([True]),
+            ring_inner=np.array([28.0]), ring_outer=np.array([36.0]), ring_resizable=np.array([True]),
+        )
+        eye = np.eye(2)
+        self.assertEqual(hit_test(14.0, 0.0, selected, eye, 1.0).zone, "ring_inner")
+        self.assertEqual(hit_test(18.0, 0.0, selected, eye, 1.0).zone, "ring_outer")
+        self.assertEqual(hit_test(5.0, 0.0, selected, eye, 1.0).zone, "edge")
+        self.assertIsNone(hit_test(16.0, 0.0, selected, eye, 1.0), "between the borders is not a handle")
+
     # -- hover cursor -------------------------------------------------------------------
 
     def hover_cursor(self, x: float, y: float) -> Qt.CursorShape | None:

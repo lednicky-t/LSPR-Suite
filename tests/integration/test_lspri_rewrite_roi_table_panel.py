@@ -210,6 +210,41 @@ class AppearanceTest(_PanelCase):
         self.assertEqual(self.footer(), "5 ROIs  ·  2 selected")
 
 
+class SharedDisplayStyleTest(_PanelCase):
+    """The Sample colour (that of a ROI with none of its own) lives in one `RoiDisplayStyle`, read by the table and the overlay."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from lspr_imaging_app.roi.display_style import RoiDisplayStyle
+
+        self.style = RoiDisplayStyle()
+        self.panel.deleteLater()
+        self.panel = RoiTablePanel(self.toolbox, self.selection, self.geometry, self.engine, display_style=self.style)
+        self.model = self.panel._model
+
+    def test_the_dot_of_a_roi_with_no_colour_follows_the_shared_sample_colour(self) -> None:
+        self.assertEqual(self.model.data(self.cell(1, COLUMN_ID), COLOR_ROLE), self.style.sample.color)
+        self.style.set("sample", "color", "#c957e8")
+        self.panel.refresh_now()
+        self.assertEqual(self.model.data(self.cell(1, COLUMN_ID), COLOR_ROLE), "#c957e8")
+
+    def test_a_roi_with_its_own_colour_keeps_it(self) -> None:
+        self.toolbox.set_roi_colors([2], "#112233")
+        self.style.set("sample", "color", "#c957e8")
+        self.panel.refresh_now()
+        self.assertEqual(self.model.data(self.cell(2, COLUMN_ID), COLOR_ROLE), "#112233")
+
+    def test_the_overlay_uses_the_very_same_style_object(self) -> None:
+        import pyqtgraph as pg
+
+        from lspr_imaging_app.panels.image.roi_overlay import RoiOverlay
+
+        overlay = RoiOverlay(pg.PlotItem(), self.style)
+        self.assertIs(overlay.sample, self.style.sample)
+        self.style.set("sample", "color", "#abcdef")
+        self.assertEqual(overlay.sample.color, "#abcdef")
+
+
 class RowHeightTest(_PanelCase):
     """Row heights come from the delegate's `sizeHint` of column 0 alone (the
     other columns return no height) - asking every column and the base class
@@ -765,8 +800,10 @@ class LayoutAndPaintTest(_PanelCase):
         widths = suggested_column_widths(metrics)
         for column in (COLUMN_X, COLUMN_Y, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT):
             self.assertGreaterEqual(widths[column] - metrics.horizontalAdvance("9999.9" if column in (COLUMN_X, COLUMN_Y) else "999.9"), 12, column)
-        for column, title in ((COLUMN_SAMPLE, "Sample"), (COLUMN_RING_IN, "Ring in"), (COLUMN_RING_OUT, "Ring out")):
-            self.assertGreaterEqual(widths[column] - metrics.horizontalAdvance(title), 20, f"{title}: room for the sort arrow")
+        from lspr_imaging_app.panels.roi_table.view import title_width
+
+        for column, title in ((COLUMN_SAMPLE, "D_s"), (COLUMN_RING_IN, "d_r"), (COLUMN_RING_OUT, "D_r")):
+            self.assertGreaterEqual(widths[column] - title_width(metrics, title), 20, f"{title}: room for the sort arrow")
 
     def test_painting_does_not_raise_in_either_theme_with_groups_and_selection(self) -> None:
         self.toolbox.group_rois((1, 2), "A")

@@ -98,6 +98,12 @@ class RowTest(unittest.TestCase):
         self.assertEqual((row.inner, row.outer), (28.0, 36.0))
         self.assertTrue(row.inner_inherited and row.outer_inherited)
 
+    def test_a_roi_with_no_colour_takes_the_given_default_and_an_own_colour_wins(self) -> None:
+        plain, own = _roi(1), _roi(2, sample_color_hex="#112233")
+        a, b = build_roi_rows([plain, own], [], self.defaults, "#c957e8")
+        self.assertEqual((a.color_hex, a.has_own_color), ("#c957e8", False))
+        self.assertEqual((b.color_hex, b.has_own_color), ("#112233", True))
+
     def test_an_override_is_not_inherited(self) -> None:
         roi = _roi(1, reference_inner_diameter_px=10.0)
         (row,) = build_roi_rows([roi], [], self.defaults)

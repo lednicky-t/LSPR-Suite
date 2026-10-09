@@ -292,6 +292,36 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         self.assertEqual(statistics.sensorgram_display_mode, "average_by_group")
         self.assertEqual(statistics.sensorgram_band, "sem")
 
+    def test_roi_geometry_timeline_round_trips_through_the_file(self) -> None:
+        """Schema 1.2: a ROI's geometry changes by cube (persistent / individual) survive a save and a fresh load."""
+        self.roi_toolbox.move_roi(self.roi_a, 45.0, 33.0, cube=1)
+        self.roi_toolbox.resize_rois([self.roi_a], sample_diameter_px=12.0, cube=0, scope="individual")
+        _geo, _mask, _chrom, _bg, roi_toolbox, _sel, _analysis = self._reload()
+        restored = roi_toolbox.roi_by_id(self.roi_a)
+        self.assertEqual(restored.center_x, 40.0)  # the base is untouched
+        self.assertEqual(roi_toolbox.geometry_at(self.roi_a, 1).center_x, 45.0)
+        self.assertEqual(roi_toolbox.geometry_at(self.roi_a, 0).sample_diameter_px, 12.0)
+        self.assertEqual(roi_toolbox.timeline_cubes(), (0, 1))
+        self.assertIsNone(roi_toolbox.roi_by_id(self.roi_b).timeline)
+
+    def test_a_session_without_a_timeline_writes_none_and_stays_byte_identical(self) -> None:
+        first = self._save().read_bytes()
+        self.assertEqual(self._save().read_bytes(), first)
+        payload = json.loads(first)
+        self.assertEqual(payload["schema_version"], "1.2")
+        self.assertTrue(all(entry.get("timeline") is None for entry in payload["roi"]["rois"]))
+
+    def test_a_schema_1_1_file_loads_without_a_timeline(self) -> None:
+        path = self._save()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["schema_version"] = "1.1"
+        for entry in payload["roi"]["rois"]:
+            entry.pop("timeline", None)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        state = load_session(self.root)
+        self.assertEqual(len(state.rois), 2)
+        self.assertTrue(all(roi.timeline is None for roi in state.rois))
+
     def test_a_schema_1_0_file_still_loads_with_default_analysis_settings(self) -> None:
         """The additive-minor-bump contract, exercised rather than assumed:
         1.0 files predate the analysis block entirely, and must open with
