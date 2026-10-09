@@ -185,7 +185,7 @@ class ArrayActionsTest(unittest.TestCase):
         self.assertTrue(any("Select the ROIs" in t for t in self.told))
 
     def test_manual_placement_needs_the_numbers_then_places_the_lattice(self) -> None:
-        self.controls._mode.setCurrentIndex(self.controls._mode.findData("manual"))
+        self.controls.set_mode("manual")
         self.run_and_wait(self.controls._run.click)
         self.assertTrue(any("Manual placement needs" in t for t in self.told))
         pop = self.controls.popover()
@@ -247,7 +247,7 @@ class ControlsTest(unittest.TestCase):
         pop.rows.setValue(5)
         pop.diameter.set_value_px(41.5)
         self.assertIsNone(controls.settings().prior.rows)  # Auto: no priors
-        controls._mode.setCurrentIndex(controls._mode.findData("semi"))
+        controls.set_mode("semi")
         settings = controls.settings()
         self.assertEqual((settings.prior.rows, settings.prior.diameter_px), (5, 41.5))
         self.assertIsNone(settings.prior.cols)  # 0 = auto

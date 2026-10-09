@@ -105,13 +105,16 @@ class RoiOverlayControlsTest(unittest.TestCase):
 
     # -- the tab -------------------------------------------------------------------------
 
-    def test_the_rois_tab_holds_the_tools_and_the_three_new_groups(self) -> None:
+    def test_the_rois_tab_has_one_display_menu_holding_the_three_rows(self) -> None:
+        menu = self.panel._roi_display_menu
         self.panel._tool_ribbon.set_category("ROIs")
-        for widget in (self.sample, self.reference, self.panel._roi_labels_button):
-            self.assertTrue(widget.isVisibleTo(self.panel), widget)
+        self.assertTrue(menu.isVisibleTo(self.panel))
         self.panel._tool_ribbon.set_category("Mask")
+        self.assertFalse(menu.isVisibleTo(self.panel), "only on the ROIs tab")
+        popup = menu.menu().actions()[0].defaultWidget()
         for widget in (self.sample, self.reference, self.panel._roi_labels_button):
-            self.assertFalse(widget.isVisibleTo(self.panel), "only on the ROIs tab")
+            self.assertTrue(popup.isAncestorOf(widget), widget)
+        self.assertFalse(menu.icon().isNull())
 
     def test_the_sample_toggle_uses_the_background_tabs_spot_icon(self) -> None:
         """The same drawing, not a lookalike."""
@@ -374,11 +377,8 @@ class RoiOverlayControlsTest(unittest.TestCase):
             self.panel.show()
             self.panel._tool_ribbon.set_category("ROIs")
             _pump(0.3)
-            for name, button in (
-                ("sample", self.sample._toggle_button), ("reference", self.reference._toggle_button),
-                ("labels", self.panel._roi_labels_button),
-            ):
-                self.assertGreaterEqual(self._painted_width(button), 14, f"{name} icon is too small")
+            # The sample / reference / labels buttons now sit in the menu's popup (not shown here).
+            self.assertGreaterEqual(self._painted_width(self.panel._roi_display_menu), 14, "display menu icon is too small")
         finally:
             self.panel.hide()
             _APP.setStyleSheet(saved[0])
