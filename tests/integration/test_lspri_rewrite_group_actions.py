@@ -93,6 +93,22 @@ class GroupActionsTests(unittest.TestCase):
         self.controls.create_requested.emit()
         self.assertEqual(len(self.toolbox.groups()), 2)
 
+    def test_ungroup_takes_the_place_of_group_when_grouped_rois_are_selected(self) -> None:
+        self.names = ["Mine"]
+        self.selection.set_roi_selection({1, 2})
+        self.controls.create_requested.emit()
+        slot = self.controls._slot
+        self.assertIs(slot.currentWidget(), self.controls._buttons["ungroup"], "grouped ROIs are selected")
+        self.selection.set_roi_selection({3})
+        self.assertIs(slot.currentWidget(), self.controls._buttons["create"], "no grouped ROI selected: Group")
+        self.selection.set_roi_selection({1})
+        self.controls._buttons["ungroup"].click()  # one ROI of the group only: it leaves, the group stays
+        self.assertEqual(self.toolbox.groups()[0].area_roi_ids, [2])
+        self.selection.set_roi_selection({2})
+        self.controls._buttons["ungroup"].click()  # the last one: the group goes away
+        self.assertEqual(self.toolbox.groups(), ())
+        self.assertIs(slot.currentWidget(), self.controls._buttons["create"])
+
     def test_group_by_rows_is_refused_while_an_analysis_runs(self) -> None:
         self.running = True
         self.controls.by_rows_requested.emit()

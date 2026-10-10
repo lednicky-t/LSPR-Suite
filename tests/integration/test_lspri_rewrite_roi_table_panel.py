@@ -628,11 +628,20 @@ class DeleteTest(_PanelCase):
         self.panel._delete_selected()
         self.assertEqual(self.xs(), [10.0, 40.0, 50.0])
 
-    def test_with_only_a_group_header_selected_delete_removes_the_group_not_its_rois(self) -> None:
+    def test_with_a_group_header_selected_delete_removes_the_group_and_its_rois(self) -> None:
         self.toolbox.group_rois((1, 2), "A")
         self.refresh()
         self.select_in_view(self.header("group_1"))
         self.panel._delete_selected()
+        self.assertEqual(self.toolbox.groups(), ())
+        self.assertEqual(len(self.toolbox.rois()), 3)
+
+    def test_ungroup_button_dissolves_selected_groups_and_keeps_their_rois(self) -> None:
+        self.toolbox.group_rois((1, 2), "A")
+        self.refresh()
+        self.select_in_view(self.header("group_1"))
+        self.assertTrue(self.panel._ungroup_button.isEnabled())
+        self.panel._ungroup_button.click()
         self.assertEqual(self.toolbox.groups(), ())
         self.assertEqual(len(self.toolbox.rois()), 5)
 
@@ -721,7 +730,8 @@ class CommandTest(_PanelCase):
         self.panel._fill_group_menu(menu, self.header("group_1"))
         labels = [a.text() for a in menu.actions() if a.text()]
         self.assertIn("Rename…", labels)
-        self.assertIn("Delete group (keeps its ROIs)", labels)
+        self.assertIn("Ungroup (keeps the ROIs)", labels)
+        self.assertIn("Delete group and its ROIs", labels)
         down = next(a for a in menu.actions() if a.text() == "Move group down")
         self.assertFalse(down.isEnabled(), "only one group")
         ungrouped = self.model.group_index(None)
@@ -744,8 +754,58 @@ class CommandTest(_PanelCase):
     def test_moving_a_group_up_and_down(self) -> None:
         self.toolbox.group_rois((1,), "A")
         self.toolbox.group_rois((2,), "B")
-        self.panel._move_group("group_2", -1)
+        self.panel._move_groups(["group_2"], -1)
         self.assertEqual([g.name for g in self.toolbox.groups()], ["B", "A"])
+
+    def _three_groups(self) -> None:
+        self.toolbox.group_rois((1,), "A")
+        self.toolbox.group_rois((2,), "B")
+        self.toolbox.group_rois((3,), "C")
+        self.refresh()
+
+    def test_several_selected_groups_move_together(self) -> None:
+        self._three_groups()
+        self.select_in_view(self.header("group_2"), self.header("group_3"))
+        self.assertTrue(self.panel._up_button.isEnabled())
+        self.panel._up_button.click()
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["B", "C", "A"])
+        self.refresh()
+        self.select_in_view(self.header("group_2"), self.header("group_3"))
+        self.panel._down_button.click()
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["A", "B", "C"])
+
+    def test_moving_a_collapsed_group_keeps_it_collapsed_and_selected(self) -> None:
+        self._three_groups()
+        self.tree.collapse(self.header("group_2"))
+        self.select_in_view(self.header("group_2"))
+        self.panel._up_button.click()
+        self.refresh()
+        self.assertFalse(self.tree.isExpanded(self.header("group_2")))
+        self.assertEqual(self.panel._selected_group_ids(), ["group_2"])
+        self.panel._up_button.click()  # already on top: still enabled, nothing changes
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["B", "A", "C"])
+
+    def test_groups_move_to_the_top_and_bottom(self) -> None:
+        self._three_groups()
+        self.panel._move_groups_to_edge(["group_3"], top=True)
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["C", "A", "B"])
+        self.panel._move_groups_to_edge(["group_3", "group_1"], top=False)
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["B", "C", "A"])
+
+    def test_several_selected_groups_are_recoloured_and_deleted_together(self) -> None:
+        self._three_groups()
+        self.select_in_view(self.header("group_1"), self.header("group_3"))
+        self.panel._choose_color = lambda *_args: "#112233"
+        self.panel._color_selected()
+        colors = {g.name: g.sample_color_hex for g in self.toolbox.groups()}
+        self.assertEqual(colors["A"], "#112233")
+        self.assertEqual(colors["C"], "#112233")
+        self.assertNotEqual(colors["B"], "#112233")
+        menu = QMenu()
+        self.panel._fill_group_menu(menu, self.header("group_1"))
+        delete = next(a for a in menu.actions() if a.text().startswith("Ungroup"))
+        delete.trigger()
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["B"])
 
 
 class RememberedStateTest(_PanelCase):
