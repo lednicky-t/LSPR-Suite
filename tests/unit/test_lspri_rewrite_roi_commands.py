@@ -80,6 +80,32 @@ class PaletteTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 normalize_hex(bad)  # type: ignore[arg-type]
 
+    def test_gradient_runs_from_the_base_colour_to_a_lighter_shade_in_even_steps(self) -> None:
+        import colorsys
+
+        from lspr_imaging_app.roi.palette import gradient_tints
+
+        colours = gradient_tints("#1f77b4", 5)
+        self.assertEqual(colours[0], "#1f77b4")
+        lightness = [colorsys.rgb_to_hls(*(int(c[i:i + 2], 16) / 255 for i in (1, 3, 5)))[1] for c in colours]
+        steps = [b - a for a, b in zip(lightness, lightness[1:])]
+        self.assertTrue(all(step > 0 for step in steps))
+        self.assertLess(max(steps) - min(steps), 0.02)  # evenly spaced
+        self.assertEqual(gradient_tints("#1f77b4", 1), ["#1f77b4"])
+        self.assertEqual(gradient_tints("#1f77b4", 0), [])
+        light = gradient_tints("#e6e6a0", 3)  # a light base darkens instead
+        self.assertEqual(light[0], "#e6e6a0")
+        self.assertLess(colorsys.rgb_to_hls(*(int(light[2][i:i + 2], 16) / 255 for i in (1, 3, 5)))[1], 0.5)
+
+    def test_a_grey_base_colour_still_hands_out_new_tints_and_never_hangs(self) -> None:
+        """Regression (2026-10-09): grey has no hue, so every 7th tint repeated and the search for a free tint
+        never ended once an 8th group (grey) had 8 members: the app froze on "group by rows"."""
+        grey = "#7f7f7f"
+        used: list[str] = []
+        for _ in range(300):
+            used.append(tint_color(grey, first_free_tint_index(grey, used)))
+        self.assertGreater(len(set(used[:20])), 14)  # the first members are told apart
+
 
 class OrderingHelpersTest(unittest.TestCase):
     def test_move_block_up_down_front_and_back(self) -> None:
@@ -232,14 +258,21 @@ class GroupTest(_ToolboxCase):
         self.assertEqual(names, ["empty on purpose", "new home"])
         self.assertNotIn(first, [g.group_id for g in self.toolbox.groups()])
 
-    def test_a_newcomer_takes_the_first_free_tint(self) -> None:
-        group_id = self.toolbox.group_rois((1, 2, 3), "A")
+    def test_a_new_group_is_a_gradient_in_id_order_and_a_newcomer_gets_a_colour_no_member_has(self) -> None:
+        import colorsys
+
+        group_id = self.toolbox.group_rois((3, 1, 2), "A")
         base = self.toolbox.groups()[0].sample_color_hex
-        self.toolbox.remove_rois_from_groups((2,))
+        colors = self.colors()
+        self.assertEqual(colors[1], base, "the first member shows the group's colour")
+        lightness = [colorsys.rgb_to_hls(*(int(colors[i][k:k + 2], 16) / 255 for k in (1, 3, 5)))[1] for i in (1, 2, 3)]
+        self.assertLess(lightness[0], lightness[1])
+        self.assertLess(lightness[1], lightness[2])
+        before = dict(colors)
         self.toolbox.add_rois_to_group((4,), group_id)
-        self.assertEqual(self.colors()[4], tint_color(base, 1), "the gap left by ROI 2 is reused")
-        self.assertEqual(self.colors()[1], tint_color(base, 0), "existing members keep their colour")
-        self.assertEqual(self.colors()[3], tint_color(base, 2))
+        after = self.colors()
+        self.assertEqual({i: after[i] for i in (1, 2, 3)}, {i: before[i] for i in (1, 2, 3)}, "members keep their colour")
+        self.assertNotIn(after[4], {before[i] for i in (1, 2, 3)})
 
     def test_ungrouping_clears_the_tint_and_can_target_one_group(self) -> None:
         a = self.toolbox.group_rois((1, 2), "A")

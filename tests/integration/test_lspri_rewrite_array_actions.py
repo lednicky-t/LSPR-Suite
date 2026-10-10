@@ -103,6 +103,44 @@ class ArrayActionsTest(unittest.TestCase):
             self.assertTrue(_pump(lambda: not self.action.is_running()), "the action did not finish")
         _pump(timeout=0.2)
 
+    def _add_grid(self) -> None:
+        """2 rows x 3 columns, added in scrambled order: ids 1..6 at known spots."""
+        spots = [(60, 10), (10, 50), (10, 10), (60, 50), (35, 10), (35, 50)]  # x, y
+        for x, y in spots:
+            self.toolbox.add_roi(float(x), float(y), sample_diameter_px=10.0)
+
+    def _id_at(self, x: float, y: float) -> int:
+        return next(r.area_roi_id for r in self.toolbox.rois() if (r.center_x, r.center_y) == (x, y))
+
+    def test_reorder_by_rows_and_by_columns_numbers_from_the_top_left(self) -> None:
+        self._add_grid()
+        self.controls._reorder.reorder_requested.emit("rows")
+        ids = [self._id_at(x, y) for y in (10, 50) for x in (10, 35, 60)]
+        self.assertEqual(ids, [1, 2, 3, 4, 5, 6])
+        self.controls._reorder.reorder_requested.emit("columns")
+        ids = [self._id_at(x, y) for x in (10, 35, 60) for y in (10, 50)]
+        self.assertEqual(ids, [1, 2, 3, 4, 5, 6])
+        undo_manager.undo()  # one undo step each: back to the row numbering
+        self.assertEqual(self._id_at(35, 10), 2)
+
+    def test_reorder_works_on_the_selection_only_and_keeps_other_numbers(self) -> None:
+        self._add_grid()
+        before = {(r.center_x, r.center_y): r.area_roi_id for r in self.toolbox.rois()}
+        chosen = [2, 4, 6]  # (10,50), (60,50), (35,50): the bottom row
+        self.selection.set_roi_selection(set(chosen))
+        self.controls._reorder.reorder_requested.emit("rows")
+        for spot, roi_id in before.items():
+            if roi_id not in chosen:
+                self.assertEqual(self._id_at(*spot), roi_id)
+        self.assertEqual([self._id_at(x, 50) for x in (10, 35, 60)], [2, 4, 6])
+
+    def test_reorder_is_refused_while_an_analysis_runs(self) -> None:
+        self._add_grid()
+        self.analysis_running = True
+        self.controls._reorder.reorder_requested.emit("rows")
+        self.assertEqual(self._id_at(60, 10), 1)  # unchanged
+        self.assertTrue(self.told)
+
     def test_auto_detect_stores_the_array_as_one_undo_step(self) -> None:
         self.run_and_wait(self.controls._run.click)
         self.assertEqual(len(self.toolbox.rois()), 24)

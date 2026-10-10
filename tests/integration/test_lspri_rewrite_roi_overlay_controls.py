@@ -385,6 +385,28 @@ class RoiOverlayControlsTest(unittest.TestCase):
             _APP.setPalette(saved[1])
             _APP.setStyle(saved[2])
 
+    def test_group_labels_follow_the_menu_and_paint_without_error(self) -> None:
+        for x in (20.0, 60.0, 100.0):
+            self.roi_toolbox.add_roi(x, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.group_rois((1, 2, 3), "Row A")
+        _pump(0.3)
+        item = self.panel._roi_overlay.group_label_item
+        self.assertFalse(item.isVisible(), "hidden until the menu turns it on")
+        menu = self.panel._group_controls.label_menu
+        menu.show_button.click()
+        menu.side.setCurrentIndex(menu.side.findData("left"))
+        menu.direction.setCurrentIndex(menu.direction.findData("vertical"))
+        self.panel.resize(900, 700)
+        self.panel.show()
+        _pump(0.3)
+        self.assertEqual([e.text for e in item.entries()], ["Row A"])
+        self.assertTrue(item.isVisible())
+        self.panel.grab()  # paints the item
+        menu.show_button.click()
+        _pump(0.3)
+        self.assertFalse(item.isVisible())
+        self.panel.hide()
+
     def test_a_theme_switch_restyles_the_new_controls_without_error(self) -> None:
         self._theme_before = get_active_theme()
         set_active_theme(LSPRI_BRIGHT_THEME)
