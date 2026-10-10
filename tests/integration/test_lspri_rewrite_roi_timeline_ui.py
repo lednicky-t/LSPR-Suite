@@ -119,12 +119,12 @@ class RoiTimelineUiTest(unittest.TestCase):
         self.assertEqual(target.scope(), SCOPE_PERSISTENT)
         self.go_to_cube(1)
         self.assertEqual(target.kwargs(), {"cube": 1, "scope": SCOPE_PERSISTENT})
-        self.panel._roi_scope_toggle._buttons[SCOPE_INDIVIDUAL].click()
+        self.panel._roi_tab._scope_toggle._buttons[SCOPE_INDIVIDUAL].click()
         self.assertEqual(self.panel._roi_scope.scope(), SCOPE_INDIVIDUAL)
         self.assertEqual(target.kwargs(), {"cube": 1, "scope": SCOPE_INDIVIDUAL})
         self.go_to_cube(0)
         self.assertEqual(target.kwargs(), {"cube": 0, "scope": SCOPE_INDIVIDUAL})
-        self.panel._roi_scope_toggle._buttons[SCOPE_PERSISTENT].click()
+        self.panel._roi_tab._scope_toggle._buttons[SCOPE_PERSISTENT].click()
         self.assertEqual(target.kwargs(), {})  # persistent on the first cube edits the base: every cube, as before
 
     def test_the_scope_is_remembered_across_restarts(self) -> None:
@@ -134,7 +134,7 @@ class RoiTimelineUiTest(unittest.TestCase):
         self.assertEqual(self.panel._roi_scope.scope(), SCOPE_INDIVIDUAL)
         store.flush()
         self.assertEqual(saved, [], "restoring must not save what it just read")
-        self.panel._roi_scope_toggle._buttons[SCOPE_PERSISTENT].click()
+        self.panel._roi_tab._scope_toggle._buttons[SCOPE_PERSISTENT].click()
         store.flush()
         self.assertEqual(saved[-1]["roi/scope"], "persistent")
 
@@ -157,7 +157,7 @@ class RoiTimelineUiTest(unittest.TestCase):
         self.assertFalse(undo_manager.can_undo)
 
     def test_individual_scope_changes_only_the_cube_you_are_on(self) -> None:
-        self.panel._roi_scope_toggle._buttons[SCOPE_INDIVIDUAL].click()
+        self.panel._roi_tab._scope_toggle._buttons[SCOPE_INDIVIDUAL].click()
         self.selection.set_roi_selection({2})
         self.drag([(40.0, 30.0), (45.0, 30.0)])
         self.assertEqual([self.x_at(2, 0), self.x_at(2, 1)], [45.0, 40.0])

@@ -181,9 +181,9 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         saved: list[AppSettings] = []
         window = self._build(on_settings_changed=saved.append)
         panel = _panel(window, "Image", ImagePanel)
-        panel._highlight_overlay_controls.visibility_changed.emit(False)
-        panel._highlight_overlay_controls.alpha_changed.emit(0.9)
-        panel._highlight_overlay_controls.alpha_changed.emit(0.8)
+        panel._view_tab.highlight_controls.visibility_changed.emit(False)
+        panel._view_tab.highlight_controls.alpha_changed.emit(0.9)
+        panel._view_tab.highlight_controls.alpha_changed.emit(0.8)
         self.assertEqual(saved, [])  # debounced: nothing written mid-burst
         _flushed()
         self.assertFalse(saved[-1].ui_state["image/highlight_overlay_visible"])

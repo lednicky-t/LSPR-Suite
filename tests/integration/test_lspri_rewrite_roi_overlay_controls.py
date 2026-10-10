@@ -79,8 +79,8 @@ class RoiOverlayControlsTest(unittest.TestCase):
         )
         self.dataset.load_dataset(self.dataset_model)
         _pump()
-        self.sample = self.panel._roi_sample_controls
-        self.reference = self.panel._roi_reference_controls
+        self.sample = self.panel._roi_tab.sample_controls
+        self.reference = self.panel._roi_tab.reference_controls
 
     def tearDown(self) -> None:
         self.panel._renderer.stop()
@@ -106,13 +106,13 @@ class RoiOverlayControlsTest(unittest.TestCase):
     # -- the tab -------------------------------------------------------------------------
 
     def test_the_rois_tab_has_one_display_menu_holding_the_three_rows(self) -> None:
-        menu = self.panel._roi_display_menu
+        menu = self.panel._roi_tab._display_menu
         self.panel._tool_ribbon.set_category("ROIs")
         self.assertTrue(menu.isVisibleTo(self.panel))
         self.panel._tool_ribbon.set_category("Mask")
         self.assertFalse(menu.isVisibleTo(self.panel), "only on the ROIs tab")
         popup = menu.menu().actions()[0].defaultWidget()
-        for widget in (self.sample, self.reference, self.panel._roi_labels_button):
+        for widget in (self.sample, self.reference, self.panel._roi_tab.labels_button):
             self.assertTrue(popup.isAncestorOf(widget), widget)
         self.assertFalse(menu.icon().isNull())
 
@@ -248,17 +248,17 @@ class RoiOverlayControlsTest(unittest.TestCase):
         self.assertEqual(self.panel._roi_overlay.label_item.labels(), [])
         self.roi_toolbox.set_roi_label(2, "spot B")
         _pump(0.3)
-        self.panel._roi_labels_button.click()
+        self.panel._roi_tab.labels_button.click()
         texts = {text for _x, _y, _r, text in self.panel._roi_overlay.label_item.labels()}
         self.assertEqual(texts, {"1", "2 spot B"})
         x, y, radius, _ = next(entry for entry in self.panel._roi_overlay.label_item.labels() if entry[3] == "1")
         self.assertEqual((x, y, radius), (40.0, 30.0, 5.0), "anchored at the right edge of the circle")
-        self.panel._roi_labels_button.click()
+        self.panel._roi_tab.labels_button.click()
         self.assertEqual(self.panel._roi_overlay.label_item.labels(), [])
 
     def test_labels_follow_the_rois(self) -> None:
         self.two_rois()
-        self.panel._roi_labels_button.click()
+        self.panel._roi_tab.labels_button.click()
         self.roi_toolbox.add_roi(20.0, 15.0, sample_diameter_px=10.0)
         _pump(0.3)
         self.assertEqual(len(self.panel._roi_overlay.label_item.labels()), 3)
@@ -268,7 +268,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
 
     def test_labels_are_hidden_with_the_circles_while_a_preview_tool_is_active(self) -> None:
         self.two_rois()
-        self.panel._roi_labels_button.click()
+        self.panel._roi_tab.labels_button.click()
         self.assertEqual(len(self.panel._roi_overlay.label_item.labels()), 2)
         self.active_tool.set_active(ImageTool.CROP, True)
         _pump(0.3)
@@ -281,7 +281,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
 
     def test_painting_the_labels_does_not_raise(self) -> None:
         self.two_rois()
-        self.panel._roi_labels_button.click()
+        self.panel._roi_tab.labels_button.click()
         self.panel.resize(900, 700)
         self.panel.show()
         _pump(0.3)
@@ -301,7 +301,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
         self.reference._alpha_slider.setValue(40)
         with mock.patch(_DIALOG, return_value=QColor("#abcdef")):
             self.sample._color_button.click()
-        self.panel._roi_labels_button.click()
+        self.panel._roi_tab.labels_button.click()
         self.assertIs(store.get("image/roi_sample_visible"), False)
         self.assertEqual(store.get("image/roi_sample_color"), "#abcdef")
         self.assertAlmostEqual(store.get("image/roi_reference_alpha"), 0.4)
@@ -314,10 +314,10 @@ class RoiOverlayControlsTest(unittest.TestCase):
         )
         try:
             fresh.restore_ui_state(store)
-            self.assertFalse(fresh._roi_sample_controls._toggle_button.isChecked())
-            self.assertEqual(fresh._roi_sample_controls._color.name(), "#abcdef")
-            self.assertEqual(fresh._roi_reference_controls._alpha_slider.value(), 40)
-            self.assertTrue(fresh._roi_labels_button.isChecked())
+            self.assertFalse(fresh._roi_tab.sample_controls._toggle_button.isChecked())
+            self.assertEqual(fresh._roi_tab.sample_controls._color.name(), "#abcdef")
+            self.assertEqual(fresh._roi_tab.reference_controls._alpha_slider.value(), 40)
+            self.assertTrue(fresh._roi_tab.labels_button.isChecked())
             self.assertFalse(fresh._roi_overlay.sample_curve.isVisible(), "the restored state is applied, not just shown")
             self.assertAlmostEqual(fresh._roi_overlay.reference_curve.opts["pen"].color().alphaF(), 0.4, delta=0.01)
         finally:
@@ -344,7 +344,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
 
     def test_clearing_the_dataset_empties_the_labels(self) -> None:
         self.two_rois()
-        self.panel._roi_labels_button.click()
+        self.panel._roi_tab.labels_button.click()
         self.dataset.clear_dataset()
         _pump(0.3)
         self.assertEqual(self.panel._roi_overlay.label_item.labels(), [])
@@ -378,7 +378,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
             self.panel._tool_ribbon.set_category("ROIs")
             _pump(0.3)
             # The sample / reference / labels buttons now sit in the menu's popup (not shown here).
-            self.assertGreaterEqual(self._painted_width(self.panel._roi_display_menu), 14, "display menu icon is too small")
+            self.assertGreaterEqual(self._painted_width(self.panel._roi_tab._display_menu), 14, "display menu icon is too small")
         finally:
             self.panel.hide()
             _APP.setStyleSheet(saved[0])
@@ -392,7 +392,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
         _pump(0.3)
         item = self.panel._roi_overlay.group_label_item
         self.assertFalse(item.isVisible(), "hidden until the menu turns it on")
-        menu = self.panel._group_controls.label_menu
+        menu = self.panel._roi_tab._group_controls.label_menu
         menu.show_button.click()
         menu.side.setCurrentIndex(menu.side.findData("left"))
         menu.direction.setCurrentIndex(menu.direction.findData("vertical"))
@@ -411,7 +411,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
         self._theme_before = get_active_theme()
         set_active_theme(LSPRI_BRIGHT_THEME)
         self.panel.refresh_theme()
-        self.assertFalse(self.panel._roi_labels_button.icon().isNull())
+        self.assertFalse(self.panel._roi_tab.labels_button.icon().isNull())
         self.assertFalse(self.sample._toggle_button.icon().isNull())
 
 

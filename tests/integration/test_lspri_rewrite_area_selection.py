@@ -314,14 +314,14 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
     def test_histogram_selection_add_only_reaches_inside_the_selection(self) -> None:
         self.highlight_range.set_range(2000.0, 4000.0)  # both bright blocks
         self.area.set_rectangle(0, 0, 40, 64)  # left block only
-        self.image_panel._mask_edit_stack.widget(0)._editor.apply(subtract=False)
+        self.image_panel._mask_tab._edit_stack.widget(0)._editor.apply(subtract=False)
         _, mask, _scope = self.mask.resolve_mask_source(_FRAME)
         self.assertTrue(mask[15, 15])
         self.assertFalse(mask[45, 55])
 
     def test_histogram_selection_add_is_unrestricted_without_a_selection(self) -> None:
         self.highlight_range.set_range(2000.0, 4000.0)
-        self.image_panel._mask_edit_stack.widget(0)._editor.apply(subtract=False)
+        self.image_panel._mask_tab._edit_stack.widget(0)._editor.apply(subtract=False)
         _, mask, _scope = self.mask.resolve_mask_source(_FRAME)
         self.assertTrue(mask[15, 15])
         self.assertTrue(mask[45, 55])
@@ -332,7 +332,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         base[40:50, 50:60] = True
         self.mask.set_mask_change(_FRAME, "persistent", base)
         self.area.set_rectangle(0, 0, 40, 64)  # left block only
-        self.image_panel._mask_edit_stack.widget(3)._apply("dilate")
+        self.image_panel._mask_tab._edit_stack.widget(3)._apply("dilate")
         _, mask, _scope = self.mask.resolve_mask_source(_FRAME)
         self.assertGreater(int(mask[5:25, 5:25].sum()), 100)  # left block grew
         np.testing.assert_array_equal(mask[35:55, 45:65], base[35:55, 45:65])  # right block untouched

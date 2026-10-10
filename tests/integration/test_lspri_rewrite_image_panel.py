@@ -755,7 +755,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         of any other tab."""
         from lspr_imaging_app.panels.image.mask_overlay_controls import MaskOverlayControls
 
-        controls = self.panel._mask_overlay_controls
+        controls = self.panel._mask_tab.overlay_controls
         self.assertIsInstance(controls, MaskOverlayControls)
         page = self.panel._tool_ribbon._stack.widget(2)
         self.assertIs(controls.parentWidget().parentWidget(), page)
@@ -767,23 +767,23 @@ class RewriteImagePanelTest(unittest.TestCase):
         right, all inside the same "Mask" tab page."""
         from lspr_imaging_app.panels.image.mask_scope_toggle import MaskScopeToggle
 
-        toggle = self.panel._mask_scope_toggle
+        toggle = self.panel._mask_tab._scope_toggle
         self.assertIsInstance(toggle, MaskScopeToggle)
         page = self.panel._tool_ribbon._stack.widget(2)
-        self.assertIs(self.panel._mask_scope_separator.parentWidget(), page)
+        self.assertIs(self.panel._mask_tab._separators[1].parentWidget(), page)
 
         # Each icon widget is now wrapped in its own `_labeled_icon_group`
         # container (the caption-below-icons group, see the "State"/
         # "Visibility" test below) - that wrapper, not the icon widget
         # itself, is what sits directly in the page's row.
         toggle_group = toggle.parentWidget()
-        overlay_group = self.panel._mask_overlay_controls.parentWidget()
+        overlay_group = self.panel._mask_tab.overlay_controls.parentWidget()
         self.assertIs(toggle_group.parentWidget(), page)
         self.assertIs(overlay_group.parentWidget(), page)
 
         layout = page.layout()
         toggle_index = layout.indexOf(toggle_group)
-        separator_index = layout.indexOf(self.panel._mask_scope_separator)
+        separator_index = layout.indexOf(self.panel._mask_tab._separators[1])
         overlay_index = layout.indexOf(overlay_group)
         self.assertNotEqual(toggle_index, -1)
         self.assertLess(toggle_index, separator_index)
@@ -794,18 +794,18 @@ class RewriteImagePanelTest(unittest.TestCase):
         [each group]... center of section" - a caption below each group's
         icons, not above (unlike `lspr_ui`'s `toolbarSectionTitle`
         convention used elsewhere in the suite)."""
-        state_label = self.panel._mask_state_label
-        visibility_label = self.panel._mask_visibility_label
+        state_label = self.panel._mask_tab._state_label
+        visibility_label = self.panel._mask_tab._visibility_label
         self.assertEqual(state_label.text(), "State")
         self.assertEqual(visibility_label.text(), "Visibility")
 
-        toggle = self.panel._mask_scope_toggle
+        toggle = self.panel._mask_tab._scope_toggle
         toggle_group = toggle.parentWidget()
         self.assertIs(state_label.parentWidget(), toggle_group)
         group_layout = toggle_group.layout()
         self.assertLess(group_layout.indexOf(toggle), group_layout.indexOf(state_label))
 
-        overlay_controls = self.panel._mask_overlay_controls
+        overlay_controls = self.panel._mask_tab.overlay_controls
         overlay_group = overlay_controls.parentWidget()
         self.assertIs(visibility_label.parentWidget(), overlay_group)
         overlay_group_layout = overlay_group.layout()
@@ -818,7 +818,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         stay in sync for free."""
         from lspr_imaging_app.image_tools import MaskScope
 
-        toggle = self.panel._mask_scope_toggle
+        toggle = self.panel._mask_tab._scope_toggle
         toggle._individual_button.click()
         self.assertIs(self.mask_scope.scope(), MaskScope.INDIVIDUAL)
 
@@ -848,10 +848,10 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertTrue(self.panel._mask_tint.item.isVisible())
 
-        self.panel._mask_overlay_controls._toggle_button.click()
+        self.panel._mask_tab.overlay_controls._toggle_button.click()
         self.assertFalse(self.panel._mask_tint.item.isVisible())
 
-        self.panel._mask_overlay_controls._toggle_button.click()
+        self.panel._mask_tab.overlay_controls._toggle_button.click()
         self.assertTrue(self.panel._mask_tint.item.isVisible())
 
     def test_mask_overlay_color_and_alpha_changes_redraw_without_a_new_render(self) -> None:
@@ -867,8 +867,8 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         serial_before = self.panel._latest_serial
         new_color = QColor("#38bdf8")
-        self.panel._mask_overlay_controls.color_changed.emit(new_color)
-        self.panel._mask_overlay_controls.alpha_changed.emit(0.2)
+        self.panel._mask_tab.overlay_controls.color_changed.emit(new_color)
+        self.panel._mask_tab.overlay_controls.alpha_changed.emit(0.2)
 
         self.assertEqual(self.panel._latest_serial, serial_before)
         overlay = self.panel._mask_tint.item.image
@@ -907,16 +907,16 @@ class RewriteImagePanelTest(unittest.TestCase):
         # own widest panel - rather than under the picker itself, so it
         # visually floated away whenever a narrower panel was shown). The
         # stack now sits as its own, uncaptioned, top-aligned sibling.
-        picker_group = self.panel._mask_edit_picker.parentWidget()
+        picker_group = self.panel._mask_tab._edit_picker.parentWidget()
         self.assertIs(picker_group.parentWidget(), page)
-        self.assertIs(self.panel._mask_visibility_separator.parentWidget(), page)
-        self.assertEqual(self.panel._mask_edit_label.text(), "Manual edit")
+        self.assertIs(self.panel._mask_tab._separators[2].parentWidget(), page)
+        self.assertEqual(self.panel._mask_tab._edit_label.text(), "Manual edit")
 
         layout = page.layout()
-        visibility_index = layout.indexOf(self.panel._mask_overlay_controls.parentWidget())
-        separator_index = layout.indexOf(self.panel._mask_visibility_separator)
+        visibility_index = layout.indexOf(self.panel._mask_tab.overlay_controls.parentWidget())
+        separator_index = layout.indexOf(self.panel._mask_tab._separators[2])
         edit_index = layout.indexOf(picker_group)
-        stack_index = layout.indexOf(self.panel._mask_edit_stack)
+        stack_index = layout.indexOf(self.panel._mask_tab._edit_stack)
         self.assertLess(visibility_index, separator_index)
         self.assertLess(separator_index, edit_index)
         self.assertEqual(stack_index, edit_index + 1, "the stack sits immediately after the picker's own group")
@@ -925,14 +925,14 @@ class RewriteImagePanelTest(unittest.TestCase):
         """"put this icon [Clear] in solo section 'General' and put section
         the most left" (2026-10-02, maintainer request)."""
         page = self.panel._tool_ribbon._stack.widget(2)
-        general_group = self.panel._mask_clear_action.parentWidget()
+        general_group = self.panel._mask_tab._clear_action.parentWidget()
         self.assertIs(general_group.parentWidget(), page)
-        self.assertEqual(self.panel._mask_general_label.text(), "General")
+        self.assertEqual(self.panel._mask_tab._general_label.text(), "General")
 
         layout = page.layout()
         general_index = layout.indexOf(general_group)
-        separator_index = layout.indexOf(self.panel._mask_general_separator)
-        state_group = self.panel._mask_scope_toggle.parentWidget()
+        separator_index = layout.indexOf(self.panel._mask_tab._separators[0])
+        state_group = self.panel._mask_tab._scope_toggle.parentWidget()
         state_index = layout.indexOf(state_group)
         self.assertEqual(general_index, 0, "General must be the leftmost item in the whole Mask tab row")
         self.assertLess(general_index, separator_index)
@@ -943,20 +943,20 @@ class RewriteImagePanelTest(unittest.TestCase):
         placed after "Manual edit", same divider convention as every other
         group boundary in this tab."""
         page = self.panel._tool_ribbon._stack.widget(2)
-        png_group = self.panel._mask_png_actions.parentWidget()
+        png_group = self.panel._mask_tab._png_actions.parentWidget()
         self.assertIs(png_group.parentWidget(), page)
-        self.assertIs(self.panel._mask_edit_separator.parentWidget(), page)
-        self.assertEqual(self.panel._mask_png_label.text(), "PNG")
+        self.assertIs(self.panel._mask_tab._separators[3].parentWidget(), page)
+        self.assertEqual(self.panel._mask_tab._png_label.text(), "PNG")
 
         layout = page.layout()
-        stack_index = layout.indexOf(self.panel._mask_edit_stack)
-        separator_index = layout.indexOf(self.panel._mask_edit_separator)
+        stack_index = layout.indexOf(self.panel._mask_tab._edit_stack)
+        separator_index = layout.indexOf(self.panel._mask_tab._separators[3])
         png_index = layout.indexOf(png_group)
         self.assertLess(stack_index, separator_index)
         self.assertLess(separator_index, png_index)
 
     def test_png_group_order_is_load_then_save(self) -> None:
-        actions = self.panel._mask_png_actions
+        actions = self.panel._mask_tab._png_actions
         layout = actions.layout()
         self.assertLess(layout.indexOf(actions._load_button), layout.indexOf(actions._save_button))
 
@@ -975,14 +975,14 @@ class RewriteImagePanelTest(unittest.TestCase):
             "lspr_imaging_app.panels.image.mask_file_actions.QMessageBox.question",
             return_value=QtWidgets.QMessageBox.StandardButton.No,
         ):
-            self.panel._mask_clear_action._clear_button.click()
+            self.panel._mask_tab._clear_action._clear_button.click()
         self.assertIsNotNone(self.mask.resolve_mask_source((0, 500.0)), "declining the prompt must not clear anything")
 
         with patch(
             "lspr_imaging_app.panels.image.mask_file_actions.QMessageBox.question",
             return_value=QtWidgets.QMessageBox.StandardButton.Yes,
         ):
-            self.panel._mask_clear_action._clear_button.click()
+            self.panel._mask_tab._clear_action._clear_button.click()
         self.assertIsNone(self.mask.resolve_mask_source((0, 500.0)))
         self.assertIsNone(self.mask.resolve_mask_source((1, 500.0)))
 
@@ -1002,7 +1002,7 @@ class RewriteImagePanelTest(unittest.TestCase):
             "lspr_imaging_app.panels.image.mask_file_actions.QFileDialog.getSaveFileName",
             return_value=(str(destination), "PNG image (*.png)"),
         ):
-            self.panel._mask_png_actions._save_button.click()
+            self.panel._mask_tab._png_actions._save_button.click()
         self.assertTrue(destination.exists())
 
         self.mask.clear_all_masks()
@@ -1012,7 +1012,7 @@ class RewriteImagePanelTest(unittest.TestCase):
             "lspr_imaging_app.panels.image.mask_file_actions.QFileDialog.getOpenFileName",
             return_value=(str(destination), "Mask images (*.png *.bmp *.tif *.tiff)"),
         ):
-            self.panel._mask_png_actions._load_button.click()
+            self.panel._mask_tab._png_actions._load_button.click()
         _frame, resolved_mask, scope = self.mask.resolve_mask_source((0, 500.0))
         self.assertEqual(scope, "persistent")
         np.testing.assert_array_equal(resolved_mask, mask)
@@ -1021,16 +1021,16 @@ class RewriteImagePanelTest(unittest.TestCase):
         from lspr_imaging_app.image_tools import MaskEditTool
         from lspr_imaging_app.panels.image.mask_edit_panels import HistogramSelectionEditPanel
 
-        self.assertIs(self.panel._mask_edit_tool.tool(), MaskEditTool.HISTOGRAM_SELECTION)
-        self.assertIsInstance(self.panel._mask_edit_stack.currentWidget(), HistogramSelectionEditPanel)
+        self.assertIs(self.panel._mask_tab.edit_tool.tool(), MaskEditTool.HISTOGRAM_SELECTION)
+        self.assertIsInstance(self.panel._mask_tab._edit_stack.currentWidget(), HistogramSelectionEditPanel)
 
     def test_picking_a_tool_switches_the_edit_stack(self) -> None:
         from lspr_imaging_app.image_tools import MaskEditTool
         from lspr_imaging_app.panels.image.mask_edit_panels import MorphologyEditPanel
 
-        self.panel._mask_edit_picker._actions[MaskEditTool.MORPHOLOGY].trigger()
-        self.assertIsInstance(self.panel._mask_edit_stack.currentWidget(), MorphologyEditPanel)
-        self.assertIs(self.panel._mask_edit_stack.currentWidget(), self.panel._mask_edit_stack.widget(3))
+        self.panel._mask_tab._edit_picker._actions[MaskEditTool.MORPHOLOGY].trigger()
+        self.assertIsInstance(self.panel._mask_tab._edit_stack.currentWidget(), MorphologyEditPanel)
+        self.assertIs(self.panel._mask_tab._edit_stack.currentWidget(), self.panel._mask_tab._edit_stack.widget(3))
 
     def test_histogram_selection_edit_panel_adds_the_highlighted_patch_in_raw_space(self) -> None:
         """Same assertion shape as `test_lspri_rewrite_mask_highlight_
@@ -1039,7 +1039,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         exact same `HistogramHighlightMaskEditor` logic, not a copy."""
         self._load()
         self.highlight_range.set_range(3000.0, 5000.0)
-        panel = self.panel._mask_edit_stack.widget(0)
+        panel = self.panel._mask_tab._edit_stack.widget(0)
         panel._add_button.click()
 
         resolution = self.mask.resolve_mask_source((0, 500.0))
@@ -1061,7 +1061,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.mask.set_mask_change((0, 500.0), "persistent", base)
         _pump()
 
-        panel = self.panel._mask_edit_stack.widget(3)
+        panel = self.panel._mask_tab._edit_stack.widget(3)
         panel._radius_spin.setValue(1)
         panel._operation_buttons["erode"].click()
 
@@ -1092,7 +1092,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         regardless of its current enabled state."""
         from PyQt6.QtGui import QIcon
 
-        threshold_panel = self.panel._mask_edit_stack.widget(1)
+        threshold_panel = self.panel._mask_tab._edit_stack.widget(1)
         self.assertFalse(threshold_panel._add_button.isEnabled())
         icon = threshold_panel._add_button.icon()
         normal_image = icon.pixmap(44, 44, QIcon.Mode.Normal).toImage()
@@ -1102,29 +1102,29 @@ class RewriteImagePanelTest(unittest.TestCase):
     def test_threshold_and_local_contrast_add_subtract_are_disabled(self) -> None:
         """Settings-only for now - see mask_edit_panels.py's module
         docstring for why (needs a background worker, not built yet)."""
-        threshold_panel = self.panel._mask_edit_stack.widget(1)
-        local_contrast_panel = self.panel._mask_edit_stack.widget(2)
+        threshold_panel = self.panel._mask_tab._edit_stack.widget(1)
+        local_contrast_panel = self.panel._mask_tab._edit_stack.widget(2)
         for panel in (threshold_panel, local_contrast_panel):
             self.assertFalse(panel._add_button.isEnabled())
             self.assertFalse(panel._subtract_button.isEnabled())
 
     def test_threshold_edit_panel_spinbox_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_edit_stack.widget(1)
+        panel = self.panel._mask_tab._edit_stack.widget(1)
         panel._threshold_spin.setValue(12.5)
         self.assertAlmostEqual(self.mask.settings().relative_threshold_fraction, 0.125, places=4)
 
     def test_local_contrast_edit_panel_spinbox_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_edit_stack.widget(2)
+        panel = self.panel._mask_tab._edit_stack.widget(2)
         panel._z_spin.setValue(3.5)
         self.assertAlmostEqual(self.mask.settings().local_contrast_z_threshold, 3.5, places=4)
 
     def test_morphology_edit_panel_radius_spinbox_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_edit_stack.widget(3)
+        panel = self.panel._mask_tab._edit_stack.widget(3)
         panel._radius_spin.setValue(7)
         self.assertEqual(self.mask.settings().morphology_radius_px, 7)
 
     def test_draw_edit_panel_brush_size_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_edit_stack.widget(4)
+        panel = self.panel._mask_tab._edit_stack.widget(4)
         panel._size_spin.setValue(9)
         self.assertEqual(self.mask.settings().brush_size_px, 9)
 
@@ -1137,18 +1137,18 @@ class RewriteImagePanelTest(unittest.TestCase):
             HistogramHighlightOverlayControls,
         )
 
-        controls = self.panel._highlight_overlay_controls
+        controls = self.panel._view_tab.highlight_controls
         self.assertIsInstance(controls, HistogramHighlightOverlayControls)
         page = self.panel._tool_ribbon._stack.widget(0)
         self.assertIs(controls.parentWidget().parentWidget(), page)
-        label = self.panel._highlight_visibility_label
+        label = self.panel._view_tab._highlight_label
         self.assertEqual(label.text(), "Histogram")
         self.assertIs(label.parentWidget(), controls.parentWidget())
 
     def test_view_tab_mask_icons_mirror_the_mask_tab(self) -> None:
-        view_controls = self.panel._view_mask_overlay_controls
-        mask_controls = self.panel._mask_overlay_controls
-        self.assertEqual(self.panel._view_mask_label.text(), "Mask")
+        view_controls = self.panel._view_tab._mask_controls
+        mask_controls = self.panel._mask_tab.overlay_controls
+        self.assertEqual(self.panel._view_tab._mask_label.text(), "Mask")
         before = self.panel._mask_tint.visible
         view_controls._toggle_button.click()
         self.assertEqual(self.panel._mask_tint.visible, not before)
@@ -1179,10 +1179,10 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertTrue(self.panel._highlight_tint.item.isVisible())
 
-        self.panel._highlight_overlay_controls._toggle_button.click()
+        self.panel._view_tab.highlight_controls._toggle_button.click()
         self.assertFalse(self.panel._highlight_tint.item.isVisible())
 
-        self.panel._highlight_overlay_controls._toggle_button.click()
+        self.panel._view_tab.highlight_controls._toggle_button.click()
         self.assertTrue(self.panel._highlight_tint.item.isVisible())
 
     def test_histogram_highlight_overlay_hides_when_the_whole_image_falls_in_range(self) -> None:
@@ -1206,8 +1206,8 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         serial_before = self.panel._latest_serial
         new_color = QColor("#f472b6")
-        self.panel._highlight_overlay_controls.color_changed.emit(new_color)
-        self.panel._highlight_overlay_controls.alpha_changed.emit(0.3)
+        self.panel._view_tab.highlight_controls.color_changed.emit(new_color)
+        self.panel._view_tab.highlight_controls.alpha_changed.emit(0.3)
 
         self.assertEqual(self.panel._latest_serial, serial_before)
         overlay = self.panel._highlight_tint.item.image
