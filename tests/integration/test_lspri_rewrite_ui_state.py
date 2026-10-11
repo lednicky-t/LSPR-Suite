@@ -117,7 +117,7 @@ class WindowRestoreTests(unittest.TestCase):
         self.assertTrue(export._skip_excluded_check.isChecked())
         image = _panel(window, "Image", ImagePanel)
         self.assertIs(image._mask_scope.scope(), MaskScope.INDIVIDUAL)
-        self.assertIs(image._mask_edit_tool.tool(), MaskEditTool.MORPHOLOGY)
+        self.assertIs(image._mask_tab.edit_tool.tool(), MaskEditTool.MORPHOLOGY)
         self.assertTrue(image._cursor_overlay._enabled)
         self.assertTrue(_panel(window, "Histogram", HistogramPanel)._plot.cursor_overlay()._enabled)
 
@@ -129,7 +129,7 @@ class WindowRestoreTests(unittest.TestCase):
         )
         image = _panel(window, "Image", ImagePanel)
         self.assertIs(image._mask_scope.scope(), MaskScope.PERSISTENT)
-        self.assertIs(image._mask_edit_tool.tool(), MaskEditTool.HISTOGRAM_SELECTION)
+        self.assertIs(image._mask_tab.edit_tool.tool(), MaskEditTool.HISTOGRAM_SELECTION)
         self.assertEqual(window.findChildren(DatasetExportSection)[0]._chunk_spin.value(), 64)
 
     def test_changes_are_saved_after_a_pause(self) -> None:

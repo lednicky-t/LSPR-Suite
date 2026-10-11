@@ -649,8 +649,22 @@ class RewriteImagePanelTest(unittest.TestCase):
         number fields didn't line up on the right."""
         # Located by content rather than assuming child order.
         labels = {label.text(): label for label in self.panel.findChildren(QtWidgets.QLabel)}
-        self.assertEqual(labels["Cube"].width(), labels["λ (nm)"].width())
+        self.assertEqual(self.panel._cube_title.width(), labels["λ (nm)"].width())
         self.assertEqual(self.panel._cube_spin.width(), self.panel._wavelength_spin.width())
+
+    def test_cube_title_names_the_unit(self) -> None:
+        self._load()
+        self.assertEqual(self.panel._cube_title.text(), "Cube #")
+
+    def test_set_reference_tick_marks_the_reference_cube_and_wavelength(self) -> None:
+        self._load()
+        self.reference_frame.set_manual_frame(1, 600.0)
+        self.panel._cube_spin.setValue(0)
+        self.panel._wavelength_spin.setValue(500.0)
+        # Cube 0 is viewed, but the marked ticks are the reference's own: cube 1 -> index 1,
+        # and 600 nm in cube 0's wavelengths (500, 550, 600) -> index 2.
+        self.assertEqual(self.panel._cube_slider._reference_tick_index, 1)
+        self.assertEqual(self.panel._wavelength_slider._reference_tick_index, 2)
 
     def test_spin_boxes_are_narrow_and_sized_for_a_future_time_format(self) -> None:
         """Narrowed off "00:00:00" (2026-09-30, maintainer request), not the
@@ -688,15 +702,33 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_frame_status_reports_cube_and_wavelength_with_no_decimal(self) -> None:
         self._load()
-        self.assertEqual(self.panel._frame_status, "Cube 0, 500 nm")
+        # No acquisition metadata in this dataset: not linked to experiment data, shown as N/A.
+        self.assertEqual(self.panel._frame_status, "Cube 0, 500 nm | N/A")
 
     def test_frame_status_signal_fires_on_navigation(self) -> None:
         self._load()
         values: list[str] = []
-        self.panel.frame_status_changed.connect(values.append)
+        self.panel.frame_status_changed.connect(lambda text, _tooltip: values.append(text))
         self.panel._cube_spin.setValue(1)
         _pump()
-        self.assertIn("Cube 1, 500 nm", values)
+        self.assertIn("Cube 1, 500 nm | N/A", values)
+
+    def test_importing_metadata_refreshes_the_subtitle_without_a_frame_change(self) -> None:
+        """The imported metadata re-emits `dataset_loaded` for the same frame; the
+        subtitle's tooltip must switch from "not linked" to "no comment recorded".
+        Works today because `CubeDisplayModule` re-emits `mode_changed` on every
+        `dataset_loaded` and the panel re-describes its frame then."""
+        from lspr_core import ImagingAcquisitionMetadata, ImagingCubeTiming
+
+        self._load()
+        tooltips: list[str] = []
+        self.panel.frame_status_changed.connect(lambda _text, tooltip: tooltips.append(tooltip))
+        timing = ImagingCubeTiming(spectral_cube_index=0, wavelength_nm=500.0, acquired_at_unix_ms=1000)
+        self.dataset.set_acquisition_metadata(
+            ImagingAcquisitionMetadata(source_format="legacy_measuring_times_csv", image_timings=[timing])
+        )
+        self.assertTrue(tooltips)
+        self.assertIn("No comment was recorded", tooltips[-1])
 
     # -- top toolbar (2026-09-30, maintainer request - flipped from a
     # vertical strip on the canvas's left edge to a horizontal bar across
