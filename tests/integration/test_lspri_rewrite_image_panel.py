@@ -654,7 +654,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_cube_title_names_the_unit(self) -> None:
         self._load()
-        self.assertEqual(self.panel._cube_title.text(), "Cube #")
+        self.assertEqual(self.panel._cube_title.text(), "Cube (#)")
 
     def test_set_reference_tick_marks_the_reference_cube_and_wavelength(self) -> None:
         self._load()
@@ -666,17 +666,21 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(self.panel._cube_slider._reference_tick_index, 1)
         self.assertEqual(self.panel._wavelength_slider._reference_tick_index, 2)
 
-    def test_spin_boxes_are_narrow_and_sized_for_a_future_time_format(self) -> None:
-        """Narrowed off "00:00:00" (2026-09-30, maintainer request), not the
-        widgets' own `sizeHint()` - the cube field is meant to grow into an
-        HH:MM:SS elapsed-time display later, and a plain index needs far
-        less room than the old sizeHint-based width gave it."""
+    def test_spin_boxes_share_one_width_fitted_to_their_text(self) -> None:
+        """The borderless number fields (2026-10-11, maintainer request) are
+        sized to their current text - the longer of the two - so the sliders
+        get the rest, and both share one width so the sliders end together."""
         from PyQt6.QtGui import QFontMetrics
 
-        metrics = QFontMetrics(self.panel._cube_spin.font())
-        expected = metrics.horizontalAdvance("00:00:00") + 28
-        self.assertEqual(self.panel._cube_spin.width(), expected)
-        self.assertEqual(self.panel._wavelength_spin.width(), expected)
+        cube, wavelength = self.panel._cube_spin, self.panel._wavelength_spin
+        metrics = QFontMetrics(cube.font())
+        expected = max(
+            metrics.horizontalAdvance(cube.text()),
+            metrics.horizontalAdvance(wavelength.text()),
+            metrics.horizontalAdvance("0:00:00"),
+        ) + 6
+        self.assertEqual(cube.width(), expected)
+        self.assertEqual(wavelength.width(), expected)
 
     def test_canvas_is_above_the_navigation_bar(self) -> None:
         """Moved to the bottom of the panel (2026-09-30, maintainer

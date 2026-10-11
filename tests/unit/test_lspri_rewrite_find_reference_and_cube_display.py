@@ -187,7 +187,7 @@ class DatasetTimeAndCommentTest(unittest.TestCase):
         display.set_mode(MODE_TIME)
         self.assertFalse(display.time_available())
         self.assertEqual(display.label_for(1), "1")
-        self.assertEqual(display.axis_title(), "Cube #")
+        self.assertEqual(display.axis_title(), "Cube (#)")
 
     def test_cube_display_time_mode_labels_cubes_by_start_time(self) -> None:
         dataset = DatasetModule()
@@ -196,7 +196,7 @@ class DatasetTimeAndCommentTest(unittest.TestCase):
         self.assertEqual(display.label_for(1), "1")
         display.set_mode(MODE_TIME)
         self.assertEqual(display.label_for(1), "1:00")
-        self.assertEqual(display.axis_title(), "Cube time")
+        self.assertEqual(display.axis_title(), "Cube (t)")
 
 
 if __name__ == "__main__":
