@@ -30,6 +30,7 @@ try:
     from lspr_imaging_app.roi.palette import (
         GROUP_BASE_COLORS,
         first_free_tint_index,
+        gradient_tints,
         next_group_color,
         normalize_hex,
         tint_color,
@@ -299,7 +300,7 @@ class GroupTest(_ToolboxCase):
         group_id = self.toolbox.group_rois((1, 2, 3), "A")
         self.toolbox.set_roi_colors((2,), "#123456")  # a hand-picked colour
         self.toolbox.recolor_group(group_id, "#ff0000")
-        self.assertEqual([self.colors()[i] for i in (1, 2, 3)], [tint_color("#ff0000", i) for i in range(3)])
+        self.assertEqual([self.colors()[i] for i in (1, 2, 3)], gradient_tints("#ff0000", 3))
         self.assertEqual(self.toolbox.groups()[0].sample_color_hex, "#ff0000")
         undo_manager.undo()
         self.assertEqual(self.colors()[2], "#123456")

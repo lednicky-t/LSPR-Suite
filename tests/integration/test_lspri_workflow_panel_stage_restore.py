@@ -4,7 +4,7 @@ restores across a restart (2026-09-28) - `AppSettings.active_workflow_stage`
 `_persist` wiring.
 
 Before this, `panels/workflow/panel.py` hardcoded which of the 5 top-level
-stage sections (Dataset / Image tools / ROI editor / Analysis / Outputs)
+stage sections (Dataset / Image tools / Analysis / Outputs)
 started expanded - every launch always opened with Dataset open and
 everything else collapsed, with nothing recording which one the user had
 open when they last quit.

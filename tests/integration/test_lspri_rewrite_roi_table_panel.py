@@ -723,7 +723,7 @@ class CommandTest(_PanelCase):
         self.assertEqual(self.xs()[:3], [12.0, 22.0, 30.0])
         self.assertEqual([roi.center_y for roi in self.toolbox.rois()][:3], [4.0, 4.0, 5.0])
 
-    def test_group_menu_offers_group_actions_and_ungrouped_only_select(self) -> None:
+    def test_group_menu_offers_group_actions_and_ungrouped_only_expand_collapse(self) -> None:
         self.toolbox.group_rois((1, 2), "A")
         self.refresh()
         menu = QMenu()
@@ -732,24 +732,57 @@ class CommandTest(_PanelCase):
         self.assertIn("Rename…", labels)
         self.assertIn("Ungroup (keeps the ROIs)", labels)
         self.assertIn("Delete group and its ROIs", labels)
-        down = next(a for a in menu.actions() if a.text() == "Move group down")
+        self.assertNotIn("Select members", labels)  # a group's members are always selected with it
+        move = next(a for a in menu.actions() if a.text() == "Move group").menu()
+        down = next(a for a in move.actions() if a.text() == "Down")
         self.assertFalse(down.isEnabled(), "only one group")
         ungrouped = self.model.group_index(None)
         menu = QMenu()
         self.panel._fill_group_menu(menu, ungrouped)
-        self.assertEqual([a.text() for a in menu.actions() if a.text()], ["Select members"])
+        self.assertEqual([a.text() for a in menu.actions() if a.text()], ["Expand", "Collapse"])
 
     def test_the_roi_menu_disables_moves_when_not_sorted_by_number(self) -> None:
         self.selection.set_roi_selection({2})
         menu = QMenu()
         self.panel._fill_roi_menu(menu)
-        up = next(a for a in menu.actions() if a.text() == "Move up")
-        self.assertTrue(up.isEnabled())
+        move = next(a for a in menu.actions() if a.text() == "Move")
+        self.assertTrue(move.isEnabled())
+        self.assertEqual([a.text() for a in move.menu().actions()], ["To top", "Up", "Down", "To bottom"])
         self.panel._on_header_clicked(COLUMN_Y)
         menu = QMenu()
         self.panel._fill_roi_menu(menu)
-        up = next(a for a in menu.actions() if a.text() == "Move up")
-        self.assertFalse(up.isEnabled())
+        move = next(a for a in menu.actions() if a.text() == "Move")
+        self.assertFalse(move.isEnabled())
+
+    def test_sorting_by_label_orders_the_groups_and_keeps_collapsed_groups_collapsed(self) -> None:
+        self.toolbox.group_rois((1,), "B")
+        self.toolbox.group_rois((2,), "A")
+        self.refresh()
+        self.panel._tree.collapse(self.header("group_1"))
+        self.panel._on_header_clicked(COLUMN_NAME)
+        names = [self.model.data(h) for h in self.model.group_headers()]
+        self.assertEqual(names[:2], ["A", "B"])
+        self.assertFalse(self.panel._tree.isExpanded(self.model.group_index("group_1")))
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["B", "A"])  # the real order is untouched
+
+    def test_group_menu_expands_and_collapses_the_selected_groups(self) -> None:
+        self.toolbox.group_rois((1,), "A")
+        self.refresh()
+        header = self.header("group_1")
+        menu = QMenu()
+        self.panel._fill_group_menu(menu, header)
+        action = {a.text(): a for a in menu.actions()}
+        action["Collapse"].trigger()
+        self.assertFalse(self.panel._tree.isExpanded(self.header("group_1")))
+        action["Collapse"].trigger()  # already collapsed: stays so
+        self.assertFalse(self.panel._tree.isExpanded(self.header("group_1")))
+        action["Expand"].trigger()
+        self.assertTrue(self.panel._tree.isExpanded(self.header("group_1")))
+
+    def test_footer_counts_groups(self) -> None:
+        self.toolbox.group_rois((1,), "A")
+        self.refresh()
+        self.assertIn("1 group", self.panel._footer.text())
 
     def test_moving_a_group_up_and_down(self) -> None:
         self.toolbox.group_rois((1,), "A")
