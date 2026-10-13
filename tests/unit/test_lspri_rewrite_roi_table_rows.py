@@ -24,9 +24,20 @@ try:
     from lspr_imaging_app.panels.roi_table.rows import (
         COLUMN_ID,
         COLUMN_NAME,
+        COLUMN_RING_IN,
+        COLUMN_RING_OUT,
         COLUMN_SAMPLE,
+        COLUMN_SHAPE,
         COLUMN_X,
+        COLUMN_Y,
         PIXELS,
+        SHAPE_DISK,
+        SHAPE_MASK,
+        SHAPE_OTHER,
+        SHAPE_RING,
+        VIEW_GEOMETRY,
+        VIEW_MODE_COLUMNS,
+        VIEW_SIMPLE,
         build_roi_rows,
         build_sections,
         edit_text,
@@ -35,6 +46,7 @@ try:
         micrometers,
         movement_scope,
         parse_length,
+        shape_of,
         sort_rows,
         step_target_index,
         to_display,
@@ -205,3 +217,32 @@ class MovementTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShapeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.defaults = AreaRoiDetectionSettings()  # ring 28 / 36
+
+    def row(self, **kwargs):
+        (row,) = build_roi_rows([_roi(1, 12.5, **kwargs)], [], self.defaults)
+        return row
+
+    def test_the_two_stored_geometry_types_make_one_shape(self) -> None:
+        self.assertEqual(shape_of("circle", "annulus"), SHAPE_RING)
+        self.assertEqual(shape_of("circle", "none"), SHAPE_DISK)
+        self.assertEqual(shape_of("mask", "annulus"), SHAPE_MASK)
+        self.assertEqual(shape_of("mask", "none"), SHAPE_MASK)
+        self.assertEqual(shape_of("rectangle", "annulus"), SHAPE_OTHER, "a shape the app does not have yet")
+        self.assertEqual(shape_of("circle", "mask"), SHAPE_OTHER)
+
+    def test_a_row_carries_its_shape(self) -> None:
+        self.assertEqual(self.row().shape, SHAPE_RING)
+        self.assertEqual(self.row(reference_geometry_type="none").shape, SHAPE_DISK)
+
+    def test_each_view_mode_shows_the_id_column_and_the_modes_differ(self) -> None:
+        self.assertEqual(VIEW_MODE_COLUMNS[VIEW_SIMPLE], (COLUMN_ID, COLUMN_NAME))
+        self.assertEqual(VIEW_MODE_COLUMNS[VIEW_GEOMETRY], (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT))
+
+    def test_the_shape_column_sorts(self) -> None:
+        rows = build_roi_rows([_roi(1, 30.0), _roi(2, 10.0, reference_geometry_type="none"), _roi(3, 20.0)], [], self.defaults)
+        self.assertEqual([r.roi_id for r in sort_rows(rows, COLUMN_SHAPE, False)], [2, 1, 3], "disk before ring")

@@ -55,6 +55,8 @@ try:
     from lspr_imaging_app.panels.roi_table.rows import (
         COLUMN_ID,
         COLUMN_NAME,
+        COLUMN_COUNT,
+        COLUMN_SHAPE,
         COLUMN_RING_IN,
         COLUMN_RING_OUT,
         COLUMN_SAMPLE,
@@ -158,7 +160,7 @@ class AppearanceTest(_PanelCase):
         QTest.qWait(250)
         self.assertEqual(len(self.model.rows()), 6)
 
-    def test_flat_until_there_are_groups_then_headers_then_flat_on_request(self) -> None:
+    def test_flat_until_there_are_groups_then_headers(self) -> None:
         self.assertFalse(self.model.is_grouped_view())
         self.assertEqual(self.shown_ids(), [1, 2, 3, 4, 5])
         self.toolbox.group_rois((1, 2), "A")
@@ -166,9 +168,6 @@ class AppearanceTest(_PanelCase):
         self.assertTrue(self.model.is_grouped_view())
         self.assertEqual([self.model.data(h) for h in self.model.group_headers()], ["A", "Ungrouped"])
         self.assertEqual(self.shown_ids(), [1, 2, 3, 4, 5])
-        self.panel._flat_button.setChecked(True)
-        self.assertFalse(self.model.is_grouped_view())
-        self.assertEqual(self.model.group_headers(), [])
 
     def test_cells_show_the_values_and_mark_inherited_rings(self) -> None:
         self.assertEqual(self.text(1, COLUMN_ID), "1")
@@ -335,7 +334,7 @@ class UnitToggleTest(_PanelCase):
         self.panel.refresh_theme()
         ribbon_style = transparent_icon_button_stylesheet()
         self.assertEqual(self.panel._unit_toggle.styleSheet(), ribbon_style)
-        self.assertEqual(self.panel._flat_button.styleSheet(), ribbon_style, "the ribbon's icon-button style, not a private one")
+        self.assertEqual(self.panel._delete_button.styleSheet(), ribbon_style, "the ribbon's icon-button style, not a private one")
 
 
 class SelectionSyncTest(_PanelCase):
@@ -842,25 +841,34 @@ class CommandTest(_PanelCase):
 
 
 class RememberedStateTest(_PanelCase):
-    def test_flat_sort_and_widths_are_restored_and_saved(self) -> None:
+    def test_view_mode_sort_and_widths_are_restored_and_saved(self) -> None:
         store = UiStateStore({
-            "roi_table/flat": True,
+            "roi_table/view_mode": "geometry",
             "roi_table/sort": [COLUMN_X, True],
-            "roi_table/column_widths": [70, 90, 61, 62, 63, 64, 65],
+            "roi_table/column_widths": [70, 90, 61, 62, 63, 64, 65, 40],
         })
-        self.toolbox.group_rois((1, 2), "A")
         self.panel.restore_ui_state(store)
-        self.assertTrue(self.panel._flat_button.isChecked())
-        self.assertFalse(self.model.is_grouped_view())
+        self.assertEqual(self.panel._view_mode, "geometry")
         self.assertEqual(self.model.sort_state(), (COLUMN_X, True))
         self.assertEqual(self.tree.columnWidth(COLUMN_X), 61)
         self.assertEqual(self.tree.columnWidth(COLUMN_RING_OUT), 65)
-        self.panel._flat_button.setChecked(False)
-        self.assertIs(store.get("roi_table/flat"), False)
-        self.panel._on_header_clicked(COLUMN_Y)
-        self.assertEqual(store.get("roi_table/sort"), [COLUMN_Y, False])
-        self.tree.setColumnWidth(COLUMN_Y, 77)
-        self.assertEqual(store.get("roi_table/column_widths")[COLUMN_Y], 77)
+        self.panel._view_actions["simple"].trigger()
+        self.assertEqual(store.get("roi_table/view_mode"), "simple")
+        self.assertEqual(store.get("roi_table/sort"), [COLUMN_ID, False], "a sort by a hidden column goes back to #")
+        self.panel._on_header_clicked(COLUMN_NAME)
+        self.assertEqual(store.get("roi_table/sort"), [COLUMN_NAME, False])
+        self.tree.setColumnWidth(COLUMN_NAME, 77)
+        self.assertEqual(store.get("roi_table/column_widths")[COLUMN_NAME], 77)
+        self.assertEqual(store.get("roi_table/column_widths")[COLUMN_RING_OUT], 65, "a hidden column keeps its width")
+
+    def test_a_saved_sort_by_a_column_the_saved_mode_hides_is_ignored(self) -> None:
+        self.panel.restore_ui_state(UiStateStore({"roi_table/view_mode": "simple", "roi_table/sort": [COLUMN_X, True]}))
+        self.assertEqual(self.model.sort_state(), (COLUMN_ID, False))
+
+    def test_widths_saved_before_the_geometry_columns_existed_are_still_read(self) -> None:
+        self.panel.restore_ui_state(UiStateStore({"roi_table/column_widths": [70, 90, 61, 62, 63, 64, 65]}))
+        self.assertEqual(self.tree.columnWidth(COLUMN_ID), max(70, suggested_column_widths(self.tree.fontMetrics())[COLUMN_ID]))
+        self.assertGreater(self.tree.columnWidth(COLUMN_SHAPE), 0)
 
     def test_collapsed_groups_are_restored_and_saved(self) -> None:
         self.toolbox.group_rois((1, 2), "A")
@@ -943,7 +951,6 @@ class LayoutAndPaintTest(_PanelCase):
             buttons = {
                 "group": self.panel._group_button, "ungroup": self.panel._ungroup_button, "color": self.panel._color_button,
                 "up": self.panel._up_button, "down": self.panel._down_button, "delete": self.panel._delete_button,
-                "flat": self.panel._flat_button,
             }
             _APP.processEvents()
             for name, button in buttons.items():
@@ -966,7 +973,7 @@ class LayoutAndPaintTest(_PanelCase):
             _APP.setStyle(saved[2])
 
     def test_the_toolbar_buttons_get_icons_and_follow_the_theme(self) -> None:
-        for button in (self.panel._group_button, self.panel._delete_button, self.panel._flat_button):
+        for button in (self.panel._group_button, self.panel._delete_button):
             self.assertFalse(button.icon().isNull())
         set_active_theme(LSPRI_BRIGHT_THEME)
         self.panel.refresh_theme()
@@ -1132,3 +1139,98 @@ class DragAndDropTest(_PanelCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ViewModeTest(_PanelCase):
+    """The view-mode button and the shape-aware cells."""
+
+    def shown(self, column: int) -> bool:
+        return not self.tree.isColumnHidden(column)
+
+    def shown_left_to_right(self) -> list[int]:
+        return sorted((c for c in range(COLUMN_COUNT) if self.shown(c)), key=self.tree.header().visualIndex)
+
+    def show_panel(self) -> None:
+        self.panel.resize(700, 300)
+        self.panel.show()
+        _APP.processEvents()
+        self.addCleanup(self.panel.hide)
+
+    def test_geometry_is_the_default_and_simple_shows_only_id_and_label(self) -> None:
+        geometry = [COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT]
+        self.assertEqual(self.shown_left_to_right(), geometry)
+        self.panel._view_actions["simple"].trigger()
+        self.assertEqual(self.shown_left_to_right(), [COLUMN_ID, COLUMN_NAME])
+        self.panel._view_actions["geometry"].trigger()
+        self.assertEqual(self.shown_left_to_right(), geometry)
+
+    def test_a_right_click_on_the_headers_opens_the_view_menu(self) -> None:
+        from unittest import mock
+
+        header = self.tree.header()
+        self.assertEqual(header.contextMenuPolicy(), Qt.ContextMenuPolicy.CustomContextMenu)
+        with mock.patch.object(self.panel._view_menu, "exec") as opened:
+            header.customContextMenuRequested.emit(header.rect().center())
+        opened.assert_called_once()
+
+    def test_the_unit_toggle_is_only_shown_with_the_geometry_columns(self) -> None:
+        self.show_panel()
+        self.assertTrue(self.panel._unit_toggle.isVisible())
+        self.panel._view_actions["simple"].trigger()
+        self.assertFalse(self.panel._unit_toggle.isVisible())
+        self.panel._view_actions["geometry"].trigger()
+        self.assertTrue(self.panel._unit_toggle.isVisible())
+
+    def test_the_view_menu_has_two_exclusive_choices(self) -> None:
+        actions = self.panel._view_menu.actions()
+        self.assertEqual([a.isChecked() for a in actions], [False, True])
+        actions[0].trigger()
+        self.assertEqual([a.isChecked() for a in actions], [True, False])
+        self.assertEqual(self.panel._view_mode, "simple")
+
+    def test_switching_to_a_mode_that_hides_the_sorted_column_goes_back_to_number_order(self) -> None:
+        self.panel._on_header_clicked(COLUMN_X)
+        self.assertEqual(self.model.sort_state(), (COLUMN_X, False))
+        self.panel._view_actions["simple"].trigger()
+        self.assertEqual(self.model.sort_state(), (COLUMN_ID, False))
+
+    def test_the_shape_column_shows_the_shape_and_is_not_editable(self) -> None:
+        self.toolbox.roi_by_id(1).reference_geometry_type = "none"
+        self.refresh()
+        self.assertEqual(self.text(1, COLUMN_SHAPE), "Circle, no reference")
+        self.assertEqual(self.text(2, COLUMN_SHAPE), "Circle with reference ring")
+        self.assertFalse(self.model.flags(self.cell(1, COLUMN_SHAPE)) & Qt.ItemFlag.ItemIsEditable)
+        self.assertIn("D = outer", self.model.headerData(COLUMN_SHAPE, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole))
+
+    def test_a_disk_has_no_ring_cells_and_a_mask_no_diameter_cells(self) -> None:
+        self.toolbox.roi_by_id(1).reference_geometry_type = "none"
+        self.toolbox.roi_by_id(2).sample_geometry_type = "mask"
+        self.refresh()
+        editable = Qt.ItemFlag.ItemIsEditable
+        self.assertEqual([self.text(1, c) for c in (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT)], ["6.0", "", ""])
+        self.assertTrue(self.model.flags(self.cell(1, COLUMN_SAMPLE)) & editable)
+        self.assertFalse(self.model.flags(self.cell(1, COLUMN_RING_IN)) & editable)
+        self.assertEqual(self.text(2, COLUMN_SAMPLE), "mask")
+        self.assertFalse(self.model.flags(self.cell(2, COLUMN_SAMPLE)) & editable)
+        self.assertTrue(self.model.flags(self.cell(2, COLUMN_X)) & editable, "a mask ROI still has a position")
+
+    def test_setting_a_ring_diameter_skips_a_disk(self) -> None:
+        self.toolbox.roi_by_id(1).reference_geometry_type = "none"
+        self.refresh()
+        self.panel._set_numeric_cells([1, 2], COLUMN_RING_OUT, "40")
+        self.assertIsNone(self.toolbox.roi_by_id(1).reference_outer_diameter_px)
+        self.assertEqual(self.toolbox.roi_by_id(2).reference_outer_diameter_px, 40.0)
+        self.panel._set_numeric_cells([1], COLUMN_RING_OUT, "41")
+        self.assertIn("no such diameter", self.footer())
+
+    def test_painting_every_view_does_not_raise(self) -> None:
+        self.toolbox.group_rois((1, 2), "A")
+        self.toolbox.roi_by_id(3).reference_geometry_type = "none"
+        self.toolbox.roi_by_id(4).sample_geometry_type = "mask"
+        self.toolbox.roi_by_id(5).sample_geometry_type = "rectangle"
+        self.refresh()
+        self.show_panel()
+        for mode in ("geometry", "simple", "geometry"):
+            self.panel._view_actions[mode].trigger()
+            _APP.processEvents()
+            self.assertFalse(self.tree.viewport().grab().isNull())

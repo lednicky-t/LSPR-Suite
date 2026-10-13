@@ -70,6 +70,13 @@ class PaletteTest(unittest.TestCase):
         self.assertEqual(first_free_tint_index(base, []), 0)
         self.assertEqual(first_free_tint_index(base, [None, ""]), 0)
 
+    def test_at_least_seventeen_groups_get_different_colours(self) -> None:
+        self.assertGreaterEqual(len(set(GROUP_BASE_COLORS)), 17)
+        used: list[str] = []
+        for _ in range(17):
+            used.append(next_group_color(used))
+        self.assertEqual(len(set(used)), 17)
+
     def test_next_group_color_skips_used_colours_and_cycles(self) -> None:
         self.assertEqual(next_group_color([]), GROUP_BASE_COLORS[0])
         self.assertEqual(next_group_color([GROUP_BASE_COLORS[0].upper()]), GROUP_BASE_COLORS[1])
