@@ -354,7 +354,7 @@ class ChromaticTabTest(unittest.TestCase):
         self.reference_frame.set_manual_frame(0, 0.0)
         self.tab.run_button().click()
         self.assertFalse(self.panel._chromatic_auto.is_running())
-        self.assertIn("dark frame", self.tab.status_text())
+        self.assertIn("dark background", self.tab.status_text())
 
     def test_cancel_stops_the_run_and_changes_nothing(self) -> None:
         self._load()

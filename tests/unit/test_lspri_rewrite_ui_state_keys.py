@@ -133,7 +133,7 @@ class KeyTableTest(unittest.TestCase):
 class HandWiredKeysTest(unittest.TestCase):
     def test_every_key_name_in_the_table_is_unique(self) -> None:
         names = [k.key for k in keys.ALL_KEYS] + [k.key for k in keys.HAND_WIRED_KEYS]
-        names += [keys.IMAGE_VIEW_RANGE, keys.HIGHLIGHT_RANGE, keys.REFERENCE_FRAME,
+        names += [keys.IMAGE_VIEW_RANGE, keys.HIGHLIGHT_RANGE,
                   keys.ROI_TABLE_SORT, keys.ROI_TABLE_COLLAPSED, keys.ROI_TABLE_COLUMN_WIDTHS]
         self.assertEqual(len(names), len(set(names)), sorted(n for n in names if names.count(n) > 1))
         for name in names:
