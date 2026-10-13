@@ -103,6 +103,7 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         )
         self.panel = HistogramPanel(
             self.image_panel, self.geometry, self.mask, self.chromatic, self.roi_toolbox, self.highlight_range,
+            selection=self.selection,
         )
         # Real auto-ranging only happens once pyqtgraph actually paints the
         # widget - an earlier manual check missed this (resize() alone was
@@ -184,6 +185,63 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         _, after = self.panel._plot._sample_curve.getData()
         self.assertGreater(float(np.sum(after)), 0.0)
 
+    def test_legend_right_click_opens_style_menu_and_applies_style(self) -> None:
+        from unittest import mock
+
+        from PyQt6.QtCore import QPointF, Qt
+
+        from lspr_imaging_app.panels.histogram import plot as plot_module
+        from lspr_imaging_app.panels.histogram.curve_style_menu import CurveStyleEditor
+
+        plot = self.panel._plot
+        seen = []
+        plot.curve_styles_changed.connect(seen.append)
+        event = mock.Mock()
+        event.button.return_value = Qt.MouseButton.RightButton
+        event.screenPos.return_value = QPointF(5, 5)
+        sample, _label = plot._legend.items[1]  # "Sample ROI"
+        with mock.patch.object(plot_module, "show_curve_style_menu") as menu:
+            sample.mouseClickEvent(event)
+        menu.assert_called_once()
+        on_changed = menu.call_args.args[-1]
+        on_changed({"color": "#112233", "width": 3.5, "line": "dot", "fill": True, "alpha": 50})
+        pen = plot._sample_curve.opts["pen"]
+        self.assertEqual(pen.color().name(), "#112233")
+        self.assertEqual(pen.widthF(), 3.5)
+        self.assertEqual(pen.style(), Qt.PenStyle.DotLine)
+        self.assertEqual(plot._sample_curve.opts["fillLevel"], 0.0)
+        self.assertEqual(seen[-1]["sample"]["line"], "dot")
+        self.assertNotIn("reference", seen[-1])
+        on_changed({})  # Reset
+        self.assertIsNone(plot._sample_curve.opts["fillLevel"])
+        # Saved styles come back; unknown keys are ignored.
+        plot.set_curve_styles({"reference": {"width": 2.0}, "bogus": {"width": 9}})
+        self.assertEqual(plot.curve_styles(), {"reference": {"width": 2.0}})
+
+        editor = CurveStyleEditor({}, "#ffffff", 1.5, "solid")
+        got = []
+        editor.changed.connect(got.append)
+        editor._width_buttons[2.0].click()
+        editor._line_buttons["dash"].click()
+        editor._fill.click()
+        self.assertEqual(got[-1], {"width": 2.0, "line": "dash", "fill": True, "alpha": 30})
+
+    def test_selected_roi_curves_are_scaled_to_the_all_pixels_peak(self) -> None:
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.add_roi(20.0, 20.0, sample_diameter_px=10.0)
+        _pump()
+        plot = self.panel._plot
+        self.assertEqual(float(np.sum(plot._selected_sample_curve.getData()[1])), 0.0)
+        self.selection.set_roi_selection({roi_id})
+        _pump()
+        all_peak = float(np.max(plot._all_pixels_curve.getData()[1]))
+        sample = plot._selected_sample_curve.getData()[1]
+        self.assertAlmostEqual(float(np.max(sample)), all_peak, places=6)
+        self.selection.set_roi_selection(set())
+        _pump()
+        self.assertEqual(float(np.sum(plot._selected_sample_curve.getData()[1])), 0.0)
+
     def test_selecting_a_roi_does_not_rebuild_the_roi_masks(self) -> None:
         """Selecting re-renders the image (so the Histogram redraws) but changes
         no ROI: the masks must come from the cache (0.9 s per rebuild at 1000
@@ -201,7 +259,8 @@ class RewriteHistogramPanelTest(unittest.TestCase):
             _pump()
             self.selection.set_roi_selection(set())
             _pump()
-            self.assertEqual(union.call_count, 0)
+            # Only the one-ROI selection subset is built; the full 2-ROI union stays cached.
+            self.assertTrue(all(len(call.args[0]) == 1 for call in union.call_args_list))
             self.roi_toolbox.move_roi(roi_id, 41.0, 30.0)  # a real change does rebuild
             _pump()
             self.assertGreaterEqual(union.call_count, 1)
