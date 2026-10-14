@@ -1495,6 +1495,112 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(self.panel._latest_serial, serial_before)
         self.assertTrue(self.panel._highlight_tint.item.isVisible())
 
+    def test_play_config_fields_describe_what_is_switched_on(self) -> None:
+        """The `c_*` tags the Play log records carry (`playback.window` / `playback.summary`): a log of a Play
+        run says which overlays each second was drawn with."""
+        self._load()
+        fields = self.panel._play_config_fields()
+        self.assertEqual(
+            set(fields),
+            {
+                "c_target_fps", "c_speed", "c_rois", "c_sample", "c_reference", "c_labels", "c_group_labels",
+                "c_landmarks", "c_mask", "c_highlight", "c_background", "c_bg_estimate", "c_thin", "c_calm",
+                "c_ov_hits", "c_ov_misses", "c_ov_states", "c_ov_mb",
+            },
+        )
+        self.assertFalse(fields["c_background"])
+        self.assertFalse(fields["c_labels"])
+        self.assertFalse(fields["c_mask"])
+        self.assertGreater(fields["c_target_fps"], 0.0)
+        self.panel._roi_overlay.labels_visible = True
+        self.panel._roi_overlay.reference.visible = False
+        changed = self.panel._play_config_fields()
+        self.assertTrue(changed["c_labels"])
+        self.assertFalse(changed["c_reference"])
+        self.highlight_range.set_range(3000.0, 5000.0)
+        self.assertTrue(self.panel._play_config_fields()["c_highlight"])
+
+    # -- overlay layer cache (overlay_cache.py): the same wavelength shows the same overlay in every cube ---------------
+
+    def _step_overlay(self, cube: int, wavelength: float) -> None:
+        """What the slideshow does per frame for the overlay: select the frame, run the per-frame redraw, paint once."""
+        self.selection.set_cube(cube)
+        self.selection.set_wavelength(wavelength)
+        self.panel._draw_roi_overlay(only_if_changed=True)
+        self.panel._view.grab()  # a paint: this is where a picture is made and kept
+
+    def _chromatic_shifts(self):
+        """`affine_for` patched to a different shift per wavelength (like a chromatic correction)."""
+        shifts = {w: np.array([[1.0, 0.0, 1.5 * index], [0.0, 1.0, -index]]) for index, w in enumerate((500.0, 550.0, 600.0))}
+        return patch.object(self.chromatic, "affine_for", side_effect=lambda frame: shifts[frame[1]])
+
+    def test_the_overlay_is_drawn_once_per_wavelength_and_reused_for_every_cube(self) -> None:
+        self._load()
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        wavelengths = (500.0, 550.0, 600.0)
+        shifts = {w: np.array([[1.0, 0.0, 1.5 * index], [0.0, 1.0, -index]]) for index, w in enumerate(wavelengths)}
+        layers = self.panel._roi_overlay.layers
+        with patch.object(self.chromatic, "affine_for", side_effect=lambda frame: shifts[frame[1]]):
+            with patch.object(self.panel._roi_overlay, "draw", wraps=self.panel._roi_overlay.draw) as draw:
+                for _lap in range(2):  # the first lap(s) make the pictures
+                    for wavelength in wavelengths:
+                        self._step_overlay(0, wavelength)
+                made = draw.call_count
+                self.assertGreaterEqual(made, 3)
+                self.assertLessEqual(made, 6)
+                self.assertEqual(layers.cached_states, 3)
+                for wavelength in wavelengths:  # another cube, the same wavelengths: no re-draw at all
+                    self._step_overlay(1, wavelength) if wavelength != 550.0 else self._step_overlay(0, wavelength)
+                self.assertEqual(draw.call_count, made, "a cached overlay state was drawn again")
+        self.assertGreater(layers.hits, 0)
+
+    def test_a_roi_timeline_does_not_make_every_cube_a_new_overlay_state(self) -> None:
+        """testing12: three ROIs with ONE persistent change (cube 79 of 314) made the overlay cache treat every cube as a
+        different state (the cube number was in the key whenever any timeline existed): 0 hits, memory full of useless pictures."""
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.roi_toolbox.move_roi(roi_id, 44.0, 33.0, cube=0, scope="persistent")  # a timeline exists, with one change
+        self.assertTrue(self.roi_toolbox.has_timeline())
+        self.assertEqual(self.roi_toolbox.geometry_segment(0), self.roi_toolbox.geometry_segment(1))
+        layers = self.panel._roi_overlay.layers
+        with self._chromatic_shifts():
+            with patch.object(self.panel._roi_overlay, "draw", wraps=self.panel._roi_overlay.draw) as draw:
+                for _lap in range(2):
+                    for wavelength in (500.0, 550.0, 600.0):
+                        self._step_overlay(0, wavelength)
+                made = draw.call_count
+                for wavelength in (500.0, 600.0):  # cube 1 has no 550 nm: the same overlay states, another cube
+                    self._step_overlay(1, wavelength)
+                self.assertEqual(draw.call_count, made, "the overlay was drawn again for another cube of the same geometry")
+        self.assertGreater(layers.hits, 0)
+        self.assertEqual(layers.cached_states, 3)
+
+    def test_editing_a_roi_drops_the_cached_overlay(self) -> None:
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        layers = self.panel._roi_overlay.layers
+        with self._chromatic_shifts():
+            for _lap in range(2):
+                for wavelength in (500.0, 550.0, 600.0):
+                    self._step_overlay(0, wavelength)
+            self.assertGreater(layers.cached_states, 0)
+            self.roi_toolbox.set_roi_colors((roi_id,), "#112233")  # a ROI edit bumps the revision: a new epoch
+            self._step_overlay(0, 500.0)
+            self.assertEqual(layers.cached_states, 0)
+            self.assertIn("#112233", self.panel._roi_overlay.sample_circles.colors())
+
+    def test_a_forced_redraw_starts_the_cache_afresh(self) -> None:
+        self._load()
+        self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        layers = self.panel._roi_overlay.layers
+        with self._chromatic_shifts():
+            for _lap in range(2):
+                for wavelength in (500.0, 550.0, 600.0):
+                    self._step_overlay(0, wavelength)
+            self.assertGreater(layers.cached_states, 0)
+            self.panel._draw_roi_overlay()  # what a style / label / group-label change calls
+            self.assertEqual(layers.cached_states, 0)
+
     def test_tool_info_and_cursor_icon_match_the_bars_other_icons(self) -> None:
         """"make cursor and i icon same as other icons in the bar" (maintainer
         request). The "i" icon still shares `style_bar_icon_button`'s look with

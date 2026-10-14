@@ -14,8 +14,9 @@ No Qt application, no files.
 2. `TestResolvedMaskCache`: `resolve_external_mask` hands back the same
    read-only object for the same inputs and recomputes when any input changes.
 3. `TestPrefetchOrder` / `TestRendererPrefetch`: read-ahead order, and that
-   the render thread reads planes only after the quiet period and drops a
-   replaced list.
+   the reader reads planes only after the quiet period and drops a
+   replaced list (one reader thread here; several, and the render thread
+   not waiting behind them: `test_lspri_rewrite_renderer_readers.py`).
 """
 
 from __future__ import annotations
@@ -186,7 +187,7 @@ class TestRendererPrefetch(unittest.TestCase):
                 raise KeyError("missing plane")
             return np.zeros((4, 4), np.float32)
 
-        self.renderer = ImageRenderer(load_plane)
+        self.renderer = ImageRenderer(load_plane, readers=1)  # one reader: the order of reads is what these pin
         self.renderer.PREFETCH_QUIET_SECONDS = 0.15
 
     def tearDown(self) -> None:

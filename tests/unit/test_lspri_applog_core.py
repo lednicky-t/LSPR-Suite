@@ -309,6 +309,64 @@ class FilePipelineTest(unittest.TestCase):
         self.assertIs(threading.excepthook, before_thread_hook)
 
 
+class ConsoleOnListenerThreadTest(unittest.TestCase):
+    """The console stream is written by the file pipeline's listener thread: the thread that logs only queues the record
+    (testing12 profile: `StreamHandler.emit` was 8 % of the GUI thread while Play ran with the console on Debug)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.dir = Path(self._tmp.name)
+        self._old_level = logging.getLogger().level
+        applog_setup._system = None
+
+    def tearDown(self) -> None:
+        system = applog.current()
+        if system is not None:
+            system.shutdown()
+        logging.getLogger().setLevel(self._old_level)
+        applog_setup._system = None
+        self._tmp.cleanup()
+
+    def _configure(self, environ: dict[str, str]):
+        import os
+        from unittest import mock
+
+        writers: list[str] = []
+
+        class _Recording(io.StringIO):
+            def write(self, text: str) -> int:
+                writers.append(threading.current_thread().name)
+                return super().write(text)
+
+        stream = _Recording()
+        with mock.patch.object(sys, "stderr", stream), mock.patch.dict(os.environ, environ):
+            for name in ("LSPR_CONSOLE_LOG", "LSPR_CONSOLE_LOG_LEVEL"):
+                if name not in environ:
+                    os.environ.pop(name, None)
+            system = applog.configure_logging(self.dir, install_hooks=False)
+        return system, stream, writers
+
+    def test_debug_console_is_written_by_the_listener_not_by_the_logging_thread(self) -> None:
+        system, stream, writers = self._configure({"LSPR_CONSOLE_LOG": "1"})
+        logging.getLogger(TEST_LOGGER).debug("hello console")
+        system.shutdown()  # drains the queue
+        self.assertIn("hello console", stream.getvalue())
+        self.assertNotIn(threading.current_thread().name, writers)
+        stream_handlers = [h for h in logging.getLogger().handlers if type(h) is logging.StreamHandler]
+        self.assertEqual(stream_handlers, [], "the stream must not be attached to the root logger")
+
+    def test_the_console_level_is_still_respected(self) -> None:
+        system, stream, _writers = self._configure({"LSPR_CONSOLE_LOG_LEVEL": "WARNING"})
+        log = logging.getLogger(TEST_LOGGER)
+        log.debug("quiet debug")
+        log.warning("loud warning")
+        system.shutdown()
+        self.assertIn("loud warning", stream.getvalue())
+        self.assertNotIn("quiet debug", stream.getvalue())
+        records = [json.loads(line) for line in system.log_path.read_text(encoding="utf-8").splitlines()[1:]]
+        self.assertIn("quiet debug", [r["msg"] for r in records], "the file still gets everything")
+
+
 class CommandLineTest(unittest.TestCase):
     def test_summary_and_grep_read_a_saved_file(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:

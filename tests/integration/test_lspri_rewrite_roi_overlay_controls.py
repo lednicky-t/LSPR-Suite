@@ -159,8 +159,13 @@ class RoiOverlayControlsTest(unittest.TestCase):
         self.sample._toggle_button.click()
         self.roi_toolbox.set_roi_colors((1,), "#112233")  # a colour not drawn before
         _pump(0.3)
-        self.assertIn("#112233", self.panel._roi_overlay.sample_circles.colors())
         self.assertFalse(self.panel._roi_overlay.sample_circles.isVisible())
+        # (Since 2026-10-14 a hidden part is not computed at all - testing10: ~7 ms per frame for nothing - so the
+        # colour is not in the item yet; showing the circles again draws them, with the new colour.)
+        self.sample._toggle_button.click()
+        _pump(0.3)
+        self.assertTrue(self.panel._roi_overlay.sample_circles.isVisible())
+        self.assertIn("#112233", self.panel._roi_overlay.sample_circles.colors())
 
     def test_the_sample_colour_is_the_colour_of_rois_with_none_of_their_own(self) -> None:
         self.two_rois()

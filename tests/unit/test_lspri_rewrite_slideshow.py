@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 from PyQt6 import QtWidgets
 
@@ -116,6 +118,40 @@ class MeanIntervalTest(unittest.TestCase):
     def test_none_without_two_timed_images_in_a_cube(self) -> None:
         self.assertIsNone(mean_frame_interval_seconds({}))
         self.assertIsNone(mean_frame_interval_seconds({(0, 500.0): 0, (1, 500.0): 5000}))
+
+
+class DatasetIntervalCacheTest(unittest.TestCase):
+    """`DatasetModule.mean_frame_interval_seconds` is asked on every slideshow step (to re-arm the timer): it must scan the
+    frame timings once per dataset (testing10: 4 % of the GUI thread while playing), and notice another dataset."""
+
+    def test_computed_once_per_dataset_and_noticed_when_it_changes(self) -> None:
+        from lspr_imaging_app.dataset import DatasetModule
+        from lspr_imaging_app.dataset import module as dataset_module
+
+        module = DatasetModule()
+        stub = SimpleNamespace(acquisition_metadata=object(), records=[1, 2, 3])
+        module._dataset = stub
+        timings = SimpleNamespace(per_frame_ms={(0, 500.0): 0, (0, 550.0): 300, (0, 600.0): 700})
+        calls: list[int] = []
+
+        def compact(_dataset):
+            calls.append(1)
+            return timings
+
+        with mock.patch.object(dataset_module, "compact_dataset_image_timings", side_effect=compact):
+            first = module.mean_frame_interval_seconds()
+            for _ in range(5):
+                self.assertEqual(module.mean_frame_interval_seconds(), first)
+            self.assertEqual(len(calls), 1)
+            stub.records.append(4)  # a grown record list is noticed
+            module.mean_frame_interval_seconds()
+            self.assertEqual(len(calls), 2)
+            module._dataset = SimpleNamespace(acquisition_metadata=object(), records=[1, 2, 3, 4])  # another dataset
+            module.mean_frame_interval_seconds()
+            self.assertEqual(len(calls), 3)
+            module.clear_dataset()
+            self.assertIsNone(module.mean_frame_interval_seconds())
+        self.assertAlmostEqual(first, 0.35)  # gaps of 300 and 400 ms inside the cube: 350 ms on average
 
 
 class DatasetIndexTest(unittest.TestCase):
@@ -228,6 +264,37 @@ class PlaybackStatsTest(unittest.TestCase):
         )
         summary = stats.summary(now=2.0)
         self.assertIn("100 thread + 50 deliver, 100% behind a read-ahead", summary)
+
+    def test_gui_thread_cpu_share_says_busy_or_waiting(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.0, target_interval_s=0.05)
+        stats.note_gui_clock(wall=1.00, cpu=10.00)  # the first call only sets the reference point
+        for index in range(1, 5):  # 50 ms of wall per frame, 30 ms of it the GUI thread's own CPU time
+            stats.note_gui_clock(wall=1.00 + 0.05 * index, cpu=10.00 + 0.03 * index)
+        fields = stats.total_fields()
+        self.assertAlmostEqual(fields["gui_cpu_ms"], 30.0, places=1)
+        self.assertEqual(fields["gui_busy_pct"], 60.0)
+
+    def test_gui_kernel_time_is_reported_apart_from_the_total(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.0, target_interval_s=0.05)
+        stats.note_gui_clock(wall=1.00, cpu=10.00, kernel=2.00)
+        for index in range(1, 5):  # 30 ms CPU per frame, 12 ms of it kernel time
+            stats.note_gui_clock(wall=1.00 + 0.05 * index, cpu=10.00 + 0.03 * index, kernel=2.00 + 0.012 * index)
+        fields = stats.total_fields()
+        self.assertAlmostEqual(fields["gui_kernel_ms"], 12.0, places=1)
+        self.assertAlmostEqual(fields["gui_cpu_ms"], 30.0, places=1)
+
+    def test_gui_clock_is_silent_when_inactive_and_starts_afresh_with_each_run(self) -> None:
+        stats = PlaybackStats()
+        stats.note_gui_clock(1.0, 1.0)  # not started: ignored
+        stats.start(0.0, target_interval_s=0.05)
+        stats.note_gui_clock(5.0, 5.0)  # a first call after start() is only a reference point
+        self.assertEqual(stats.total_fields()["gui_busy_pct"], 0.0)
+        stats.stop()
+        stats.start(10.0, target_interval_s=0.05)
+        stats.note_gui_clock(20.0, 2.0)  # must not be measured against the previous run's last call
+        self.assertEqual(stats.total_fields()["gui_busy_pct"], 0.0)
 
     def test_steps_before_a_redraw_are_merged(self) -> None:
         stats = PlaybackStats()
