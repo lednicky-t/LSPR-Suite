@@ -192,17 +192,17 @@ class GroupLabelPlacementTest(_PanelCase):
         copy.placement.button("left").click()
         copy.show_button.click()
         copy.box.setValue(55)
-        copy.direction.setCurrentIndex(copy.direction.findData("diagonal"))
+        copy.angle.rotate_button().click()  # 45 degrees
         store.flush()
         settings = self.panel._roi_overlay.group_labels
-        self.assertEqual((settings.side, settings.visible, settings.box_percent, settings.direction), ("left", True, 55.0, "diagonal"))
+        self.assertEqual((settings.side, settings.visible, settings.box_percent, settings.angle), ("left", True, 55.0, 45))
         original = self.roi_tab.group_label_menu
         self.assertEqual(original.settings(), settings)
         self.assertEqual((saved["image/group_labels/side"], saved["image/group_labels/visible"]), ("left", True))
 
     def test_the_copy_follows_every_control_of_the_original(self) -> None:
         original, copy = self.roi_tab.group_label_menu, self.view_tab._group_label_menu
-        original.position.setCurrentIndex(original.position.findData("last"))
+        original.position.button("last").click()
         original.min_size.setValue(9)
         original.show_button.click()
         self.assertEqual(copy.settings(), original.settings())

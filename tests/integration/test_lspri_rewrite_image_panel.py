@@ -947,7 +947,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         timings = [
             ImagingCubeTiming(spectral_cube_index=cube, wavelength_nm=wavelength, acquired_at_unix_ms=ms)
             for cube, wavelength, ms in (
-                (0, 500.0, 10_000), (0, 550.0, 13_000), (0, 600.0, 75_000), (1, 500.0, 3_735_000),  # (1, 600) has none
+                (0, 500.0, 10_000), (0, 550.0, 13_240), (0, 600.0, 75_000), (1, 500.0, 3_735_000),  # (1, 600) has none
             )
         ]
         self.dataset.set_acquisition_metadata(
@@ -957,10 +957,10 @@ class RewriteImagePanelTest(unittest.TestCase):
             )
         )
         expected = {
-            (0, 500.0): "Cube 0, 500 nm | 0:00 | N/A",  # t = 0 is the earliest frame; no comment recorded yet
-            (0, 550.0): "Cube 0, 550 nm | 0:03 | buffer",
-            (0, 600.0): "Cube 0, 600 nm | 1:05 | buffer",
-            (1, 500.0): "Cube 1, 500 nm | 1:02:05 | buffer",  # an hour in: H:MM:SS
+            (0, 500.0): "Cube 0, 500 nm | 0:00.00 | N/A",  # t = 0 is the earliest frame; no comment recorded yet
+            (0, 550.0): "Cube 0, 550 nm | 0:03.24 | buffer",  # tens of ms
+            (0, 600.0): "Cube 0, 600 nm | 1:05.00 | buffer",
+            (1, 500.0): "Cube 1, 500 nm | 1:02:05.00 | buffer",  # an hour in: H:MM:SS.ss
             (1, 600.0): "Cube 1, 600 nm | N/A",  # no timing: no time shown
         }
         for (cube, wavelength), text in expected.items():

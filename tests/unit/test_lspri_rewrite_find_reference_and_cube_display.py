@@ -131,6 +131,13 @@ class CubeDisplayHelpersTest(unittest.TestCase):
         self.assertEqual(format_elapsed_seconds(3725), "1:02:05")
         self.assertEqual(format_elapsed_seconds(-5), "-0:05")
 
+    def test_elapsed_seconds_format_with_tens_of_ms(self) -> None:
+        self.assertEqual(format_elapsed_seconds(65.24, decimals=2), "1:05.24")
+        self.assertEqual(format_elapsed_seconds(0, decimals=2), "0:00.00")
+        self.assertEqual(format_elapsed_seconds(3725.07, decimals=2), "1:02:05.07")
+        self.assertEqual(format_elapsed_seconds(59.999, decimals=2), "1:00.00")  # rounds as a whole: never 0:60.00
+        self.assertEqual(format_elapsed_seconds(-9.5, decimals=2), "-0:09.50")
+
     def test_cube_ticks_use_the_label_function(self) -> None:
         values = tuple(range(20))
         plain = cube_slider_major_ticks(values)

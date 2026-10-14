@@ -17,10 +17,17 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from PyQt6.QtCore import QPointF
-    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication, QComboBox, QFrame, QLabel
 
+    from lspr_imaging_app.gui.app_theme import LSPRI_BRIGHT_THEME
     from lspr_imaging_app.panels.image.group_label_menu import GroupLabelMenu
-    from lspr_imaging_app.panels.image.group_label_overlay import GroupLabelItem, group_label_entries, label_rect, wrap_text
+    from lspr_imaging_app.panels.image.group_label_overlay import (
+        GroupLabelItem,
+        group_label_entries,
+        label_rect,
+        rotated_extent,
+        wrap_text,
+    )
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.undo import undo_manager
@@ -100,6 +107,48 @@ class FitTest(unittest.TestCase):
         self.assertEqual(font.pointSizeF(), 8.0)  # a larger minimum stops the shrinking sooner
 
 
+class RotatedExtentTest(unittest.TestCase):
+    def test_the_box_round_a_turned_block(self) -> None:
+        self.assertEqual(rotated_extent(40.0, 12.0, 0), (40.0, 12.0))
+        width, height = rotated_extent(40.0, 12.0, 90)
+        self.assertAlmostEqual(width, 12.0)  # turned on its end: the two swap
+        self.assertAlmostEqual(height, 40.0)
+        side = (40.0 + 12.0) / 2.0**0.5
+        for angle in (45, 135, 225, 315):
+            width, height = rotated_extent(40.0, 12.0, angle)
+            self.assertAlmostEqual(width, side)
+            self.assertAlmostEqual(height, side)
+        width, height = rotated_extent(40.0, 12.0, 180)  # upside down: the same box as upright
+        self.assertAlmostEqual(width, 40.0)
+        self.assertAlmostEqual(height, 12.0)
+
+    def test_every_angle_paints_without_error(self) -> None:
+        import pyqtgraph as pg
+        from PyQt6.QtGui import QImage, QPainter
+
+        from lspr_imaging_app.panels.image.group_label_overlay import GroupLabelEntry, GroupLabelSettings
+
+        widget = pg.PlotWidget()
+        widget.resize(300, 200)
+        widget.getPlotItem().vb.setRange(xRange=(0, 300), yRange=(0, 200), padding=0.0)
+        widget.show()
+        _APP.processEvents()
+        item = GroupLabelItem(widget.getPlotItem().vb)
+        item.set_entries([GroupLabelEntry("Row A", 150.0, 100.0, 10.0, 60.0, "#ff8800")])
+        try:
+            for angle in range(0, 360, 45):
+                item.set_settings(GroupLabelSettings(visible=True, angle=angle, side="right"))
+                image = QImage(300, 200, QImage.Format.Format_ARGB32)
+                image.fill(0)
+                painter = QPainter(image)
+                item.paint(painter)
+                painter.end()
+                lit = sum(1 for x in range(300) for y in range(200) if image.pixelColor(x, y).alpha() > 0)
+                self.assertGreater(lit, 20, f"{angle} degrees: the text is drawn")
+        finally:
+            widget.close()
+
+
 class LabelRectTest(unittest.TestCase):
     def test_each_side_puts_the_label_just_outside_the_circle(self) -> None:
         anchor = QPointF(100.0, 100.0)
@@ -133,18 +182,19 @@ class LabelMenuTest(unittest.TestCase):
         menu.changed.connect(lambda: seen.append(1))
         self.assertFalse(menu.settings().visible)
         menu.show_button.click()
-        menu.direction.setCurrentIndex(menu.direction.findData("vertical"))
-        menu.position.setCurrentIndex(menu.position.findData("last"))
+        menu.angle.rotate_button().click()
+        menu.angle.rotate_button().click()  # two presses of 45 degrees: the text now reads upwards
+        menu.position.button("last").click()
         menu.placement.set_placement("left")
         menu.box.setValue(60)
         menu.min_size.setValue(8)
         settings = menu.settings()
         self.assertEqual(
-            (settings.visible, settings.direction, settings.position, settings.side, settings.box_percent),
-            (True, "vertical", "last", "left", 60.0),
+            (settings.visible, settings.angle, settings.position, settings.side, settings.box_percent),
+            (True, 90, "last", "left", 60.0),
         )
         self.assertEqual(menu.settings().min_point_size, 8.0)
-        self.assertEqual(len(seen), 6)
+        self.assertEqual(len(seen), 7)
 
     def test_every_control_is_remembered(self) -> None:
         saved: dict[str, object] = {}
@@ -159,6 +209,118 @@ class LabelMenuTest(unittest.TestCase):
         second.bind_ui_state(UiStateStore(dict(saved)))
         settings = second.settings()
         self.assertEqual((settings.visible, settings.side, settings.box_percent), (True, "bottom-right", 120.0))
+
+    def test_the_menu_is_one_captionless_strip_of_pickers_in_the_requested_order(self) -> None:
+        menu = GroupLabelMenu()
+        panel = menu.menu().actions()[0].defaultWidget()
+        self.assertEqual(panel.findChildren(QComboBox), [], "no drop-downs")
+        self.assertEqual([label for label in panel.findChildren(QLabel) if label.text()], [], "no captions")  # the angle's picture has no text
+        layout = panel.layout()
+        parts = [layout.itemAt(i).widget() for i in range(layout.count())]
+        parts = [part for part in parts if not isinstance(part, QFrame)]  # drop the thin separator lines
+        self.assertEqual(
+            parts, [menu.show_button, menu.position, menu.placement, menu.angle, menu.box, menu.min_size]
+        )
+        self.assertEqual((menu.box.suffix(), menu.min_size.suffix()), (" %", " pt"))
+        for part in (menu.show_button, menu.placement, menu.box, menu.min_size):  # the pickers' tips are on their buttons
+            self.assertTrue(part.toolTip(), "no caption, so every part explains itself in its tooltip")
+        for choice in ("first", "last"):
+            self.assertTrue(menu.position.button(choice).toolTip())
+        self.assertTrue(menu.angle.rotate_button().toolTip())
+        self.assertTrue(menu.angle.picture().toolTip())
+
+    def test_the_pictures_are_painted_and_follow_the_pick(self) -> None:
+        menu = GroupLabelMenu()
+
+        def image(button):
+            return button.icon().pixmap(60, 60).toImage()
+
+        first, last = menu.position.button("first"), menu.position.button("last")
+        self.assertFalse(image(first).isNull() or image(last).isNull())
+        self.assertNotEqual(image(first), image(last), "1st and nth look different")
+        before = image(first)
+        last.click()
+        self.assertNotEqual(image(first), before, "the picked one is lit, the other dims")
+        self.assertFalse(menu.angle.rotate_button().icon().isNull(), "the rotate arrow is drawn")
+        pictures = []
+        for _ in range(4):  # 0, 45, 90, 135 degrees: the picture of the word turns with every press
+            pictures.append(menu.angle.picture().pixmap().toImage())
+            menu.angle.rotate_button().click()
+        for earlier in range(len(pictures)):
+            for later in range(earlier + 1, len(pictures)):
+                self.assertNotEqual(pictures[earlier], pictures[later], f"{earlier * 45} and {later * 45} degrees look different")
+
+    def test_each_picker_has_one_pick_and_reports_it_once(self) -> None:
+        menu = GroupLabelMenu()
+        seen: list[int] = []
+        menu.changed.connect(lambda: seen.append(1))
+        menu.angle.rotate_button().click()
+        self.assertEqual((menu.angle.angle(), len(seen)), (45, 1))
+        menu.position.button("last").click()
+        self.assertEqual((menu.position.value(), len(seen)), ("last", 2))
+        menu.position.button("last").click()  # already picked: nothing happens
+        self.assertEqual(len(seen), 2)
+        with self.assertRaises(ValueError):
+            menu.position.set_value("middle")
+        with self.assertRaises(ValueError):
+            menu.angle.set_angle(50)  # not a multiple of 45
+
+    def test_the_rotate_arrow_turns_the_text_45_degrees_a_press_and_comes_round_after_eight(self) -> None:
+        menu = GroupLabelMenu()
+        reported: list[int] = []
+        menu.angle.angle_changed.connect(reported.append)
+        for _ in range(8):
+            menu.angle.rotate_button().click()
+        self.assertEqual(reported, [45, 90, 135, 180, 225, 270, 315, 0])
+        self.assertEqual(menu.settings().angle, 0)
+        menu.angle.set_angle(360)  # a full turn is the same as none: nothing to report
+        self.assertEqual(len(reported), 8)
+        menu.angle.set_angle(-45)
+        self.assertEqual(menu.angle.angle(), 315)
+
+    def test_choices_saved_while_they_were_drop_downs_are_still_read(self) -> None:
+        """The text direction was a word (horizontal / vertical / diagonal) and is now an angle; a file with the
+        old word still gives the same look, the new key wins when both are there, and rubbish is ignored."""
+        for word, angle in (("horizontal", 0), ("diagonal", 45), ("vertical", 90)):
+            menu = GroupLabelMenu()
+            menu.bind_ui_state(UiStateStore({"image/group_labels/direction": word, "image/group_labels/position": "last"}))
+            self.assertEqual((menu.settings().angle, menu.settings().position), (angle, "last"), word)
+        both = GroupLabelMenu()
+        both.bind_ui_state(UiStateStore({"image/group_labels/direction": "vertical", "image/group_labels/angle": 135}))
+        self.assertEqual(both.settings().angle, 135)
+        for rubbish in ("sideways", 50, True, None, 2.5):
+            other = GroupLabelMenu()
+            other.bind_ui_state(UiStateStore({"image/group_labels/direction": rubbish, "image/group_labels/angle": rubbish,
+                                              "image/group_labels/position": 3}))
+            self.assertEqual((other.settings().angle, other.settings().position), (0, "first"), rubbish)
+
+    def test_the_angle_is_saved_and_comes_back(self) -> None:
+        saved: dict[str, object] = {}
+        store = UiStateStore({}, on_changed=lambda values: saved.update(values))
+        first = GroupLabelMenu()
+        first.bind_ui_state(store)
+        for _ in range(3):
+            first.angle.rotate_button().click()
+        store.flush()
+        self.assertEqual(saved["image/group_labels/angle"], 135)
+        second = GroupLabelMenu()
+        second.bind_ui_state(UiStateStore(dict(saved)))
+        self.assertEqual(second.settings().angle, 135)
+
+    def test_a_copy_follows_the_pickers_silently_and_a_theme_switch_restyles_them(self) -> None:
+        original, copy = GroupLabelMenu(), GroupLabelMenu()
+        seen: list[int] = []
+        copy.changed.connect(lambda: seen.append(1))
+        original.angle.rotate_button().click()
+        original.angle.rotate_button().click()
+        original.position.button("last").click()
+        copy.sync_from(original)
+        self.assertEqual((copy.angle.angle(), copy.position.value(), seen), (90, "last", []))
+        before = copy.position.button("last").styleSheet()
+        copy.position.refresh_theme(LSPRI_BRIGHT_THEME)
+        self.assertNotEqual(copy.position.button("last").styleSheet(), before)
+        copy.angle.refresh_theme(LSPRI_BRIGHT_THEME)  # restyles without error
+        self.assertFalse(copy.angle.rotate_button().icon().isNull())
 
     def test_a_side_saved_before_the_grid_existed_is_still_read(self) -> None:
         """The key was a four-way drop-down (top / left / bottom / right) and kept its name."""

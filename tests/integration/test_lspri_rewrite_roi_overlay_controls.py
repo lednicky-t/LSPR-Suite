@@ -399,7 +399,8 @@ class RoiOverlayControlsTest(unittest.TestCase):
         menu = self.panel._roi_tab._group_controls.label_menu
         menu.show_button.click()
         menu.placement.set_placement("left")
-        menu.direction.setCurrentIndex(menu.direction.findData("vertical"))
+        menu.angle.rotate_button().click()
+        menu.angle.rotate_button().click()  # 90 degrees: the text reads upwards
         self.panel.resize(900, 700)
         self.panel.show()
         _pump(0.3)
