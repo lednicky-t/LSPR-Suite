@@ -59,6 +59,36 @@ class ExperimentalPlanSectionCubeIntervalTest(unittest.TestCase):
         self.selection = SelectionModule()
         self.section = ExperimentalPlanSection(self.dataset, self.selection)
 
+    def test_the_current_frame_preview_follows_the_selection_without_rebuilding_the_timings(self) -> None:
+        """The preview runs on every cube / wavelength change, also while Play steps: it must not rebuild
+        the per-image timing objects each time (25 ms per step on 8478 images, measured 2026-10-14)."""
+        from lspr_core import ImagingCommentEvent
+
+        timings = [
+            ImagingCubeTiming(spectral_cube_index=c, wavelength_nm=500.0, acquired_at_unix_ms=c * 8_000) for c in range(5)
+        ]
+        metadata = ImagingAcquisitionMetadata(
+            source_format="legacy_measuring_times_csv", image_timings=timings,
+            comment_events=[ImagingCommentEvent(acquired_at_unix_ms=16_000, comment="buffer B")],
+        )
+        records = [ImageRecord(key=ImageKey(wavelength_nm=500.0, spectral_cube_index=c), path=Path(f"c{c}.tif")) for c in range(5)]
+        records.append(ImageRecord(key=ImageKey(wavelength_nm=600.0, spectral_cube_index=0), path=Path("c0_600.tif")))
+        self.dataset.load_dataset(ImageDataset(folder=Path("."), records=records, acquisition_metadata=metadata))
+        label = self.section._current_frame_label
+
+        def rebuilt(*_args, **_kwargs):
+            raise AssertionError("the per-image timings were rebuilt for a selection change")
+
+        self.dataset.rehydrated_acquisition_metadata = rebuilt
+        self.selection.set_wavelength(500.0)
+        self.selection.set_cube(1)
+        self.assertEqual(label.text(), "Cube 1, WL 500: (no comment/step recorded)")  # before the first comment
+        self.selection.set_cube(3)
+        self.assertEqual(label.text(), "Cube 3, WL 500: buffer B")  # after it
+        self.selection.set_wavelength(600.0)  # an image with no timing entry
+        self.selection.set_cube(0)
+        self.assertEqual(label.text(), "Cube 0, WL 600: no timing recorded.")
+
     def test_no_metadata_shows_no_interval_line(self) -> None:
         self.dataset.load_dataset(ImageDataset(folder=Path("."), records=[]))
         self.assertNotIn("Cube interval", self.section._status_label.text())

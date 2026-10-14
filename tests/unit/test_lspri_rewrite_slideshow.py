@@ -1,0 +1,263 @@
+"""Tests for the slider-ribbon slideshow's sequencing rules (`next_frame`,
+`first_frame`) and the "1x" interval math (`mean_frame_interval_seconds`).
+
+No dataset files, no widgets; Qt is only imported because the module also holds
+the controller.
+"""
+
+from __future__ import annotations
+
+import sys
+import unittest
+
+from PyQt6 import QtWidgets
+
+_APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+from tests._paths import REPO_ROOT, ensure_repo_paths
+
+ensure_repo_paths()
+
+APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
+if str(APP_SRC) not in sys.path:
+    sys.path.insert(0, str(APP_SRC))
+
+try:
+    from lspr_imaging_app.dataset.model import mean_frame_interval_seconds
+    from lspr_imaging_app.panels.image.playback_stats import PlaybackStats
+    from lspr_imaging_app.panels.image.slideshow import (
+        END_CUBE,
+        END_DATASET,
+        MODE_ALL,
+        MODE_ONE_WAVELENGTH,
+        SlideshowSettings,
+        first_frame,
+        next_frame,
+    )
+except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
+    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+
+CUBES = (0, 1, 2)
+WAVELENGTHS = {0: (500.0, 550.0, 600.0), 1: (500.0, 600.0), 2: (500.0, 550.0, 600.0)}  # cube 1 lacks 550
+
+
+def _next(current, **settings):
+    skipped = settings.pop("skipped", frozenset())
+    return next_frame(CUBES, WAVELENGTHS, current, SlideshowSettings(**settings), lambda c, w: (c, w) in skipped)
+
+
+class NextFrameTest(unittest.TestCase):
+    def test_all_wavelengths_steps_through_a_cube_then_the_next_cube(self) -> None:
+        self.assertEqual(_next((0, 500.0)), (0, 550.0))
+        self.assertEqual(_next((0, 600.0)), (1, 500.0))
+        self.assertEqual(_next((1, 500.0)), (1, 600.0))  # cube 1 has no 550
+
+    def test_end_of_dataset_stops_without_repeat_and_wraps_with_it(self) -> None:
+        self.assertIsNone(_next((2, 600.0)))
+        self.assertEqual(_next((2, 600.0), repeat=True), (0, 500.0))
+
+    def test_end_of_cube_stays_in_the_cube(self) -> None:
+        self.assertEqual(_next((1, 500.0), end=END_CUBE), (1, 600.0))
+        self.assertIsNone(_next((1, 600.0), end=END_CUBE))
+        self.assertEqual(_next((1, 600.0), end=END_CUBE, repeat=True), (1, 500.0))
+
+    def test_one_wavelength_steps_cubes_and_skips_cubes_without_it(self) -> None:
+        self.assertEqual(_next((0, 550.0), mode=MODE_ONE_WAVELENGTH), (2, 550.0))  # cube 1 skipped
+        self.assertIsNone(_next((2, 550.0), mode=MODE_ONE_WAVELENGTH))
+        self.assertEqual(_next((2, 550.0), mode=MODE_ONE_WAVELENGTH, repeat=True), (0, 550.0))
+
+    def test_one_wavelength_ignores_the_end_setting(self) -> None:
+        self.assertEqual(_next((0, 500.0), mode=MODE_ONE_WAVELENGTH, end=END_CUBE), (1, 500.0))
+
+    def test_ignored_frames_are_skipped(self) -> None:
+        self.assertEqual(_next((0, 500.0), skipped={(0, 550.0)}), (0, 600.0))
+        self.assertEqual(_next((0, 600.0), skipped={(1, 500.0)}), (1, 600.0))
+
+    def test_a_current_frame_outside_the_range_continues_after_it(self) -> None:
+        # The user dragged onto an ignored frame; the show goes on from there.
+        self.assertEqual(_next((0, 550.0), skipped={(0, 550.0)}), (0, 600.0))
+
+    def test_nothing_to_show(self) -> None:
+        everything = {(c, w) for c, ws in WAVELENGTHS.items() for w in ws}
+        self.assertIsNone(_next((0, 500.0), skipped=everything, repeat=True))
+
+    def test_a_single_frame_range_never_loops_on_itself(self) -> None:
+        self.assertIsNone(next_frame((0,), {0: (500.0,)}, (0, 500.0), SlideshowSettings(repeat=True)))
+
+    def test_first_frame_is_the_start_of_the_range(self) -> None:
+        settings = SlideshowSettings()
+        self.assertEqual(first_frame(CUBES, WAVELENGTHS, (2, 600.0), settings), (0, 500.0))
+        self.assertEqual(first_frame(CUBES, WAVELENGTHS, (2, 600.0), SlideshowSettings(end=END_CUBE)), (2, 500.0))
+        self.assertEqual(first_frame(CUBES, WAVELENGTHS, (2, 550.0), SlideshowSettings(mode=MODE_ONE_WAVELENGTH)), (0, 550.0))
+
+    def test_the_search_is_lazy_it_does_not_look_at_cubes_it_does_not_need(self) -> None:
+        asked: list[int] = []
+
+        class Spy(dict):
+            def get(self, key, default=()):
+                asked.append(key)
+                return super().get(key, default)
+
+        many = Spy({cube: (500.0, 550.0) for cube in range(300)})
+        frame = next_frame(list(range(300)), many, (150, 500.0), SlideshowSettings())
+        self.assertEqual(frame, (150, 550.0))
+        self.assertEqual(asked, [150])  # one cube looked at, not 300
+
+    def test_default_mode_is_all_and_end_is_dataset(self) -> None:
+        self.assertEqual((SlideshowSettings().mode, SlideshowSettings().end), (MODE_ALL, END_DATASET))
+
+
+class MeanIntervalTest(unittest.TestCase):
+    def test_average_gap_inside_cubes_only(self) -> None:
+        # Cube 0: frames 1 s apart. Cube 1 starts 100 s later - that pause must not count.
+        timings = {(0, 500.0): 0, (0, 550.0): 1000, (0, 600.0): 2000, (1, 500.0): 102000, (1, 550.0): 103000}
+        self.assertAlmostEqual(mean_frame_interval_seconds(timings), 1.0)
+
+    def test_none_without_two_timed_images_in_a_cube(self) -> None:
+        self.assertIsNone(mean_frame_interval_seconds({}))
+        self.assertIsNone(mean_frame_interval_seconds({(0, 500.0): 0, (1, 500.0): 5000}))
+
+
+class DatasetIndexTest(unittest.TestCase):
+    """`ImageDataset` answers cube / wavelength queries from a cached index (they scanned every record before)."""
+
+    def _dataset(self, layout):
+        from pathlib import Path
+
+        from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
+
+        records = [
+            ImageRecord(key=ImageKey(wavelength_nm=wl, spectral_cube_index=cube), path=Path(f"c{cube}_{wl}.tif"))
+            for cube, wavelengths in layout.items() for wl in wavelengths
+        ]
+        return ImageDataset(folder=Path("."), records=records)
+
+    def test_answers_match_a_brute_force_scan_including_a_cube_short_a_wavelength(self) -> None:
+        layout = {2: (500.0, 0.0, 600.0), 0: (500.0, 550.0, 600.0), 1: (500.0, 600.0)}
+        ds = self._dataset(layout)
+        self.assertEqual(ds.spectral_cube_indices, [0, 1, 2])
+        self.assertEqual(ds.wavelengths_nm, [0.0, 500.0, 550.0, 600.0])
+        for cube, wavelengths in layout.items():
+            self.assertEqual(ds.wavelengths_for_cube(cube), sorted(wavelengths))
+        self.assertEqual(ds.wavelengths_for_cube(99), [])
+
+    def test_callers_get_copies_and_a_replaced_or_grown_record_list_is_noticed(self) -> None:
+        ds = self._dataset({0: (500.0, 600.0)})
+        ds.wavelengths_for_cube(0).append(123.0)  # a caller editing its result must not corrupt the index
+        self.assertEqual(ds.wavelengths_for_cube(0), [500.0, 600.0])
+        other = self._dataset({0: (500.0, 600.0), 1: (700.0,)})
+        ds.records = other.records  # replaced
+        self.assertEqual(ds.spectral_cube_indices, [0, 1])
+        ds.records.append(self._dataset({5: (800.0,)}).records[0])  # grown in place
+        self.assertEqual(ds.spectral_cube_indices, [0, 1, 5])
+        self.assertEqual(ds.wavelengths_for_cube(5), [800.0])
+
+
+class NoDataOverlayCacheTest(unittest.TestCase):
+    def test_same_mask_returns_the_same_array_and_a_changed_mask_a_new_one(self) -> None:
+        import numpy as np
+
+        from lspr_imaging_app.panels.image import no_data
+
+        clean = np.ones((40, 50), dtype=np.float32)
+        self.assertIsNone(no_data.no_data_overlay_rgba(clean))
+        first = clean.copy()
+        first[:5, :5] = np.nan
+        a = no_data.no_data_overlay_rgba(first)
+        again = first * 2.0  # another wavelength, same NaN corner
+        self.assertIs(no_data.no_data_overlay_rgba(again), a)
+        self.assertEqual(int(a[0, 0, 3]), 255)
+        self.assertEqual(int(a[20, 20, 3]), 0)
+        moved = clean.copy()
+        moved[-5:, -5:] = np.nan
+        b = no_data.no_data_overlay_rgba(moved)
+        self.assertIsNot(b, a)
+        self.assertEqual((int(b[0, 0, 3]), int(b[-1, -1, 3])), (0, 255))
+        self.assertTrue(np.array_equal(b[..., :3], a[..., :3]))  # the checker pattern itself is shared per shape
+
+
+class PlaybackStatsTest(unittest.TestCase):
+    def test_one_frames_trip_is_split_into_its_stages(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.9, target_interval_s=0.1)
+        stats.note_step(1.000, handlers_s=0.002)  # the step began at 0.998
+        stats.note_redraw(7, start=1.100, end=1.101)  # waited ~102 ms for the redraw timer
+        line = stats.note_rendered(7, arrived=1.200, done=1.206, load_s=0.060, prep_s=0.030, listeners_s=0.004)
+        self.assertIsNone(line)  # the one-second window is not over
+        summary = stats.summary(now=2.0)
+        for part in ("wait 102", "redraw 1", "queue 9", "load 60", "prep 30", "gui 6", "listeners 4", "lag 208"):
+            self.assertIn(part, summary)
+
+    def test_detail_stages_are_reported_per_shown_frame_biggest_first(self) -> None:
+        stats = PlaybackStats()
+        stats.note_detail("ignored_while_inactive", 1.0)
+        stats.start(0.9, target_interval_s=0.1)
+        for frame in range(2):
+            stats.note_step(1.0 + frame, 0.0)
+            stats.note_redraw(frame + 1, 1.0 + frame, 1.0 + frame)
+            stats.note_detail("overlays", 0.040)
+            stats.note_detail("paint_view", 0.060)  # a stage may run several times per frame
+            stats.note_detail("paint_view", 0.060)
+            stats.note_rendered(frame + 1, 1.1 + frame, 1.11 + frame, load_s=0.0, prep_s=0.0, listeners_s=0.0)
+        text = stats.summary(now=5.0)
+        self.assertIn("per frame: paint_view 120, overlays 40", text)
+        self.assertNotIn("ignored_while_inactive", text)
+        fields = stats.total_fields()
+        self.assertEqual((fields["d_overlays_ms"], fields["d_paint_view_ms"]), (40.0, 120.0))
+
+    def test_the_whole_cycle_is_reported_so_unmeasured_time_shows_up_as_other(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.9, target_interval_s=0.1)
+        for frame in range(3):  # a step every 150 ms, each frame's lag only 100 ms
+            start = 1.0 + 0.15 * frame
+            stats.note_step(start, 0.0)
+            stats.note_redraw(frame + 1, start, start)
+            stats.note_rendered(frame + 1, start + 0.09, start + 0.10, load_s=0.0, prep_s=0.0, listeners_s=0.0)
+        text = stats.summary(now=5.0)
+        self.assertIn("cycle 150 ms (lag 100 + other 50)", text)
+        self.assertEqual(stats.total_fields()["cycle_ms"], 150.0)
+
+    def test_queue_time_is_split_into_thread_wait_and_gui_delivery(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.9, target_interval_s=0.1)
+        stats.note_step(1.000, handlers_s=0.0)
+        stats.note_redraw(1, start=1.0, end=1.001)
+        stats.note_rendered(
+            1, arrived=1.200, done=1.205, load_s=0.0, prep_s=0.0, listeners_s=0.0,
+            submitted_at=1.001, started_at=1.101, finished_at=1.150, blocked_by_prefetch=True,
+        )
+        summary = stats.summary(now=2.0)
+        self.assertIn("100 thread + 50 deliver, 100% behind a read-ahead", summary)
+
+    def test_steps_before_a_redraw_are_merged(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.0, target_interval_s=0.05)
+        for k in range(5):
+            stats.note_step(1.0 + 0.05 * k, handlers_s=0.001)
+        stats.note_redraw(1, start=1.3, end=1.301)
+        stats.note_rendered(1, arrived=1.31, done=1.32, load_s=0.0, prep_s=0.0, listeners_s=0.0)
+        self.assertIn("skipped 4 of 5 steps", stats.summary(now=2.0))
+
+    def test_a_superseded_result_is_not_counted_and_inactive_is_silent(self) -> None:
+        stats = PlaybackStats()
+        self.assertIsNone(stats.note_rendered(1, 0.0, 0.1, load_s=0.0, prep_s=0.0, listeners_s=0.0))  # inactive
+        stats.start(0.0, target_interval_s=0.1)
+        stats.note_step(1.0, 0.0)
+        stats.note_redraw(1, 1.0, 1.0)
+        stats.note_step(1.1, 0.0)
+        stats.note_redraw(2, 1.1, 1.1)
+        stats.note_rendered(2, 1.2, 1.21, load_s=0.0, prep_s=0.0, listeners_s=0.0)  # 1 never arrives
+        self.assertEqual(stats._total.stale, 1)
+        self.assertEqual(stats._total.shown, 1)
+
+    def test_a_window_line_is_returned_every_second(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.0, target_interval_s=0.5)
+        stats.note_step(0.9, 0.0)
+        stats.note_redraw(1, 0.95, 0.95)
+        line = stats.note_rendered(1, 1.0, 1.05, load_s=0.0, prep_s=0.0, listeners_s=0.0)
+        self.assertTrue(line and line.startswith("Play:"))
+
+
+if __name__ == "__main__":
+    unittest.main()

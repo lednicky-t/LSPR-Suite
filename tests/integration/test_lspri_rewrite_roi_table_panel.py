@@ -74,6 +74,15 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 _SELECT_ROWS = QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows
 
 
+def _pump_events(seconds: float) -> None:
+    import time as _time
+
+    deadline = _time.monotonic() + seconds
+    while _time.monotonic() < deadline:
+        _APP.processEvents()
+        _time.sleep(0.01)
+
+
 class _PanelCase(unittest.TestCase):
     def setUp(self) -> None:
         undo_manager.clear()
@@ -146,6 +155,34 @@ class _PanelCase(unittest.TestCase):
 
 
 class AppearanceTest(_PanelCase):
+    def test_a_hidden_table_is_not_rebuilt_until_it_is_shown_again(self) -> None:
+        self.panel.refresh_now()
+        rows_before = self.panel._model.rowCount()
+        rebuilds = []
+        original = self.panel.refresh_now
+        self.panel.refresh_now = lambda: (rebuilds.append(1), original())[1]
+        self.panel.set_panel_visible(False)  # what the dock's visibilityChanged does
+        self.toolbox.add_roi(60.0, 5.0, sample_diameter_px=6.0)  # a change while hidden
+        _pump_events(0.3)
+        self.assertEqual(rebuilds, [])
+        self.assertFalse(self.panel._redraw_timer.isActive())
+        self.panel.set_panel_visible(True)
+        _pump_events(0.3)
+        self.assertEqual(len(rebuilds), 1)
+        self.assertEqual(self.panel._model.rowCount(), rows_before + 1)
+
+    def test_a_cube_change_rebuilds_the_table_only_when_a_roi_has_a_timeline(self) -> None:
+        self.panel.refresh_now()
+        timer = self.panel._redraw_timer
+        timer.stop()
+        self.selection.set_cube(1)
+        self.assertFalse(timer.isActive(), "no timeline: every cube shows the same rows, nothing to rebuild")
+        self.toolbox.move_roi(1, 12.0, 5.0, cube=2, scope="persistent")  # a geometry change from cube 2 on
+        self.assertTrue(self.toolbox.has_timeline())
+        timer.stop()
+        self.selection.set_cube(2)
+        self.assertTrue(timer.isActive(), "with a timeline the rows differ per cube")
+
     def test_no_rois_shows_the_hint_and_adding_one_shows_the_table(self) -> None:
         empty = RoiTablePanel(RoiToolbox(), SelectionModule(), self.geometry, self.engine)
         self.assertEqual(empty._stack.currentIndex(), 1)

@@ -169,6 +169,58 @@ class DatasetTimeAndCommentTest(unittest.TestCase):
         self.assertEqual(dataset.cube_start_seconds(1), 60.0)  # first frame of cube 1, not its later ones
         self.assertIsNone(dataset.cube_start_seconds(7))
 
+    def test_frame_start_is_each_frames_own_time_on_the_same_clock_as_the_cube_time(self) -> None:
+        dataset = DatasetModule()
+        dataset.load_dataset(_timed_dataset(True))
+        self.assertEqual(dataset.frame_start_seconds(0, 500.0), 0.0)
+        self.assertEqual(dataset.frame_start_seconds(0, 600.0), 2.0)  # a later frame of cube 0: not the cube's 0.0
+        self.assertEqual(dataset.frame_start_seconds(1, 500.0), dataset.cube_start_seconds(1))  # a cube's time is its first frame's
+        self.assertEqual(dataset.frame_start_seconds(1, 600.0), 62.0)
+        self.assertIsNone(dataset.frame_start_seconds(5, 500.0), "no timing for this frame")
+        self.assertIsNone(dataset.frame_start_seconds(0, 550.0), "no such wavelength")
+
+    def test_frame_start_is_none_without_acquisition_metadata_or_dataset(self) -> None:
+        plain = DatasetModule()
+        self.assertIsNone(plain.frame_start_seconds(0, 500.0))  # nothing loaded
+        plain.load_dataset(_timed_dataset(False))
+        self.assertIsNone(plain.frame_start_seconds(0, 500.0))
+
+    def test_the_recorded_start_is_time_zero_when_it_can_be_read(self) -> None:
+        base = 1_700_000_000_000  # 2023-11-14T22:13:20Z
+        timings = [ImagingCubeTiming(spectral_cube_index=0, wavelength_nm=500.0, acquired_at_unix_ms=base + 1_000)]
+
+        def seconds(started: str | None) -> float | None:
+            dataset = DatasetModule()
+            model = _timed_dataset(False)
+            model.acquisition_metadata = ImagingAcquisitionMetadata(
+                source_format="legacy_measuring_times_csv", image_timings=list(timings), started_at_utc=started
+            )
+            dataset.load_dataset(model)
+            return dataset.frame_start_seconds(0, 500.0)
+
+        self.assertEqual(seconds("2023-11-14T22:13:10Z"), 11.0)  # started 10 s before the base
+        self.assertEqual(seconds("2023-11-14T22:13:30Z"), -9.0)  # a frame before the recorded start keeps its sign
+        self.assertEqual(seconds("not a time"), 0.0, "unreadable start: the earliest frame is t = 0")
+        self.assertEqual(seconds(None), 0.0)
+
+    def test_time_zero_follows_a_newly_loaded_dataset(self) -> None:
+        """The anchor is computed once, so it must be dropped when the dataset changes."""
+        dataset = DatasetModule()
+        dataset.load_dataset(_timed_dataset(True))
+        self.assertEqual(dataset.frame_start_seconds(0, 600.0), 2.0)
+        shifted = _timed_dataset(True)
+        shifted.acquisition_metadata = ImagingAcquisitionMetadata(
+            source_format="legacy_measuring_times_csv",
+            image_timings=[
+                ImagingCubeTiming(spectral_cube_index=0, wavelength_nm=500.0, acquired_at_unix_ms=5_000),
+                ImagingCubeTiming(spectral_cube_index=0, wavelength_nm=600.0, acquired_at_unix_ms=9_000),
+            ],
+        )
+        dataset.load_dataset(shifted)
+        self.assertEqual(dataset.frame_start_seconds(0, 600.0), 4.0)
+        dataset.clear_dataset()
+        self.assertIsNone(dataset.frame_start_seconds(0, 600.0))
+
     def test_frame_comment_linked_unlinked_and_empty(self) -> None:
         dataset = DatasetModule()
         dataset.load_dataset(_timed_dataset(True))

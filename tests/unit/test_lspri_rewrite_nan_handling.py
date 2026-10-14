@@ -194,6 +194,28 @@ class TestHistogramAndDisplayHelpers(unittest.TestCase):
         self.assertIn("80 000 px no data", text)
         self.assertIn("88.9%", text)
 
+    def test_the_precomputed_variants_give_exactly_the_same_answers(self) -> None:
+        """`counts_of_finite` / `excluded_pixel_text_from_counts` are what the Histogram redraw uses once per
+        frame instead of repeating isfinite / copies; they must not change a single count or character."""
+        from lspr_imaging_app.panels.histogram.compute import counts_of_finite, excluded_pixel_text_from_counts
+
+        rng = np.random.default_rng(3)
+        frames = [
+            np.where(rng.random((120, 90)) < 0.2, np.nan, rng.normal(2000, 500, (120, 90))).astype(np.float32),
+            (rng.integers(0, 200, (60, 60)) * 512.0).astype(np.float32),  # values exactly on bin edges
+            np.array([[np.inf, -np.inf, np.nan, -5.0, 70000.0, 65535.0, 0.0]], dtype=np.float32),
+            np.full((10, 10), np.nan, dtype=np.float32),
+            np.zeros((0, 4), dtype=np.float32),
+        ]
+        for bin_width in (512.0, 33.3, 1.0):
+            edges = histogram_edges(bin_width)
+            for frame in frames:
+                finite = np.isfinite(frame)
+                np.testing.assert_array_equal(counts_of_finite(frame[finite], edges), population_counts(frame, edges))
+        for frame in frames:
+            finite = int(np.count_nonzero(np.isfinite(frame)))
+            self.assertEqual(excluded_pixel_text_from_counts(int(frame.size), finite), excluded_pixel_text(frame))
+
     def test_checker_is_opaque_exactly_on_nan_and_readout_says_no_data(self) -> None:
         image = np.ones((20, 30), dtype=np.float32)
         self.assertIsNone(no_data_overlay_rgba(image))

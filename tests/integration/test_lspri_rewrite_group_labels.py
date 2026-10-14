@@ -114,6 +114,17 @@ class LabelRectTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             label_rect(anchor, 10.0, "diagonal", 1.0, 1.0)
 
+    def test_the_middle_cell_centres_the_label_and_a_corner_cell_clears_the_circle(self) -> None:
+        anchor = QPointF(100.0, 100.0)
+        centre = label_rect(anchor, 10.0, "center", 40.0, 12.0, gap=3.0)
+        self.assertEqual((centre.center().x(), centre.center().y()), (100.0, 100.0))
+        corner = label_rect(anchor, 10.0, "top-left", 40.0, 12.0, gap=3.0)
+        # The label's nearest corner (bottom right) sits on the 45-degree point, `gap` beyond the circle.
+        reach = (10.0 + 3.0) / 2.0**0.5
+        self.assertAlmostEqual(corner.right(), 100.0 - reach)
+        self.assertAlmostEqual(corner.bottom(), 100.0 - reach)
+        self.assertGreaterEqual(((corner.right() - 100.0) ** 2 + (corner.bottom() - 100.0) ** 2) ** 0.5, 13.0 - 1e-9)
+
 
 class LabelMenuTest(unittest.TestCase):
     def test_settings_follow_the_controls_and_changes_are_reported(self) -> None:
@@ -124,13 +135,13 @@ class LabelMenuTest(unittest.TestCase):
         menu.show_button.click()
         menu.direction.setCurrentIndex(menu.direction.findData("vertical"))
         menu.position.setCurrentIndex(menu.position.findData("last"))
-        menu.side.setCurrentIndex(menu.side.findData("left"))
+        menu.placement.set_placement("left")
         menu.box.setValue(60)
         menu.min_size.setValue(8)
         settings = menu.settings()
         self.assertEqual(
-            (settings.visible, settings.vertical, settings.position, settings.side, settings.box_percent),
-            (True, True, "last", "left", 60.0),
+            (settings.visible, settings.direction, settings.position, settings.side, settings.box_percent),
+            (True, "vertical", "last", "left", 60.0),
         )
         self.assertEqual(menu.settings().min_point_size, 8.0)
         self.assertEqual(len(seen), 6)
@@ -141,13 +152,22 @@ class LabelMenuTest(unittest.TestCase):
         first = GroupLabelMenu()
         first.bind_ui_state(store)
         first.show_button.click()
-        first.side.setCurrentIndex(first.side.findData("bottom"))
+        first.placement.button("bottom-right").click()
         first.box.setValue(120)
         store.flush()
         second = GroupLabelMenu()
         second.bind_ui_state(UiStateStore(dict(saved)))
         settings = second.settings()
-        self.assertEqual((settings.visible, settings.side, settings.box_percent), (True, "bottom", 120.0))
+        self.assertEqual((settings.visible, settings.side, settings.box_percent), (True, "bottom-right", 120.0))
+
+    def test_a_side_saved_before_the_grid_existed_is_still_read(self) -> None:
+        """The key was a four-way drop-down (top / left / bottom / right) and kept its name."""
+        menu = GroupLabelMenu()
+        menu.bind_ui_state(UiStateStore({"image/group_labels/side": "left"}))
+        self.assertEqual(menu.settings().side, "left")
+        other = GroupLabelMenu()
+        other.bind_ui_state(UiStateStore({"image/group_labels/side": "diagonal"}))  # rubbish: keeps the default
+        self.assertEqual(other.settings().side, "top")
 
 
 if __name__ == "__main__":

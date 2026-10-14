@@ -16,14 +16,17 @@ the whole point of not making this Histogram-specific pub/sub.
 
 from __future__ import annotations
 
+import gc
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QFontMetrics
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -47,7 +50,7 @@ try:
         MaskModule,
         MaskScopeModule,
     )
-    from lspr_imaging_app.panels.histogram import HistogramPanel
+    from lspr_imaging_app.panels.histogram import HistogramPanel, compute
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
@@ -115,7 +118,17 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.panel.show()
 
     def tearDown(self) -> None:
+        self.panel._stop_worker()  # the Histogram's own worker thread, like the render thread just below
         self.image_panel._renderer.stop()
+        # Destroy the panels here, in a known order, on the GUI thread and outside any event handler. Left to the
+        # cyclic garbage collector they were destroyed in whatever test happened to be running when it fired, and
+        # with a dozen or more of them in one pass that crashed the process (native access violation, 2026-10-14).
+        for widget in (self.panel, self.image_panel):
+            widget.hide()
+            widget.deleteLater()
+        _APP.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        _APP.processEvents()
+        gc.collect()
         self._tmp.cleanup()
 
     def _load(self) -> None:
@@ -598,6 +611,69 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.assertEqual(cursor_icon.iconSize().width(), _ICON_SIZE)
         self.assertEqual(cursor_icon.height(), _BUTTON_SIZE)
 
+    # -- no work while the dock is hidden (2026-10-14) ---------------------------------------
+
+    def test_a_hidden_histogram_does_no_work_and_catches_up_once_when_shown(self) -> None:
+        self._load()
+        redraws = []
+        original = self.panel._redraw_now
+        self.panel._redraw_now = lambda: (redraws.append(1), original())[1]
+        self.panel.set_panel_visible(False)  # what the dock's visibilityChanged does
+        self.panel._redraw_timer.stop()
+        for _ in range(3):  # frames keep arriving while hidden
+            self.panel._on_image_rendered(self.panel._image, 0, 500.0)
+        _pump(0.4)
+        self.assertEqual(redraws, [], "nothing is computed or drawn while hidden")
+        self.assertFalse(self.panel._redraw_timer.isActive())
+        self.panel.set_panel_visible(True)
+        _pump(0.4)
+        self.assertEqual(len(redraws), 1, "one catch-up when shown")
+        _, y = self.panel._plot._all_pixels_curve.getData()
+        self.assertAlmostEqual(float(np.sum(y)), 100.0, places=3)
+
+    def test_a_redraw_already_scheduled_when_the_dock_is_hidden_does_not_run(self) -> None:
+        self._load()
+        redraws = []
+        original = self.panel._redraw_now
+        self.panel._redraw_now = lambda: (redraws.append(1), original())[1]
+        self.panel._schedule_redraw()  # a timer is running ...
+        self.panel.set_panel_visible(False)  # ... and then the dock is hidden
+        _pump(0.4)
+        self.assertEqual(redraws, [])
+        self.panel.set_panel_visible(True)
+        _pump(0.4)
+        self.assertEqual(len(redraws), 1)
+
+    # -- calm updates while the slideshow plays (2026-10-14) -----------------------------
+
+    def test_calm_mode_throttles_redraws_instead_of_restarting_the_timer(self) -> None:
+        timer = self.panel._redraw_timer
+        self.panel.set_calm(True)
+        self.assertEqual(timer.interval(), 1000)
+        timer.stop()
+        self.panel._schedule_redraw()
+        self.assertTrue(timer.isActive())
+        remaining = timer.remainingTime()
+        time.sleep(0.05)
+        self.panel._schedule_redraw()  # a new frame arrives: the running timer must be left alone
+        self.assertLess(timer.remainingTime(), remaining)
+        self.panel.set_calm(False)  # Play stopped: back to normal and one catch-up redraw
+        self.assertEqual(timer.interval(), 100)
+        self.assertTrue(timer.isActive())
+        # normal mode is a debounce again: every request restarts the timer
+        timer.stop()
+        self.panel._schedule_redraw()
+        first = timer.remainingTime()
+        time.sleep(0.03)
+        self.panel._schedule_redraw()
+        self.assertGreaterEqual(timer.remainingTime(), first - 2)
+
+    def test_the_image_panels_calm_signal_reaches_the_histogram(self) -> None:
+        self.image_panel.calm_histogram_changed.emit(True)
+        self.assertEqual(self.panel._redraw_timer.interval(), 1000)
+        self.image_panel.calm_histogram_changed.emit(False)
+        self.assertEqual(self.panel._redraw_timer.interval(), 100)
+
     # -- display-settings persistence (2026-09-30) ---------------------------
 
     def test_initial_display_settings_are_applied_at_construction(self) -> None:
@@ -645,6 +721,116 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         self.assertIn("DN", text)
         overlay.toggle()
         self.assertFalse(overlay._enabled)
+
+
+    # -- the numbers are made on a worker thread (2026-10-14) -----------------------------
+
+    def _blocked_compute(self):
+        """A stand-in for `compute.redraw_counts` that waits for `release` before doing the real work and records
+        every call (thread, bin count): lets a test hold a redraw "in flight" and see what the panel does meanwhile."""
+        release = threading.Event()
+        calls = []
+        original = compute.redraw_counts
+
+        def blocked(image, region, ignore_mask, edges):
+            calls.append((threading.current_thread(), edges.size))
+            release.wait(10.0)
+            return original(image, region, ignore_mask, edges)
+
+        return release, calls, blocked
+
+    def _plot_x_size(self) -> int:
+        x, _ = self.panel._plot._all_pixels_curve.getData()
+        return 0 if x is None else len(x)
+
+    def test_the_numbers_are_made_off_the_gui_thread_and_drawn_on_it(self) -> None:
+        release, calls, blocked = self._blocked_compute()
+        release.set()
+        with mock.patch.object(compute, "redraw_counts", blocked):
+            self._load()
+        self.assertTrue(calls, "the redraw computed nothing")
+        self.assertTrue(all(thread is not threading.main_thread() for thread, _ in calls))
+        _, y = self.panel._plot._all_pixels_curve.getData()
+        self.assertAlmostEqual(float(np.sum(y)), 100.0, places=3)  # and it was drawn
+
+    def test_starting_a_redraw_does_not_wait_for_the_numbers(self) -> None:
+        self._load()
+        release, calls, blocked = self._blocked_compute()
+        try:
+            with mock.patch.object(compute, "redraw_counts", blocked):
+                started = time.perf_counter()
+                self.panel._redraw_now()  # the compute stand-in is stuck until `release`
+                waited = time.perf_counter() - started
+                self.assertLess(waited, 0.5, "the GUI thread must not wait for the worker")
+                _pump(0.2)
+                self.assertTrue(self.panel._worker.is_running())
+        finally:
+            release.set()
+        _pump(0.4)
+        self.assertFalse(self.panel._worker.is_running())
+
+    def test_while_one_redraw_runs_only_the_newest_request_is_kept(self) -> None:
+        self._load()
+        release, calls, blocked = self._blocked_compute()
+        try:
+            with mock.patch.object(compute, "redraw_counts", blocked):
+                self.panel._redraw_now()  # job 1: running (stuck)
+                _pump(0.2)
+                for width in (128.0, 64.0):  # jobs 2 and 3 arrive while job 1 runs: 3 replaces 2
+                    self.panel._bin_width = width
+                    self.panel._redraw_now()
+                release.set()
+                _pump(0.6)
+        finally:
+            release.set()
+        self.assertEqual(len(calls), 2, "job 2 was replaced by job 3 and never ran")
+        self.assertEqual(calls[1][1], compute.histogram_edges(64.0).size)
+        self.assertIn(self._plot_x_size(), (compute.histogram_edges(64.0).size, compute.histogram_edges(64.0).size - 1))
+
+    def test_a_result_for_an_image_that_was_cleared_meanwhile_is_not_drawn(self) -> None:
+        self._load()
+        release, _calls, blocked = self._blocked_compute()
+        try:
+            with mock.patch.object(compute, "redraw_counts", blocked):
+                self.panel._redraw_now()
+                _pump(0.2)
+                self.dataset.clear_dataset()
+                _pump(0.2)
+                release.set()
+                _pump(0.5)
+        finally:
+            release.set()
+        self.assertEqual(self._plot_x_size(), 0, "the cleared plot must stay empty")
+
+    def test_a_result_that_arrives_while_hidden_is_not_drawn_until_shown(self) -> None:
+        self._load()
+        before = self._plot_x_size()
+        release, _calls, blocked = self._blocked_compute()
+        try:
+            with mock.patch.object(compute, "redraw_counts", blocked):
+                self.panel._bin_width = 64.0  # a visible change: many more bins than the 512 default
+                self.panel._redraw_now()
+                _pump(0.2)
+                self.panel.set_panel_visible(False)
+                release.set()
+                _pump(0.5)
+                self.assertEqual(self._plot_x_size(), before, "nothing is drawn while hidden")
+                self.panel.set_panel_visible(True)  # one catch-up redraw
+                _pump(0.6)
+        finally:
+            release.set()
+        self.assertGreater(self._plot_x_size(), before)
+
+    def test_closing_waits_for_a_running_worker(self) -> None:
+        self._load()
+        release, _calls, blocked = self._blocked_compute()
+        with mock.patch.object(compute, "redraw_counts", blocked):
+            self.panel._redraw_now()
+            _pump(0.2)
+            self.assertTrue(self.panel._worker.is_running())
+            threading.Timer(0.3, release.set).start()
+            self.panel.close()  # must wait for the worker instead of leaving it to emit into a dead widget
+            self.assertFalse(self.panel._worker.is_running())
 
 
 if __name__ == "__main__":

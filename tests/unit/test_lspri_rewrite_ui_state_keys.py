@@ -123,6 +123,16 @@ class KeyTableTest(unittest.TestCase):
         for bad in (None, [[1, 79]], [[1, 79], [2]], [[1, 79], ["a", 3]], [[1, 79], [True, 3]], "x", [[1, 79], [2, 3], [4, 5]]):
             self.assertIsNone(keys.read_view_range({keys.IMAGE_VIEW_RANGE: bad}), bad)
 
+    def test_display_range_needs_a_dataset_a_flag_and_two_numbers(self) -> None:
+        good = {"dataset": "C:/d", "fixed": True, "min": 100.0, "max": 4000}
+        self.assertEqual(keys.read_display_range({keys.DISPLAY_RANGE: good}), ("C:/d", True, 100.0, 4000.0))
+        for bad in (
+            None, [], {}, {**good, "dataset": 3}, {**good, "fixed": "yes"}, {**good, "fixed": 1},
+            {**good, "min": "1"}, {**good, "max": None}, {**good, "min": True},
+        ):
+            self.assertIsNone(keys.read_display_range({keys.DISPLAY_RANGE: bad}), bad)
+        self.assertIsNone(keys.read_display_range({}))
+
     def test_highlight_range_needs_a_dataset_and_two_numbers(self) -> None:
         good = {"dataset": "C:/d", "min": 1, "max": 9.5}
         self.assertEqual(keys.read_highlight_range({keys.HIGHLIGHT_RANGE: good}), ("C:/d", 1.0, 9.5))

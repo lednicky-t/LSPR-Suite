@@ -297,7 +297,7 @@ class AddRoiToolTest(unittest.TestCase):
         _pump()
         self.active_tool.set_active(ImageTool.ADD_ROI, True)  # no icon any more: armed from code
         _pump()
-        xs = self.panel._roi_overlay.sample_curve.getData()[0]
+        xs = self.panel._roi_overlay.sample_circles.outline_xy()[0]
         self.assertIsNotNone(xs)
         self.assertGreater(len(xs), 0)
 

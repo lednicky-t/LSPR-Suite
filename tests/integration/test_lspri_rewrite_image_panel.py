@@ -181,6 +181,31 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertGreater(float(np.asarray(self.panel._image_item.image).max()), 3000.0)
 
+    # -- highlight tint (decided from the frame's min / max before any mask is built) -------
+
+    def test_highlight_tint_is_hidden_when_the_range_covers_everything_or_nothing_and_shown_when_it_splits_the_image(self) -> None:
+        self._load()
+        self.assertIsNotNone(self.panel._last_data_range)
+        low, high = self.panel._last_data_range
+        tint = self.panel._highlight_tint
+        tint.visible = True
+        shown = []
+        original = tint.paint
+        tint.paint = lambda mask: (shown.append(int(mask.sum())), original(mask))[1]
+
+        for name, rng in (("covers all", (low - 1, high + 1)), ("exactly all", (low, high)), ("above the data", (high + 10, high + 20)), ("below the data", (low - 20, low - 10))):
+            self.highlight_range.set_range(*rng)
+            self.panel._update_highlight_overlay()
+            self.assertFalse(tint.item.isVisible(), name)
+        self.assertEqual(shown, [], "no mask was even painted for those")
+
+        mid = (low + high) / 2.0
+        self.highlight_range.set_range(low, mid)  # splits the image: some pixels in, some out
+        self.panel._update_highlight_overlay()
+        self.assertGreaterEqual(len(shown), 1)  # (the range change itself already triggers one)
+        self.assertGreater(shown[-1], 0)
+        self.assertTrue(tint.item.isVisible())
+
     # -- lifecycle ------------------------------------------------------
 
     def test_empty_before_a_dataset_is_loaded(self) -> None:
@@ -234,9 +259,9 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.roi_toolbox.add_roi(60.0, 45.0, sample_diameter_px=10.0)
         _pump()
 
-        sample_x, _ = self.panel._roi_overlay.sample_curve.getData()
+        sample_x, _ = self.panel._roi_overlay.sample_circles.outline_xy()
         reference_x, _ = self.panel._roi_overlay.reference_curve.getData()
-        # N circles joined by N-1 NaN separators in a single PlotDataItem.
+        # N circles joined by N-1 NaN separators (the sample circles are one painted item, the rings one curve).
         self.assertEqual(len(sample_x), 2 * _CIRCLE_POINTS + 1)
         self.assertEqual(len(reference_x), 4 * _CIRCLE_POINTS + 3)
 
@@ -249,7 +274,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         self.assertEqual(len(self.panel._roi_overlay.selection_curve.getData()[0]), _CIRCLE_POINTS)
         # Since fa61b11 the selected ROI stays on its own curve too (border on top): 2 circles + 1 separator.
-        self.assertEqual(len(self.panel._roi_overlay.sample_curve.getData()[0]), 2 * _CIRCLE_POINTS + 1)
+        self.assertEqual(len(self.panel._roi_overlay.sample_circles.outline_xy()[0]), 2 * _CIRCLE_POINTS + 1)
 
     def test_overlay_follows_the_chromatic_affine_once(self) -> None:
         """At a wavelength with a chromatic correction the circle must sit where
@@ -264,16 +289,23 @@ class RewriteImagePanelTest(unittest.TestCase):
             self.panel._draw_roi_overlay()
             frame = (self.panel._current_cube(), self.panel._current_wavelength())
             center = self.roi_toolbox.display_position(roi_id, frame, shifted)
-            xs, ys = self.panel._roi_overlay.sample_curve.getData()
+            xs, ys = self.panel._roi_overlay.sample_circles.outline_xy()
             self.assertEqual(center, (43.0, 28.0))
             self.assertAlmostEqual(float(np.nanmean(xs[:-1])), center[0], places=6)
             self.assertAlmostEqual(float(np.nanmean(ys[:-1])), center[1], places=6)
             self.assertEqual(self.panel.roi_at(*center), roi_id)  # clicking where it is drawn selects it
 
-    def _points(self, curve) -> int:
-        """Circles on a curve, counted by its points (NaN separators between them)."""
-        xs = curve.getData()[0]
+    def _points(self, source) -> int:
+        """Circles of one colour (a colour string; None = every circle) or on a curve item, counted by
+        their points (NaN separators between circles do not count)."""
+        if source is None or isinstance(source, str):
+            xs = self.panel._roi_overlay.sample_circles.outline_xy(source)[0]
+        else:
+            xs = source.getData()[0]
         return 0 if xs is None else int(np.isfinite(xs).sum())
+
+    def _default_color(self) -> str:
+        return self.panel._roi_overlay.sample.color
 
     def test_each_roi_is_drawn_in_its_own_colour(self) -> None:
         self._load()
@@ -286,27 +318,26 @@ class RewriteImagePanelTest(unittest.TestCase):
         first, second = (self.roi_toolbox.roi_by_id(i).sample_color_hex for i in (1, 2))
         self.assertNotEqual(first, second)
         for color in (first, second):
-            curve = self.panel._roi_overlay.sample_curves[color]
-            self.assertEqual(self._points(curve), _CIRCLE_POINTS, color)
-            self.assertEqual(curve.opts["pen"].color().name(), color)
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curve), _CIRCLE_POINTS, "the ungrouped ROI keeps the default colour")
+            self.assertEqual(self._points(color), _CIRCLE_POINTS, color)
+            self.assertEqual(self.panel._roi_overlay.sample_circles.outline_color(color).name(), color)
+        self.assertEqual(self._points(self._default_color()), _CIRCLE_POINTS, "the ungrouped ROI keeps the default colour")
 
-    def test_recolouring_moves_a_roi_to_another_curve_and_empties_the_old_one(self) -> None:
+    def test_recolouring_moves_a_roi_to_another_colour_and_leaves_nothing_on_the_old_one(self) -> None:
         self._load()
         self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         self.roi_toolbox.set_roi_colors((1,), "#112233")
         _pump()
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curves["#112233"]), _CIRCLE_POINTS)
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curve), 0)
+        self.assertEqual(self._points("#112233"), _CIRCLE_POINTS)
+        self.assertEqual(self._points(self._default_color()), 0)
 
         self.roi_toolbox.set_roi_colors((1,), "#445566")
         _pump()
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curves["#112233"]), 0)
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curves["#445566"]), _CIRCLE_POINTS)
+        self.assertEqual(self._points("#112233"), 0)
+        self.assertEqual(self._points("#445566"), _CIRCLE_POINTS)
 
         self.roi_toolbox.set_roi_colors((1,), None)
         _pump()
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curve), _CIRCLE_POINTS)
+        self.assertEqual(self._points(self._default_color()), _CIRCLE_POINTS)
 
     def test_a_selected_roi_keeps_its_own_colour_and_gets_a_highlight_border(self) -> None:
         self._load()
@@ -318,35 +349,34 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         self.assertEqual(self._points(self.panel._roi_overlay.selection_curve), _CIRCLE_POINTS)
         # Since fa61b11 the selected ROI keeps its own colour and fill; the highlight is a border drawn on top.
-        own_curve = self.panel._roi_overlay.sample_curves[self.roi_toolbox.roi_by_id(1).sample_color_hex]
-        self.assertGreater(self._points(own_curve), 0, "still drawn in its own colour")
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curves[self.roi_toolbox.roi_by_id(2).sample_color_hex]), _CIRCLE_POINTS)
+        self.assertGreater(self._points(self.roi_toolbox.roi_by_id(1).sample_color_hex), 0, "still drawn in its own colour")
+        self.assertEqual(self._points(self.roi_toolbox.roi_by_id(2).sample_color_hex), _CIRCLE_POINTS)
 
     def test_a_stored_colour_that_is_not_a_colour_falls_back_to_the_default(self) -> None:
         self._load()
         roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         self.roi_toolbox.roi_by_id(roi_id).sample_color_hex = "not-a-colour"  # e.g. a damaged session file
         self.panel._draw_overlays()
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curve), _CIRCLE_POINTS)
+        self.assertEqual(self._points(self._default_color()), _CIRCLE_POINTS)
 
-    def test_emptied_colour_curves_are_capped_so_recolouring_cannot_pile_up_items(self) -> None:
+    def test_recolouring_leaves_no_leftover_colours_behind(self) -> None:
         self._load()
         self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         for i in range(60):
             self.roi_toolbox.set_roi_colors((1,), f"#{i + 1:02x}{i + 1:02x}ff")
             self.panel._draw_overlays()
-        # the default curve, the one in use, and at most the idle cap
-        self.assertLessEqual(len(self.panel._roi_overlay.sample_curves), 2 + 24)
-        self.assertEqual(self._points(self.panel._roi_overlay.sample_curves["#3c3cff"]), _CIRCLE_POINTS)
+        # one painted item: only the colour in use exists, nothing piles up however often a ROI is recoloured
+        self.assertEqual(self.panel._roi_overlay.sample_circles.colors(), ["#3c3cff"])
+        self.assertEqual(self._points("#3c3cff"), _CIRCLE_POINTS)
 
-    def test_clearing_the_dataset_empties_every_roi_curve(self) -> None:
+    def test_clearing_the_dataset_empties_every_roi_circle(self) -> None:
         self._load()
         self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
         self.roi_toolbox.set_roi_colors((1,), "#112233")
         _pump()
         self.dataset.clear_dataset()
         _pump(0.2)
-        self.assertTrue(all(self._points(curve) == 0 for curve in self.panel._roi_overlay.sample_curves.values()))
+        self.assertEqual(self.panel._roi_overlay.sample_circles.circle_count(), 0)
 
     # -- interaction ----------------------------------------------------
 
@@ -419,6 +449,180 @@ class RewriteImagePanelTest(unittest.TestCase):
         )
         self.panel._on_rendered(RenderResult(request=stale, image=np.zeros((4, 4), dtype=np.float32)))
         self.assertEqual(self.panel._frame_status, before)
+
+    # -- ready-made picture from the render thread (2026-10-14) ----------------------------
+
+    def _painted_rgba(self, item) -> "np.ndarray":
+        from PyQt6.QtGui import QImage
+
+        item.render()
+        q = item.qimage.convertToFormat(QImage.Format.Format_RGBA8888)
+        ptr = q.constBits()
+        ptr.setsize(q.sizeInBytes())
+        return np.frombuffer(ptr, np.uint8).reshape(q.height(), q.bytesPerLine() // 4, 4)[:, : q.width()].copy()
+
+    def test_a_rotated_frame_is_drawn_from_the_render_threads_picture_and_looks_the_same(self) -> None:
+        """Rotation leaves NaN corners; for such a frame the render thread hands over the finished 8-bit picture
+        (`display_picture.py`). What the item paints must be what pyqtgraph itself paints for the same frame, and
+        `.image` must still be the float frame (the cursor readout reads values from it)."""
+        import pyqtgraph as pg
+
+        self._load()
+        self.geometry.set_image_tools_enabled(True)
+        self.geometry.set_rotation(3.0)
+        _pump()
+        item = self.panel._image_item
+        self.assertTrue(np.isnan(item.image).any(), "the rotated frame has no-data corners")
+        self.assertEqual(item.image.dtype, np.float32)
+        self.assertIsNotNone(item._prepared_qimage, "the picture made on the render thread is in use")
+        reference = pg.ImageItem(axisOrder="row-major")
+        reference.setImage(np.array(item.image, copy=True), autoLevels=True)
+        np.testing.assert_array_equal(self._painted_rgba(item), self._painted_rgba(reference))
+        finite = item.image[np.isfinite(item.image)]
+        self.assertEqual(self.panel._last_data_range, (float(finite.min()), float(finite.max())))
+
+    def test_an_upright_frame_is_drawn_by_pyqtgraph_and_its_range_comes_from_the_render_thread(self) -> None:
+        self._load()
+        item = self.panel._image_item
+        self.assertFalse(np.isnan(item.image).any())
+        self.assertIsNone(item._prepared_qimage)
+        self.assertEqual(self.panel._last_data_range, (float(item.image.min()), float(item.image.max())))
+
+    # -- fixed display range (2026-10-14, maintainer request: every frame must be comparable) --------
+
+    def _levels_on_screen(self) -> np.ndarray:
+        return np.asarray(self.panel._image_item.levels, dtype=np.float32)
+
+    @staticmethod
+    def _type_into(edit, text: str) -> None:
+        """What a user does in one of the Display range fields: replace the text, press Enter."""
+        edit.setText(text)
+        edit.editingFinished.emit()
+
+    def test_a_fixed_display_range_gives_every_frame_the_same_levels_automatic_does_not(self) -> None:
+        self._load()
+        first_auto = self._levels_on_screen()
+        self.selection.set_wavelength(550.0)
+        _pump()
+        self.assertFalse(np.array_equal(first_auto, self._levels_on_screen()), "automatic: each frame its own range")
+        self.panel.set_display_range(True, 150.0, 3000.0)
+        _pump()
+        fixed = np.asarray((150.0, 3000.0), dtype=np.float32)
+        np.testing.assert_array_equal(self._levels_on_screen(), fixed)
+        self.selection.set_wavelength(500.0)
+        _pump()
+        np.testing.assert_array_equal(self._levels_on_screen(), fixed)
+        self.panel.set_display_range(False, 150.0, 3000.0)  # back to automatic
+        _pump()
+        self.assertFalse(np.array_equal(self._levels_on_screen(), fixed))
+
+    def test_the_fixed_range_picture_is_what_pyqtgraph_draws_with_those_levels(self) -> None:
+        import pyqtgraph as pg
+
+        self._load()
+        self.panel.set_display_range(True, 150.0, 3000.0)
+        _pump()
+        item = self.panel._image_item
+        reference = pg.ImageItem(axisOrder="row-major")
+        reference.setImage(np.array(item.image, copy=True), autoLevels=False, levels=np.asarray((150.0, 3000.0), np.float32))
+        np.testing.assert_array_equal(self._painted_rgba(item), self._painted_rgba(reference))
+
+    def test_a_rotated_frame_with_a_fixed_range_gets_the_same_grey_as_a_frame_without_no_data_pixels(self) -> None:
+        import pyqtgraph as pg
+
+        self._load()
+        self.geometry.set_image_tools_enabled(True)
+        self.geometry.set_rotation(3.0)
+        self.panel.set_display_range(True, 150.0, 3000.0)
+        _pump()
+        item = self.panel._image_item
+        finite = np.isfinite(item.image)
+        self.assertFalse(finite.all(), "the rotated frame has no-data corners")
+        self.assertIsNotNone(item._prepared_qimage, "made on the render thread with the fixed range")
+        np.testing.assert_array_equal(item.levels, np.asarray((150.0, 3000.0), dtype=np.float32))
+        reference = pg.ImageItem(axisOrder="row-major")
+        reference.setImage(np.where(finite, item.image, np.float32(0.0)), autoLevels=False, levels=np.asarray((150.0, 3000.0), np.float32))
+        np.testing.assert_array_equal(self._painted_rgba(item)[..., :3][finite], self._painted_rgba(reference)[..., :3][finite])
+
+    def test_the_view_tab_controls_drive_the_display_range(self) -> None:
+        self._load()
+        reported = []
+        self.panel.display_range_changed.connect(lambda *args: reported.append(args))
+        controls = self.panel._view_tab.display_range_controls
+        self.assertEqual(self.panel.display_range()[0], False)
+        auto = self._levels_on_screen()
+        self.assertEqual(controls._low_edit.text(), str(round(float(auto[0]))), "the greyed fields show this frame's own range")
+        controls._toggle.click()  # a fixed range starts at the whole 16-bit scale
+        _pump()
+        self.assertEqual(reported[-1], (True, 0.0, 65535.0))
+        np.testing.assert_array_equal(self._levels_on_screen(), np.asarray((0.0, 65535.0), np.float32))
+        self._type_into(controls._high_edit, "2500")
+        _pump()
+        self.assertEqual(self.panel.display_range()[0:1] + self.panel.display_range()[2:], (True, 2500.0))
+        self.assertEqual(float(self._levels_on_screen()[1]), 2500.0)
+        self.assertEqual(reported[-1][2], 2500.0)
+        controls._fit.click()  # this frame's own range
+        _pump()
+        np.testing.assert_allclose(self._levels_on_screen(), auto, rtol=0, atol=0.51)  # the fields hold whole numbers
+        controls._full.click()  # and back to the whole 16-bit scale
+        _pump()
+        np.testing.assert_array_equal(self._levels_on_screen(), np.asarray((0.0, 65535.0), np.float32))
+
+    def test_an_unusable_range_falls_back_to_automatic_and_says_so(self) -> None:
+        self._load()
+        controls = self.panel._view_tab.display_range_controls
+        controls._toggle.click()
+        _pump()
+        self._type_into(controls._low_edit, "3000")
+        self._type_into(controls._high_edit, "2000")  # max below min
+        _pump()
+        self.assertIn("max must be above min", self.panel._tool_status)
+        self.assertIsNone(self.panel._fixed_levels())
+        self.assertNotEqual(float(self._levels_on_screen()[1]), float(controls._high_edit.text()), "shown at its own range meanwhile")
+
+    def test_the_display_range_group_is_the_leftmost_one_on_the_view_tab(self) -> None:
+        """Maintainer's request (2026-10-14): the Display range group sits to the left of the Histogram group;
+        the All group (Show all / Hide all) sits between them, next to Display range."""
+        layout = self.panel._view_tab.layout()
+        first, all_group, histogram = (layout.itemAt(index).widget() for index in (0, 2, 4))  # odd items are separators
+        self.assertTrue(first.isAncestorOf(self.panel._view_tab.display_range_controls))
+        self.assertTrue(all_group.isAncestorOf(self.panel._view_tab._all_controls))
+        self.assertTrue(histogram.isAncestorOf(self.panel._view_tab.highlight_controls))
+
+    def test_restoring_the_display_range_does_not_report_it_as_a_user_change(self) -> None:
+        self._load()
+        reported = []
+        self.panel.display_range_changed.connect(lambda *args: reported.append(args))
+        self.panel.set_display_range(True, 150.0, 3000.0)
+        _pump()
+        self.assertEqual(reported, [])
+        self.assertEqual(self.panel._view_tab.display_range_controls.state(), (True, 150.0, 3000.0))
+
+    def test_the_display_range_is_remembered_per_dataset(self) -> None:
+        from types import SimpleNamespace
+
+        from lspr_imaging_app.app_rewrite import _wire_display_range_persistence
+        from lspr_imaging_app.panels.ui_state import UiStateStore
+        from lspr_imaging_app.storage.ui_state_keys import DISPLAY_RANGE, read_display_range
+
+        store = UiStateStore({})
+        settings = SimpleNamespace(last_dataset_folder=str(self.root))
+        _wire_display_range_persistence(SimpleNamespace(dataset=self.dataset), store, settings, self.panel)
+        self._load()
+        self.panel._view_tab.display_range_controls._toggle.click()  # the user fixes the range
+        self._type_into(self.panel._view_tab.display_range_controls._high_edit, "2500")
+        saved = read_display_range(store)
+        self.assertEqual(saved[0], str(self.root))
+        self.assertEqual(saved[1:], (True, saved[2], 2500.0))
+
+        self.panel.set_display_range(False, 0.0, 0.0)  # e.g. another dataset was open in between
+        self._load()  # the same dataset again: the range comes back
+        self.assertEqual(self.panel.display_range(), (True, saved[2], 2500.0))
+
+        store.set(DISPLAY_RANGE, {"dataset": "C:/another/run", "fixed": True, "min": 1.0, "max": 9.0})
+        self._load()  # a range saved for a different dataset is not applied: automatic per frame
+        self.assertFalse(self.panel.display_range()[0])
+        self.assertIsNone(self.panel._fixed_levels())
 
     # -- cursor overlay (2026-09-29) -------------------------------------
 
@@ -733,6 +937,35 @@ class RewriteImagePanelTest(unittest.TestCase):
         )
         self.assertTrue(tooltips)
         self.assertIn("No comment was recorded", tooltips[-1])
+
+    def test_the_subtitle_shows_the_frames_own_time_between_cube_and_comment(self) -> None:
+        """Maintainer's request (2026-10-14): each frame has its own experimental time, shown as H:MM:SS
+        (M:SS under an hour) between "Cube X, wl nm" and the comment, and left out when the frame has none."""
+        from lspr_core import ImagingAcquisitionMetadata, ImagingCommentEvent, ImagingCubeTiming
+
+        self._load()
+        timings = [
+            ImagingCubeTiming(spectral_cube_index=cube, wavelength_nm=wavelength, acquired_at_unix_ms=ms)
+            for cube, wavelength, ms in (
+                (0, 500.0, 10_000), (0, 550.0, 13_000), (0, 600.0, 75_000), (1, 500.0, 3_735_000),  # (1, 600) has none
+            )
+        ]
+        self.dataset.set_acquisition_metadata(
+            ImagingAcquisitionMetadata(
+                source_format="legacy_measuring_times_csv", image_timings=timings,
+                comment_events=[ImagingCommentEvent(acquired_at_unix_ms=11_000, comment="buffer")],
+            )
+        )
+        expected = {
+            (0, 500.0): "Cube 0, 500 nm | 0:00 | N/A",  # t = 0 is the earliest frame; no comment recorded yet
+            (0, 550.0): "Cube 0, 550 nm | 0:03 | buffer",
+            (0, 600.0): "Cube 0, 600 nm | 1:05 | buffer",
+            (1, 500.0): "Cube 1, 500 nm | 1:02:05 | buffer",  # an hour in: H:MM:SS
+            (1, 600.0): "Cube 1, 600 nm | N/A",  # no timing: no time shown
+        }
+        for (cube, wavelength), text in expected.items():
+            self.panel._show_frame_status(cube, wavelength)
+            self.assertEqual(self.panel._frame_status, text)
 
     # -- top toolbar (2026-09-30, maintainer request - flipped from a
     # vertical strip on the canvas's left edge to a horizontal bar across
@@ -1379,7 +1612,7 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         # directly - 180 keeps real headroom against that while still being
         # nowhere near it, not pinned to the exact pixel geometry of one
         # particular toolbar height (same reasoning as the earlier bumps).
-        self.assertLess(x_range[1] - x_range[0], 260.0)  # 190 -> 260, 2026-10-04: the new "Chromatic Corrections" tab label widens the tab strip (the ribbon's minimum width) and so the canvas; measured here: restored span 203 vs full auto-fit 550, so it is still clearly the restored range
+        self.assertLess(x_range[1] - x_range[0], 400.0)  # 260 -> 400, 2026-10-14: the slider ribbon (~36 px) takes canvas height in this 280 px panel and the aspect lock turns less height into more x span; measured: restored span 302 vs full auto-fit 830 (ratio 0.36, was 0.37), so it is still clearly the restored range. 190 -> 260, 2026-10-04: the new "Chromatic Corrections" tab label widens the tab strip (the ribbon's minimum width) and so the canvas; measured here: restored span 203 vs full auto-fit 550, so it is still clearly the restored range
 
     def test_the_saved_range_is_never_reapplied_on_a_later_frame_change(self) -> None:
         """Restoring must be a one-shot: navigating to a different frame
