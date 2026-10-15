@@ -594,8 +594,8 @@ class SliderRibbonTest(unittest.TestCase):
         show.play()
         _pump(1.4)
         show.stop()
-        self.assertTrue(any(m.startswith("Play:") for m in messages), messages)
-        self.assertTrue(messages[-1].startswith("Play finished:"), messages[-1])
+        self.assertTrue(any(m.startswith("Slideshow:") and m.endswith(" fps") for m in messages), messages)
+        self.assertTrue(messages[-1].startswith("Slideshow finished:"), messages[-1])
 
     def test_ignored_frames_are_skipped_by_the_show(self) -> None:
         self.roles.set_wavelength_ignored(550.0, True)

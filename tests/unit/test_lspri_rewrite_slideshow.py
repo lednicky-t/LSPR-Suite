@@ -220,9 +220,11 @@ class PlaybackStatsTest(unittest.TestCase):
         stats.note_redraw(7, start=1.100, end=1.101)  # waited ~102 ms for the redraw timer
         line = stats.note_rendered(7, arrived=1.200, done=1.206, load_s=0.060, prep_s=0.030, listeners_s=0.004)
         self.assertIsNone(line)  # the one-second window is not over
-        summary = stats.summary(now=2.0)
-        for part in ("wait 102", "redraw 1", "queue 9", "load 60", "prep 30", "gui 6", "listeners 4", "lag 208"):
-            self.assertIn(part, summary)
+        fields = stats.total_fields()  # the stage breakdown lives in the log fields, not in the status bar
+        expected = {"wait_ms": 102, "redraw_ms": 1, "queue_ms": 9, "load_ms": 60, "prep_ms": 30,
+                    "gui_ms": 6, "listeners_ms": 4, "lag_ms": 208}
+        for name, value in expected.items():
+            self.assertAlmostEqual(fields[name], value, delta=0.2, msg=name)
 
     def test_detail_stages_are_reported_per_shown_frame_biggest_first(self) -> None:
         stats = PlaybackStats()
@@ -235,11 +237,9 @@ class PlaybackStatsTest(unittest.TestCase):
             stats.note_detail("paint_view", 0.060)  # a stage may run several times per frame
             stats.note_detail("paint_view", 0.060)
             stats.note_rendered(frame + 1, 1.1 + frame, 1.11 + frame, load_s=0.0, prep_s=0.0, listeners_s=0.0)
-        text = stats.summary(now=5.0)
-        self.assertIn("per frame: paint_view 120, overlays 40", text)
-        self.assertNotIn("ignored_while_inactive", text)
         fields = stats.total_fields()
         self.assertEqual((fields["d_overlays_ms"], fields["d_paint_view_ms"]), (40.0, 120.0))
+        self.assertNotIn("d_ignored_while_inactive_ms", fields)
 
     def test_the_whole_cycle_is_reported_so_unmeasured_time_shows_up_as_other(self) -> None:
         stats = PlaybackStats()
@@ -249,9 +249,8 @@ class PlaybackStatsTest(unittest.TestCase):
             stats.note_step(start, 0.0)
             stats.note_redraw(frame + 1, start, start)
             stats.note_rendered(frame + 1, start + 0.09, start + 0.10, load_s=0.0, prep_s=0.0, listeners_s=0.0)
-        text = stats.summary(now=5.0)
-        self.assertIn("cycle 150 ms (lag 100 + other 50)", text)
-        self.assertEqual(stats.total_fields()["cycle_ms"], 150.0)
+        fields = stats.total_fields()
+        self.assertEqual((fields["cycle_ms"], fields["lag_ms"]), (150.0, 100.0))  # the other 50 ms = cycle - lag
 
     def test_queue_time_is_split_into_thread_wait_and_gui_delivery(self) -> None:
         stats = PlaybackStats()
@@ -262,8 +261,8 @@ class PlaybackStatsTest(unittest.TestCase):
             1, arrived=1.200, done=1.205, load_s=0.0, prep_s=0.0, listeners_s=0.0,
             submitted_at=1.001, started_at=1.101, finished_at=1.150, blocked_by_prefetch=True,
         )
-        summary = stats.summary(now=2.0)
-        self.assertIn("100 thread + 50 deliver, 100% behind a read-ahead", summary)
+        fields = stats.total_fields()
+        self.assertEqual((fields["thread_ms"], fields["deliver_ms"], fields["blocked"]), (100.0, 50.0, 1))
 
     def test_gui_thread_cpu_share_says_busy_or_waiting(self) -> None:
         stats = PlaybackStats()
@@ -303,7 +302,8 @@ class PlaybackStatsTest(unittest.TestCase):
             stats.note_step(1.0 + 0.05 * k, handlers_s=0.001)
         stats.note_redraw(1, start=1.3, end=1.301)
         stats.note_rendered(1, arrived=1.31, done=1.32, load_s=0.0, prep_s=0.0, listeners_s=0.0)
-        self.assertIn("skipped 4 of 5 steps", stats.summary(now=2.0))
+        fields = stats.total_fields()
+        self.assertEqual((fields["steps"], fields["shown"]), (5, 1))  # 4 steps were merged into the one frame shown
 
     def test_a_superseded_result_is_not_counted_and_inactive_is_silent(self) -> None:
         stats = PlaybackStats()
@@ -317,13 +317,22 @@ class PlaybackStatsTest(unittest.TestCase):
         self.assertEqual(stats._total.stale, 1)
         self.assertEqual(stats._total.shown, 1)
 
-    def test_a_window_line_is_returned_every_second(self) -> None:
+    def test_the_status_line_is_only_the_frame_rate_next_to_the_asked_one(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.0, target_interval_s=0.5)  # speed setting: 2 frames per second
+        lines = []
+        for serial, done in ((1, 0.5), (2, 1.0)):
+            stats.note_step(done - 0.05, 0.0)
+            stats.note_redraw(serial, done - 0.04, done - 0.04)
+            lines.append(stats.note_rendered(serial, done - 0.01, done, load_s=0.0, prep_s=0.0, listeners_s=0.0))
+        self.assertIsNone(lines[0])  # the one-second window is not over yet
+        self.assertEqual(lines[1], "Slideshow: 2.0 of 2.0 fps")  # a line every second, no stage timings
+        self.assertEqual(stats.summary(now=2.0), "Slideshow finished: 1.0 of 2.0 fps on average")
+
+    def test_a_run_without_a_shown_frame_says_so(self) -> None:
         stats = PlaybackStats()
         stats.start(0.0, target_interval_s=0.5)
-        stats.note_step(0.9, 0.0)
-        stats.note_redraw(1, 0.95, 0.95)
-        line = stats.note_rendered(1, 1.0, 1.05, load_s=0.0, prep_s=0.0, listeners_s=0.0)
-        self.assertTrue(line and line.startswith("Play:"))
+        self.assertEqual(stats.summary(now=1.0), "Slideshow: no frame was shown")
 
 
 if __name__ == "__main__":
