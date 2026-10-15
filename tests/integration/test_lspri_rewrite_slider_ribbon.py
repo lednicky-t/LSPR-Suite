@@ -677,6 +677,119 @@ class SliderRibbonTest(unittest.TestCase):
         self.panel._restore_slideshow_settings(store)
         self.assertEqual(self.panel._slideshow.settings(), SlideshowSettings())
 
+    # -- slider colours and marks (2026-10-15) -----------------------------------
+
+    def test_reference_tick_is_one_colour_on_both_sliders(self) -> None:
+        from lspr_ui import get_active_theme
+
+        self.reference.set_manual_frame(1, 600.0)
+        cube_slider, wavelength_slider = self.panel._cube_slider, self.panel._wavelength_slider
+        self.assertEqual(cube_slider._reference_tick_color, wavelength_slider._reference_tick_color)
+        self.assertEqual(cube_slider._reference_tick_color, get_active_theme().accent_green)
+
+    def test_dark_tick_marks_the_dark_wavelength_on_the_wavelength_slider_only(self) -> None:
+        from lspr_ui import get_active_theme
+
+        wavelength_slider = self.panel._wavelength_slider
+        self.assertIsNone(wavelength_slider._dark_tick_index)  # no dark chosen
+        self.tools._dark_pick.click()  # 550 nm, the second wavelength of cube 0
+        self.assertEqual(self.roles.dark_wavelength(), 550.0)
+        self.assertEqual(wavelength_slider._dark_tick_index, 1)
+        self.assertEqual(wavelength_slider._dark_tick_color, get_active_theme().accent_purple)
+        self.assertIsNone(self.panel._cube_slider._dark_tick_index)
+        self.selection.set_wavelength(600.0)  # the tick is the dark's own, not the viewed frame's
+        self.assertEqual(wavelength_slider._dark_tick_index, 1)
+        self.tools._dark_clear.click()
+        self.assertIsNone(wavelength_slider._dark_tick_index)
+
+    def test_a_picked_colour_recolours_the_ticks_and_reset_returns_the_default(self) -> None:
+        from lspr_ui import get_active_theme
+
+        from lspr_imaging_app.panels.hue_slider import color_for_hue
+
+        self.reference.set_manual_frame(1, 600.0)
+        self.tools._dark_pick.click()
+        colors = self.panel._slider_ribbon.slider_colors
+        colors.popup("dark").hue_slider.setValue(120)  # the user drags the hue slider
+        self.assertEqual(self.panel._wavelength_slider._dark_tick_color, color_for_hue(120))
+        colors.popup("reference").hue_slider.setValue(30)
+        self.assertEqual(self.panel._cube_slider._reference_tick_color, color_for_hue(30))
+        self.assertEqual(self.panel._wavelength_slider._reference_tick_color, color_for_hue(30))
+        self.assertIn("Dark", colors.button("dark").toolTip())  # hovering names what the swatch colours
+        colors.popup("dark").reset_button.click()
+        self.assertEqual(self.panel._wavelength_slider._dark_tick_color, get_active_theme().accent_purple)
+        self.assertEqual(self.panel._cube_slider._reference_tick_color, color_for_hue(30))  # the others stay
+
+    def test_an_ignored_cube_marks_its_tick_on_the_cube_slider_only(self) -> None:
+        from lspr_ui import get_active_theme
+
+        cube_slider, wavelength_slider = self.panel._cube_slider, self.panel._wavelength_slider
+        self.assertEqual(cube_slider._ignored_tick_indices, frozenset())
+        self.tools._ignore_cube.click()  # cube 0 is viewed
+        self.assertEqual(cube_slider._ignored_tick_indices, frozenset({0}))
+        self.assertEqual(cube_slider._ignored_tick_color, get_active_theme().accent_red)
+        self.assertEqual(wavelength_slider._ignored_tick_indices, frozenset())
+        self.roles.set_cube_ignored(1, True)
+        self.assertEqual(cube_slider._ignored_tick_indices, frozenset({0, 1}))
+        self.tools._ignore_clear_all.click()
+        self.assertEqual(cube_slider._ignored_tick_indices, frozenset())
+
+    def test_an_ignored_wavelength_marks_its_tick_on_the_wavelength_slider_only(self) -> None:
+        cube_slider, wavelength_slider = self.panel._cube_slider, self.panel._wavelength_slider
+        self.tools._ignore_wl.click()  # 550 nm: the second wavelength of every cube here
+        self.assertEqual(wavelength_slider._ignored_tick_indices, frozenset({1}))
+        self.assertEqual(cube_slider._ignored_tick_indices, frozenset())
+        self.selection.set_cube(1)  # ignored in every cube: the tick follows to the next cube
+        self.assertEqual(wavelength_slider._ignored_tick_indices, frozenset({1}))
+        self.selection.set_wavelength(600.0)  # the tick is the ignored wavelength's own, not the viewed frame's
+        self.assertEqual(wavelength_slider._ignored_tick_indices, frozenset({1}))
+        self.roles.set_wavelength_ignored(550.0, False)
+        self.assertEqual(wavelength_slider._ignored_tick_indices, frozenset())
+
+    def test_marks_on_one_tick_are_stacked_not_hidden(self) -> None:
+        from lspr_imaging_app.panels.image.data_axis_slider import DataAxisSlider
+
+        slider = DataAxisSlider()
+        slider.set_ticks([500.0, 550.0, 600.0], {})
+        slider.set_ignored_ticks(frozenset({1, 2}), "#ef4444")
+        slider.set_dark_tick(0, "#a855f7")
+        slider.set_reference_tick(1, "#22c55e")
+        # Top to bottom: ignored, dark, reference; a tick with one mark has one colour.
+        self.assertEqual(
+            slider._mark_colors(3),
+            {1: ["#ef4444", "#22c55e"], 2: ["#ef4444"], 0: ["#a855f7"]},
+        )
+        slider.set_ignored_ticks(frozenset(), None)
+        self.assertEqual(slider._mark_colors(3), {0: ["#a855f7"], 1: ["#22c55e"]})
+
+    def test_the_ignored_colour_is_one_of_the_slider_colours(self) -> None:
+        self.tools._ignore_cube.click()
+        self.tools._ignore_wl.click()
+        self.panel._slider_ribbon.slider_colors.color_changed.emit("ignored", "#112233")
+        self.assertEqual(self.panel._cube_slider._ignored_tick_color, "#112233")
+        self.assertEqual(self.panel._wavelength_slider._ignored_tick_color, "#112233")
+        self.panel._slider_ribbon.slider_colors.color_changed.emit("ignored", None)
+        self.assertNotEqual(self.panel._cube_slider._ignored_tick_color, "#112233")
+
+    def test_slider_colours_are_remembered(self) -> None:
+        from lspr_imaging_app.panels.ui_state import UiStateStore
+
+        store = UiStateStore()
+        self.panel.restore_ui_state(store)
+        self.panel._slider_ribbon.slider_colors.color_changed.emit("mask", "#112233")
+        self.assertEqual(store.get("image/slider_color_mask"), "#112233")
+        self.panel._slider_ribbon.slider_colors.color_changed.emit("mask", None)  # reset
+        self.assertIsNone(store.get("image/slider_color_mask"))
+
+        store.set("image/slider_color_roi", "#445566")
+        store.set("image/slider_color_dark", 7)  # not a colour: a hand-edited file falls back to the default
+        store.set("image/slider_color_reference", "not a colour")
+        self.panel._restore_slider_colors(store)
+        colors = self.panel._slider_colors
+        self.assertEqual(colors.color("roi"), "#445566")
+        self.assertIsNone(colors.override("dark"))
+        self.assertIsNone(colors.override("reference"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -218,17 +218,22 @@ class WorkflowRowsAndLabelTest(unittest.TestCase):
         rows._pick_button.click()
         self.assertIn("not a wavelength", rows._dark_label.text())
 
-    def test_dock_label_prefix_only_for_dark_and_ignored(self) -> None:
+    def test_dock_label_prefix_for_dark_reference_and_ignored_in_the_slider_colours(self) -> None:
         from lspr_imaging_app.panels.image.panel import ImagePanel
+        from lspr_imaging_app.panels.image.slider_colors import SliderColors
 
-        _ds, _ref, roles = _make()
+        _ds, ref, roles = _make()
         roles.set_cube_ignored(3, True)
-        fake = SimpleNamespace(_frame_roles=roles)
+        ref.set_manual_frame(2, 550.0)
+        colors = SliderColors()
+        colors.set("dark", "#112233")
+        fake = SimpleNamespace(_frame_roles=roles, _slider_colors=colors)
         prefix = ImagePanel._with_role_prefix
         self.assertEqual(prefix(fake, "Cube 0, 500 nm | N/A", 0, 500.0), "Cube 0, 500 nm | N/A")
         dark = prefix(fake, "Cube 0, 0 nm | a<b", 0, 0.0)
-        self.assertIn(">Dark</span> Cube 0, 0 nm | a&lt;b", dark)
-        self.assertIn(">Ignored</span>", prefix(fake, "Cube 3, 500 nm | N/A", 3, 500.0))
+        self.assertIn('<span style="color:#112233">Dark background</span> Cube 0, 0 nm | a&lt;b', dark)
+        self.assertIn(f'style="color:{colors.color("reference")}">Reference</span>', prefix(fake, "Cube 2, 550 nm", 2, 550.0))
+        self.assertIn(f'style="color:{colors.color("ignored")}">Ignored</span>', prefix(fake, "Cube 3, 500 nm | N/A", 3, 500.0))
         self.assertEqual(prefix(SimpleNamespace(_frame_roles=None), "x", 0, 0.0), "x")
 
 
