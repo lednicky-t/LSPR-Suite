@@ -142,6 +142,57 @@ class SliderRibbonTest(unittest.TestCase):
         self.assertEqual(self.reference.mode(), MODE_MANUAL)
         self.assertEqual(self.reference.manual_frame(), (1, 600.0))
 
+    def test_go_to_reference_moves_both_sliders_to_the_reference_frame(self) -> None:
+        from PyQt6.QtWidgets import QToolButton
+
+        group = self.tools._go_ref.parentWidget()
+        self.assertEqual(  # the first icon of the Reference group, from the left
+            group.findChildren(QToolButton)[:3], [self.tools._go_ref, self.tools._set_ref, self.tools._find_ref]
+        )
+        self.assertFalse(self.tools._go_ref.isEnabled())  # no reference frame yet
+        self.assertIn("no reference frame", self.tools._go_ref.toolTip())
+        self.selection.set_cube(1)
+        self.selection.set_wavelength(600.0)
+        self.tools._set_ref.click()
+        self.assertTrue(self.tools._go_ref.isEnabled())
+        self.assertNotIn("no reference frame", self.tools._go_ref.toolTip())
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
+        _pump(0.1)
+        self.tools._go_ref.click()
+        _pump(0.1)
+        self.assertEqual((self.selection.current_cube(), self.selection.current_wavelength()), (1, 600.0))
+        self.assertEqual((self.panel._cube_spin.value(), self.panel._wavelength_spin.value()), (1, 600.0))
+        # The right-click menu has the same icon, and it closes the menu like every other one.
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
+        menu_tools = FrameToolsWidget(stacked=True)
+        self.panel._connect_frame_tools(menu_tools)
+        menu_tools.refresh(self.panel._frame_tools_state())
+        closed: list[bool] = []
+        menu_tools.used.connect(lambda: closed.append(True))
+        menu_tools._go_ref.click()
+        self.assertEqual((self.selection.current_cube(), self.selection.current_wavelength()), (1, 600.0))
+        self.assertEqual(closed, [True])
+
+    def test_dock_role_field_names_a_reference_dark_or_ignored_frame_in_its_slider_colour(self) -> None:
+        colors = self.panel._slider_colors
+        self.reference.set_manual_frame(1, 600.0)
+        self.panel._show_frame_status(1, 600.0)
+        role = self.panel.frame_columns()[0]
+        self.assertEqual((role.text, role.color), ("Reference", colors.color("reference")))
+        self.panel._show_frame_status(0, 500.0)
+        self.assertEqual(self.panel.frame_columns()[0].text, "")  # a plain frame: the field is empty, not gone
+        self.assertIsNone(self.panel.frame_columns()[0].color)
+        self.roles.set_wavelength_ignored(500.0, True)
+        self.panel._show_frame_status(0, 500.0)
+        role = self.panel.frame_columns()[0]
+        self.assertEqual((role.text, role.color), ("Ignored", colors.color("ignored")))
+        self.roles.set_dark(550.0)
+        self.panel._show_frame_status(0, 550.0)
+        role = self.panel.frame_columns()[0]
+        self.assertEqual((role.text, role.color), ("Dark background", colors.color("dark")))
+
     def test_unit_button_names_the_unit_a_click_switches_to(self) -> None:
         # No acquisition timing in this dataset: switching to time is not offered.
         self.assertEqual(self.tools._unit.text(), "(t)")

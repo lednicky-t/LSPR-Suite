@@ -27,7 +27,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PyQt6 import QtWidgets
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QColor
+from PyQt6.QtTest import QTest
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -967,6 +969,54 @@ class RewriteImagePanelTest(unittest.TestCase):
             self.panel._show_frame_status(cube, wavelength)
             self.assertEqual(self.panel._frame_status, text)
 
+    def test_the_dock_fields_have_fixed_widths_and_the_comment_takes_the_rest(self) -> None:
+        """2026-10-16, maintainer request: the dock's status is five left-aligned fields (role, cube,
+        wavelength, time, comment); each but the comment is sized by the widest thing it can show in
+        this dataset, so an empty one keeps its place."""
+        from lspr_core import ImagingAcquisitionMetadata, ImagingCommentEvent, ImagingCubeTiming
+
+        self._load()
+        timings = [
+            ImagingCubeTiming(spectral_cube_index=cube, wavelength_nm=wavelength, acquired_at_unix_ms=ms)
+            for cube, wavelength, ms in ((0, 500.0, 10_000), (0, 550.0, 13_240))  # the other frames have none
+        ]
+        self.dataset.set_acquisition_metadata(
+            ImagingAcquisitionMetadata(
+                source_format="legacy_measuring_times_csv", image_timings=timings,
+                comment_events=[ImagingCommentEvent(acquired_at_unix_ms=11_000, comment="buffer")],
+            )
+        )
+        emitted: list[tuple] = []
+        self.panel.frame_columns_changed.connect(emitted.append)
+        self.panel._show_frame_status(0, 550.0)
+        with_everything = self.panel.frame_columns()
+        self.panel._show_frame_status(1, 600.0)
+        without_time = self.panel.frame_columns()
+        self.assertEqual(emitted, [with_everything, without_time])
+        self.assertEqual([c.text for c in with_everything], ["", "Cube 0", "550 nm", "0:03.24", "buffer"])
+        self.assertEqual([c.text for c in without_time], ["", "Cube 1", "600 nm", "", "N/A"])
+        # Sizes: the same whatever is shown; cube / wavelength from this dataset (cubes 0-1, 500-600 nm).
+        sizes = [c.widest for c in with_everything]
+        self.assertEqual(sizes, [c.widest for c in without_time])
+        self.assertEqual(sizes[0], "Dark background")
+        self.assertEqual(sizes[1:3], ["Cube 1", "600 nm"])
+        self.assertTrue(sizes[3])
+        self.assertEqual(sizes[4], "")  # the comment: no fixed width
+        self.assertIn("not linked to experiment data", without_time[4].tooltip)  # no timing for this frame
+        self.assertEqual(with_everything[4].tooltip, "buffer")
+        # A change of the cube unit re-measures the cube field (a start time is wider than a number).
+        self.panel._frame_widest = ("stale", "stale")
+        self.panel._on_cube_display_changed("cube")
+        self.assertEqual(self.panel.frame_columns()[1].widest, "Cube 1")
+
+    def test_a_message_without_a_frame_goes_in_the_comment_field(self) -> None:
+        columns = self.panel.frame_columns()  # "No dataset loaded." from construction
+        self.assertEqual([c.text for c in columns], ["", "", "", "", "No dataset loaded."])
+        self.assertEqual(columns[1].widest, "Cube 0")  # nothing loaded: placeholders, never an error
+        self._load()
+        self.panel._on_dataset_cleared()
+        self.assertEqual([c.text for c in self.panel.frame_columns()], ["", "", "", "", "No dataset loaded."])
+
     # -- top toolbar (2026-09-30, maintainer request - flipped from a
     # vertical strip on the canvas's left edge to a horizontal bar across
     # its top, "since frames are usually landscapes"; the cursor-readout
@@ -980,9 +1030,11 @@ class RewriteImagePanelTest(unittest.TestCase):
         top_bar_layout = self.panel._top_bar.layout()
         self.assertIs(self.panel._tool_info.parent(), self.panel._top_bar)
         self.assertIs(self.panel._cursor_overlay.icon_label.parent(), self.panel._general_row)
-        ribbon_index = top_bar_layout.indexOf(self.panel._tool_ribbon)
+        # The ribbon sits in its roll-up drawer (2026-10-16), which is what the bar's layout holds.
+        ribbon_index = top_bar_layout.indexOf(self.panel._top_drawer)
         info_index = top_bar_layout.indexOf(self.panel._tool_info)
         self.assertNotEqual(ribbon_index, -1)
+        self.assertIs(self.panel._tool_ribbon.parent(), self.panel._top_drawer)
         # The General group is the ribbon's pinned, always-visible leading
         # section (2026-10-03), so it sits inside the ribbon, left of its tabs.
         self.assertTrue(self.panel._tool_ribbon.isAncestorOf(self.panel._general_row))
@@ -1637,6 +1689,54 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertLess(canvas_column.indexOf(self.panel._top_bar), canvas_column.indexOf(self.panel._view))
         style = self.panel._top_bar.styleSheet()
         self.assertIn("border-bottom: 1px solid", style)
+
+    def test_double_click_on_empty_space_rolls_the_tool_ribbon_up_and_the_handle_rolls_it_down(self) -> None:
+        """2026-10-16, maintainer request: the top ribbon rolls up like the slider ribbon,
+        leaving just a "..." handle (the "i" icon goes with the ribbon), remembered across
+        restarts; buttons keep their own double-clicks."""
+        from lspr_imaging_app.panels.ui_state import UiStateStore
+
+        drawer = self.panel._top_drawer
+        store = UiStateStore()
+        self.panel.restore_ui_state(store)
+        self.panel.show()
+        _pump(0.1)
+        self.assertTrue(drawer.is_expanded())
+        self.assertTrue(drawer._handle.isHidden())  # no handle while the ribbon is shown
+        full_height = self.panel._top_bar.height()
+        # A double-click on a tab button is the button's own: nothing rolls up.
+        QTest.mouseDClick(self.panel._tool_ribbon._tab_buttons[0], Qt.MouseButton.LeftButton)
+        _pump(0.3)
+        self.assertTrue(drawer.is_expanded())
+        # Empty space inside the ribbon (under the "General" group; the event reaches the bar).
+        ribbon = self.panel._tool_ribbon
+        QTest.mouseDClick(ribbon, Qt.MouseButton.LeftButton, pos=QPoint(3, ribbon.height() - 3))
+        _pump(0.4)  # the roll-up is animated
+        self.assertFalse(drawer.is_expanded())
+        self.assertTrue(ribbon.isHidden())
+        self.assertFalse(drawer._handle.isHidden())
+        self.assertTrue(self.panel._tool_info.isHidden())
+        self.assertLess(self.panel._top_bar.height(), full_height // 2)
+        self.assertIs(store.get("image/top_ribbon_open"), False)
+        drawer._handle.click()
+        _pump(0.4)
+        self.assertTrue(drawer.is_expanded())
+        self.assertFalse(ribbon.isHidden())
+        self.assertFalse(self.panel._tool_info.isHidden())
+        self.assertTrue(drawer._handle.isHidden())
+        self.assertGreaterEqual(self.panel._top_bar.height(), full_height - 2)
+        self.assertIs(store.get("image/top_ribbon_open"), True)
+        # The bar's own empty margin works too, and a saved "rolled up" state comes back without animating.
+        QTest.mouseDClick(self.panel._top_bar, Qt.MouseButton.LeftButton, pos=QPoint(1, 1))
+        _pump(0.4)
+        self.assertFalse(drawer.is_expanded())
+        store.set("image/top_ribbon_open", True)
+        self.panel.restore_ui_state(store)
+        self.assertTrue(drawer.is_expanded())
+        store.set("image/top_ribbon_open", False)
+        self.panel.restore_ui_state(store)
+        self.assertFalse(drawer.is_expanded())
+        self.panel.hide()
 
 
 class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
