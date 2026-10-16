@@ -32,9 +32,11 @@ try:
         END_DATASET,
         MODE_ALL,
         MODE_ONE_WAVELENGTH,
+        MODE_ROI_STATES,
         SlideshowSettings,
         first_frame,
         next_frame,
+        previous_frame,
     )
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
@@ -107,6 +109,97 @@ class NextFrameTest(unittest.TestCase):
 
     def test_default_mode_is_all_and_end_is_dataset(self) -> None:
         self.assertEqual((SlideshowSettings().mode, SlideshowSettings().end), (MODE_ALL, END_DATASET))
+
+
+def _previous(current, **settings):
+    skipped = settings.pop("skipped", frozenset())
+    return previous_frame(CUBES, WAVELENGTHS, current, SlideshowSettings(**settings), lambda c, w: (c, w) in skipped)
+
+
+class PreviousFrameTest(unittest.TestCase):
+    """The manual step back (2026-10-16): the mirror of `next_frame`, without wrapping and without the End setting."""
+
+    def test_all_wavelengths_steps_back_through_a_cube_then_the_cube_before(self) -> None:
+        self.assertEqual(_previous((0, 600.0)), (0, 550.0))
+        self.assertEqual(_previous((1, 500.0)), (0, 600.0))
+        self.assertEqual(_previous((2, 500.0)), (1, 600.0))
+        self.assertEqual(_previous((1, 600.0)), (1, 500.0))  # cube 1 has no 550
+
+    def test_one_wavelength_steps_back_through_the_cubes_and_skips_cubes_without_it(self) -> None:
+        self.assertEqual(_previous((2, 550.0), mode=MODE_ONE_WAVELENGTH), (0, 550.0))  # cube 1 skipped
+        self.assertIsNone(_previous((0, 550.0), mode=MODE_ONE_WAVELENGTH))
+
+    def test_the_start_is_the_end_of_the_road_it_never_wraps(self) -> None:
+        self.assertIsNone(_previous((0, 500.0)))
+        self.assertIsNone(_previous((0, 500.0), repeat=True))
+
+    def test_the_end_setting_does_not_stop_a_manual_step(self) -> None:
+        self.assertEqual(_previous((1, 500.0), end=END_CUBE), (0, 600.0))
+
+    def test_ignored_frames_are_skipped(self) -> None:
+        self.assertEqual(_previous((1, 500.0), skipped={(0, 600.0)}), (0, 550.0))
+
+    def test_a_current_cube_missing_from_the_list_steps_back_from_where_it_would_be(self) -> None:
+        self.assertEqual(previous_frame((0, 2, 4), {0: (500.0,), 2: (500.0, 550.0), 4: (500.0,)}, (3, 500.0), SlideshowSettings()), (2, 550.0))
+
+    def test_next_and_previous_undo_each_other(self) -> None:
+        frame = (0, 500.0)
+        for _ in range(7):
+            following = _next(frame)
+            self.assertEqual(_previous(following), frame)
+            frame = following
+
+
+STATE_WAVELENGTHS = {cube: (500.0, 550.0) for cube in range(8)}
+STATE_WAVELENGTHS[3] = (500.0,)  # cube 3 lacks 550
+
+
+def _state_next(states, current, **settings):
+    skipped = settings.pop("skipped", frozenset())
+    return next_frame(states, STATE_WAVELENGTHS, current, SlideshowSettings(mode=MODE_ROI_STATES, **settings), lambda c, w: (c, w) in skipped)
+
+
+def _state_previous(states, current, **settings):
+    skipped = settings.pop("skipped", frozenset())
+    return previous_frame(states, STATE_WAVELENGTHS, current, SlideshowSettings(mode=MODE_ROI_STATES, **settings), lambda c, w: (c, w) in skipped)
+
+
+class RoiStatesModeTest(unittest.TestCase):
+    """ROI states (2026-10-16): the cubes are the ROI row's marks; the wavelength stays; the current cube need not be one."""
+
+    STATES = (0, 3, 5)
+
+    def test_next_goes_to_the_first_state_after_the_current_cube_even_between_states(self) -> None:
+        self.assertEqual(_state_next(self.STATES, (1, 550.0)), (5, 550.0))  # cube 3 lacks 550: passed over
+        self.assertEqual(_state_next(self.STATES, (1, 500.0)), (3, 500.0))
+        self.assertEqual(_state_next(self.STATES, (0, 500.0)), (3, 500.0))  # on a state: the one after it
+
+    def test_previous_goes_to_the_last_state_before_the_current_cube(self) -> None:
+        self.assertEqual(_state_previous(self.STATES, (4, 500.0)), (3, 500.0))
+        self.assertEqual(_state_previous(self.STATES, (5, 500.0)), (3, 500.0))
+        self.assertEqual(_state_previous(self.STATES, (4, 550.0)), (0, 550.0))
+
+    def test_the_ends_do_not_wrap_unless_the_show_repeats(self) -> None:
+        self.assertIsNone(_state_next(self.STATES, (5, 500.0)))
+        self.assertIsNone(_state_previous(self.STATES, (0, 500.0)))
+        self.assertEqual(_state_next(self.STATES, (5, 500.0), repeat=True), (0, 500.0))
+        self.assertIsNone(_state_next((5,), (5, 500.0), repeat=True))  # a single state never loops on itself
+
+    def test_skipped_frames_are_passed_over(self) -> None:
+        self.assertEqual(_state_next(self.STATES, (0, 500.0), skipped={(3, 500.0)}), (5, 500.0))
+
+    def test_first_frame_is_the_first_state_with_the_wavelength(self) -> None:
+        settings = SlideshowSettings(mode=MODE_ROI_STATES)
+        self.assertEqual(first_frame(self.STATES, STATE_WAVELENGTHS, (4, 550.0), settings), (0, 550.0))
+        self.assertEqual(first_frame((3, 5), STATE_WAVELENGTHS, (4, 550.0), settings), (5, 550.0))
+        self.assertIsNone(first_frame((), STATE_WAVELENGTHS, (4, 550.0), settings))
+
+    def test_no_states_nothing_to_visit(self) -> None:
+        self.assertIsNone(_state_next((), (0, 500.0)))
+        self.assertIsNone(_state_previous((), (0, 500.0)))
+
+    def test_the_end_setting_means_nothing_here(self) -> None:
+        self.assertEqual(_state_next(self.STATES, (0, 500.0), end=END_CUBE), (3, 500.0))
 
 
 class MeanIntervalTest(unittest.TestCase):

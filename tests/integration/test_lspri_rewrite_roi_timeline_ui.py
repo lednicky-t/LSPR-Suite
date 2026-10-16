@@ -36,7 +36,7 @@ try:
         MaskScopeModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
-    from lspr_imaging_app.panels.image.roi_context_menu import APPLY_ALL_CUBES, REMOVE_CUBE_EDIT, RoiMenuChoice
+    from lspr_imaging_app.panels.image.roi_context_menu import REMOVE_CUBE_EDIT, RoiMenuChoice
     from lspr_imaging_app.panels.roi_table.panel import RoiTablePanel
     from lspr_imaging_app.panels.roi_table.rows import COLUMN_X
     from lspr_imaging_app.panels.ui_state import UiStateStore
@@ -123,7 +123,8 @@ class RoiTimelineUiTest(unittest.TestCase):
         self.assertEqual(self.panel._roi_scope.scope(), SCOPE_INDIVIDUAL)
         self.assertEqual(target.kwargs(), {"cube": 1, "scope": SCOPE_INDIVIDUAL})
         self.go_to_cube(0)
-        self.assertEqual(target.kwargs(), {"cube": 0, "scope": SCOPE_INDIVIDUAL})
+        with self.assertRaises(ValueError):  # the first cube holds the start layout: no individual change there
+            target.kwargs()
         self.panel._roi_tab._scope_toggle._buttons[SCOPE_PERSISTENT].click()
         self.assertEqual(target.kwargs(), {})  # persistent on the first cube edits the base: every cube, as before
 
@@ -157,10 +158,33 @@ class RoiTimelineUiTest(unittest.TestCase):
         self.assertFalse(undo_manager.can_undo)
 
     def test_individual_scope_changes_only_the_cube_you_are_on(self) -> None:
+        self.go_to_cube(1)
         self.panel._roi_tab._scope_toggle._buttons[SCOPE_INDIVIDUAL].click()
         self.selection.set_roi_selection({2})
         self.drag([(40.0, 30.0), (45.0, 30.0)])
-        self.assertEqual([self.x_at(2, 0), self.x_at(2, 1)], [45.0, 40.0])
+        self.assertEqual([self.x_at(2, 0), self.x_at(2, 1)], [40.0, 45.0])
+
+    def test_an_individual_drag_on_the_first_cube_is_refused_with_a_message(self) -> None:
+        self.panel._roi_tab._scope_toggle._buttons[SCOPE_INDIVIDUAL].click()
+        self.selection.set_roi_selection({2})
+        messages: list[str] = []
+        self.panel.tool_status_changed.connect(messages.append)
+        self.drag([(40.0, 30.0), (45.0, 30.0)])
+        self.assertEqual([self.x_at(2, 0), self.x_at(2, 1)], [40.0, 40.0])  # nothing moved
+        self.assertFalse(self.roi_toolbox.has_timeline())
+        self.assertFalse(undo_manager.can_undo)
+        self.assertTrue(messages and "first cube" in messages[-1], messages)
+
+    def test_an_individual_drag_on_a_persistent_point_is_refused_with_a_message(self) -> None:
+        self.roi_toolbox.move_roi(2, 50.0, 30.0, cube=1, scope=SCOPE_PERSISTENT)
+        self.go_to_cube(1)
+        self.panel._roi_tab._scope_toggle._buttons[SCOPE_INDIVIDUAL].click()
+        self.selection.set_roi_selection({2})
+        messages: list[str] = []
+        self.panel.tool_status_changed.connect(messages.append)
+        self.drag([(50.0, 30.0), (55.0, 30.0)])
+        self.assertEqual(self.x_at(2, 1), 50.0)
+        self.assertTrue(messages and "persistent" in messages[-1], messages)
 
     def test_resizing_at_a_later_cube_writes_a_timeline_change_too(self) -> None:
         self.go_to_cube(1)
@@ -200,26 +224,19 @@ class RoiTimelineUiTest(unittest.TestCase):
             self.panel._on_scene_clicked(_Click(self.scene(x, y), Qt.MouseButton.RightButton))
         return menu
 
-    def test_apply_to_all_cubes_and_remove_cube_edit_from_the_menu(self) -> None:
+    def test_remove_cube_edit_from_the_menu(self) -> None:
         self.go_to_cube(1)
         self.selection.set_roi_selection({2})
         self.roi_toolbox.move_roi(2, 50.0, 30.0, cube=1)
-        menu = self.right_click(50.0, 30.0, RoiMenuChoice(APPLY_ALL_CUBES))
-        kwargs = menu.call_args.kwargs
-        self.assertTrue(kwargs["can_apply_all_cubes"])
-        self.assertTrue(kwargs["can_remove_cube_edit"])
-        self.assertEqual([self.x_at(2, 0), self.x_at(2, 1)], [50.0, 50.0])
-        self.assertFalse(self.roi_toolbox.has_timeline())
-        # remove the edit of a cube
-        self.roi_toolbox.move_roi(2, 55.0, 30.0, cube=1)
-        self.right_click(55.0, 30.0, RoiMenuChoice(REMOVE_CUBE_EDIT))
-        self.assertEqual([self.x_at(2, 0), self.x_at(2, 1)], [50.0, 50.0])
+        menu = self.right_click(50.0, 30.0, RoiMenuChoice(REMOVE_CUBE_EDIT))
+        self.assertTrue(menu.call_args.kwargs["can_remove_cube_edit"])
+        self.assertNotIn("can_apply_all_cubes", menu.call_args.kwargs)  # "Apply to all cubes" was taken out (2026-10-16)
+        self.assertEqual([self.x_at(2, 0), self.x_at(2, 1)], [40.0, 40.0])  # the cube follows the earlier layout again
         self.assertFalse(self.roi_toolbox.has_timeline())
 
-    def test_the_menu_entries_are_disabled_without_a_timeline(self) -> None:
+    def test_the_menu_entry_is_disabled_without_a_timeline(self) -> None:
         self.selection.set_roi_selection({2})
         menu = self.right_click(40.0, 30.0, None)
-        self.assertFalse(menu.call_args.kwargs["can_apply_all_cubes"])
         self.assertFalse(menu.call_args.kwargs["can_remove_cube_edit"])
 
     # -- the table -------------------------------------------------------------------------

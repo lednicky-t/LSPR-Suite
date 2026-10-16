@@ -61,13 +61,13 @@ class GeometrySegmentTests(unittest.TestCase):
         self.toolbox.move_roi(self.a, 45.0, 33.0, cube=5, scope=SCOPE_PERSISTENT)
         self.toolbox.move_roi(self.b, 95.0, 36.0, cube=20, scope=SCOPE_PERSISTENT)
         self.toolbox.move_roi(self.c, 150.0, 28.0, cube=12, scope="individual")
-        self.toolbox.move_roi(self.a, 41.0, 31.0, cube=5, scope="individual")
+        self.toolbox.move_roi(self.a, 41.0, 31.0, cube=6, scope="individual")  # not cube 5: a cube is one kind of point
         by_label: dict[tuple, set] = {}
         for cube in CUBES:
             by_label.setdefault(self.toolbox.geometry_segment(cube), set()).add(_geometry_signature(self.toolbox, cube))
         for label, signatures in by_label.items():
             self.assertEqual(len(signatures), 1, f"{label}: cubes with one label show different geometry")
-        self.assertGreaterEqual(len(by_label), 4)  # [0,4], 5 alone, [6,19] and 12 alone, [20,..]
+        self.assertGreaterEqual(len(by_label), 4)  # [0,4], [5,19] without 6 and 12, 6 alone, 12 alone, [20,..]
 
     def test_an_individual_change_only_marks_its_own_cube(self) -> None:
         self.toolbox.move_roi(self.a, 45.0, 33.0, cube=8, scope="individual")

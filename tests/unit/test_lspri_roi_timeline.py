@@ -71,6 +71,24 @@ class TimelineResolutionTest(unittest.TestCase):
         self.assertEqual(roi.center_x, 5.0)  # the stored ROI is untouched
 
 
+    def test_an_individual_change_can_be_made_persistent_in_place(self) -> None:
+        timeline = RoiTimeline().with_change(2, SCOPE_PERSISTENT, _g(20.0)).with_change(5, SCOPE_INDIVIDUAL, _g(50.0))
+        moved = timeline.individual_made_persistent(5)
+        self.assertEqual((moved.individual, [c.cube for c in moved.persistent]), ((), [2, 5]))
+        self.assertEqual([moved.geometry_at(c).center_x for c in (5, 6, 99)], [50.0, 50.0, 50.0])
+        self.assertIs(timeline.individual_made_persistent(7), timeline)  # nothing individual there: the same object
+        self.assertEqual(timeline.without_individual_at(5).individual, ())
+        self.assertIs(timeline.without_individual_at(7), timeline)
+
+    def test_a_persistent_change_can_be_made_individual_in_place(self) -> None:
+        timeline = RoiTimeline().with_change(2, SCOPE_PERSISTENT, _g(20.0)).with_change(5, SCOPE_PERSISTENT, _g(50.0))
+        single = timeline.persistent_made_individual(5)
+        self.assertEqual(([c.cube for c in single.persistent], [c.cube for c in single.individual]), ([2], [5]))
+        # this cube only: the cubes after it go back to the earlier persistent change
+        self.assertEqual([single.geometry_at(c).center_x for c in (4, 5, 6, 99)], [20.0, 50.0, 20.0, 20.0])
+        self.assertIs(timeline.persistent_made_individual(7), timeline)  # no persistent change there: the same object
+
+
 class ToolboxTimelineTest(unittest.TestCase):
     def setUp(self) -> None:
         undo_manager.clear()
@@ -155,6 +173,133 @@ class ToolboxTimelineTest(unittest.TestCase):
         undo_manager.undo()
         undo_manager.undo()
         self.assertEqual([self.x(1, c) for c in (5, 8)], [15.0, 18.0])
+
+    # -- the layout rule (2026-10-16): a cube is one kind of point for all ROIs together -----------------
+
+    def test_layout_points_list_each_changed_cube_with_its_kind_and_rois(self) -> None:
+        self.assertEqual(self.toolbox.layout_points(), {})  # the start layout is no timeline entry
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5)
+        self.toolbox.translate_rois([1, 2], 1.0, 0.0, cube=8, scope=SCOPE_INDIVIDUAL)
+        points = self.toolbox.layout_points()
+        self.assertEqual(list(points), [5, 8])
+        self.assertEqual((points[5].kind, points[5].roi_ids), (SCOPE_PERSISTENT, (1,)))
+        self.assertEqual((points[8].kind, points[8].roi_ids), (SCOPE_INDIVIDUAL, (1, 2)))
+        self.assertEqual(self.toolbox.layout_points([2]), {8: points[8]._replace(roi_ids=(2,))})  # only the asked-for ROIs
+        self.assertEqual(self.toolbox.layout_points([]), {})
+        self.assertEqual([self.toolbox.layout_point_kind(c) for c in (4, 5, 8)], [None, SCOPE_PERSISTENT, SCOPE_INDIVIDUAL])
+
+    def test_a_persistent_edit_replaces_the_same_rois_individual_change_on_that_cube(self) -> None:
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        self.toolbox.move_roi(1, 20.0, 10.0, cube=5, scope=SCOPE_PERSISTENT)
+        self.assertEqual([self.x(1, c) for c in (4, 5, 6)], [10.0, 20.0, 20.0])
+        self.assertEqual(self.toolbox.layout_points()[5].kind, SCOPE_PERSISTENT)
+        self.assertEqual(self.toolbox.roi_by_id(1).timeline.individual, ())
+        undo_manager.undo()  # one step: the nudge is back, the persistent change gone
+        self.assertEqual([self.x(1, c) for c in (4, 5, 6)], [10.0, 15.0, 10.0])
+
+    def test_a_persistent_edit_makes_every_rois_individual_change_there_persistent_too(self) -> None:
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)  # ROI 1: nudged on cube 5 only
+        self.assertEqual([self.x(1, c) for c in (5, 6)], [15.0, 10.0])
+        self.toolbox.move_roi(2, 45.0, 10.0, cube=5, scope=SCOPE_PERSISTENT)  # ROI 2: from cube 5 on
+        self.assertEqual(self.toolbox.layout_points()[5].kind, SCOPE_PERSISTENT)
+        self.assertEqual(self.toolbox.layout_points()[5].roi_ids, (1, 2))
+        self.assertEqual([self.x(1, c) for c in (4, 5, 6, 9)], [10.0, 15.0, 15.0, 15.0])  # the layout at cube 5 carries on
+        self.assertEqual([self.x(2, c) for c in (4, 5, 6)], [40.0, 45.0, 45.0])
+        undo_manager.undo()  # one undo step puts both ROIs back
+        self.assertEqual([self.x(1, c) for c in (5, 6)], [15.0, 10.0])
+        self.assertEqual(self.x(2, 5), 40.0)
+        self.assertEqual(self.toolbox.layout_points()[5].kind, SCOPE_INDIVIDUAL)
+
+    def test_a_no_op_persistent_edit_converts_nothing(self) -> None:
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        undo_manager.clear()
+        self.toolbox.move_roi(2, 40.0, 10.0, cube=5, scope=SCOPE_PERSISTENT)  # ROI 2 is already there
+        self.assertFalse(undo_manager.can_undo)
+        self.assertEqual(self.toolbox.layout_points()[5].kind, SCOPE_INDIVIDUAL)
+
+    def test_an_individual_edit_on_a_persistent_point_is_refused(self) -> None:
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5, scope=SCOPE_PERSISTENT)
+        undo_manager.clear()
+        for roi_id in (1, 2):  # the ROI that made the point, and one that did not: the cube is one kind for all
+            with self.assertRaisesRegex(ValueError, "persistent"):
+                self.toolbox.move_roi(roi_id, 99.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        self.assertIsNotNone(self.toolbox.edit_refusal(5, SCOPE_INDIVIDUAL))
+        self.assertIsNone(self.toolbox.edit_refusal(5, SCOPE_PERSISTENT))
+        self.assertIsNone(self.toolbox.edit_refusal(6, SCOPE_INDIVIDUAL))
+        self.assertIsNone(self.toolbox.edit_refusal(None, SCOPE_INDIVIDUAL))
+        self.assertFalse(undo_manager.can_undo)  # refused before anything was written
+        self.assertEqual([self.x(1, 5), self.x(2, 5)], [15.0, 40.0])
+
+    def test_several_rois_can_share_an_individual_point(self) -> None:
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        self.toolbox.move_roi(2, 45.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        self.assertEqual(self.toolbox.layout_points()[5].roi_ids, (1, 2))
+        self.assertEqual([self.x(1, 6), self.x(2, 6)], [10.0, 40.0])
+
+    # -- the right-click commands on a point (2026-10-16): always the whole point, one undo step each -----------
+
+    def test_delete_layout_point_removes_every_rois_change_there_in_one_undo_step(self) -> None:
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5)
+        self.toolbox.move_roi(2, 45.0, 10.0, cube=5)
+        self.toolbox.move_roi(1, 18.0, 10.0, cube=8)
+        undo_manager.clear()
+        self.toolbox.delete_layout_point(5)
+        self.assertEqual(list(self.toolbox.layout_points()), [8])
+        self.assertEqual([self.x(1, 5), self.x(2, 5), self.x(1, 9)], [10.0, 40.0, 18.0])  # cube 8's change is untouched
+        undo_manager.undo()
+        self.assertEqual(list(self.toolbox.layout_points()), [5, 8])
+        self.assertEqual([self.x(1, 5), self.x(2, 5)], [15.0, 45.0])
+        self.assertFalse(undo_manager.can_undo)
+
+    def test_deleting_an_individual_point_works_too_and_a_missing_point_is_a_no_op(self) -> None:
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        undo_manager.clear()
+        self.toolbox.delete_layout_point(6)  # nothing there
+        self.assertFalse(undo_manager.can_undo)
+        self.toolbox.delete_layout_point(5)
+        self.assertFalse(self.toolbox.has_timeline())
+
+    def test_making_a_persistent_point_individual_sends_the_later_cubes_back(self) -> None:
+        self.toolbox.move_roi(1, 12.0, 10.0, cube=3)
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5)
+        self.toolbox.move_roi(2, 45.0, 10.0, cube=5)
+        undo_manager.clear()
+        self.toolbox.make_layout_point_individual(5)
+        self.assertEqual(self.toolbox.layout_point_kind(5), SCOPE_INDIVIDUAL)
+        self.assertEqual(self.toolbox.layout_points()[5].roi_ids, (1, 2))
+        self.assertEqual([self.x(1, c) for c in (4, 5, 6, 9)], [12.0, 15.0, 12.0, 12.0])  # back to the layout of cube 3
+        self.assertEqual([self.x(2, c) for c in (5, 6)], [45.0, 40.0])
+        undo_manager.undo()
+        self.assertEqual(self.toolbox.layout_point_kind(5), SCOPE_PERSISTENT)
+        self.assertEqual([self.x(1, c) for c in (5, 6, 9)], [15.0, 15.0, 15.0])
+        self.assertFalse(undo_manager.can_undo)
+
+    def test_making_an_individual_point_persistent_carries_it_on(self) -> None:
+        self.toolbox.translate_rois([1, 2], 2.0, 0.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        undo_manager.clear()
+        self.toolbox.make_layout_point_persistent(5)
+        self.assertEqual(self.toolbox.layout_point_kind(5), SCOPE_PERSISTENT)
+        self.assertEqual([self.x(1, c) for c in (4, 5, 9)], [10.0, 12.0, 12.0])
+        undo_manager.undo()
+        self.assertEqual([self.x(1, c) for c in (4, 5, 9)], [10.0, 12.0, 10.0])
+
+    def test_converting_a_point_of_the_wrong_kind_does_nothing(self) -> None:
+        self.toolbox.move_roi(1, 15.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        self.toolbox.move_roi(1, 18.0, 10.0, cube=8, scope=SCOPE_PERSISTENT)
+        undo_manager.clear()
+        self.toolbox.make_layout_point_individual(5)  # already individual
+        self.toolbox.make_layout_point_persistent(8)  # already persistent
+        self.toolbox.make_layout_point_individual(3)  # no point
+        self.assertFalse(undo_manager.can_undo)
+
+    def test_refine_over_an_individual_point_with_persistent_scope_goes_through(self) -> None:
+        self.toolbox.move_roi(2, 45.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
+        self.toolbox.refine_rois({1: (11.0, 10.0, 20.0, 28.0, 40.0)}, cube=5, scope=SCOPE_PERSISTENT)  # two writes, one undo step
+        self.assertEqual(self.toolbox.layout_points()[5].kind, SCOPE_PERSISTENT)
+        self.assertEqual([self.x(2, 6), self.x(1, 6)], [45.0, 11.0])
+        undo_manager.undo()
+        self.assertEqual(self.toolbox.layout_points()[5].kind, SCOPE_INDIVIDUAL)
+        self.assertEqual(self.x(1, 5), 10.0)
 
     def test_rois_at_resolves_for_drawing_and_analysis(self) -> None:
         self.assertEqual(self.toolbox.rois_at(3), self.toolbox.rois())  # no timeline: the stored ROIs themselves

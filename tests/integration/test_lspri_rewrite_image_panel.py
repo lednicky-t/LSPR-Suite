@@ -1793,6 +1793,17 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         things a restore actually promises - the *requested* center, and a
         span no smaller than requested - rather than exact pixel bounds,
         which the aspect lock makes environment-dependent."""
+        # The full auto-fit in a panel of this very size, measured first (2026-10-16): how wide a span the aspect lock
+        # produces depends on how much canvas height the chrome (ribbons, slider rows) leaves in this small panel, and
+        # every added row used to need a new absolute bound below (260 -> 400 -> 600). Relative to this it cannot drift.
+        baseline = self._build_panel(initial_view_range=None)
+        self.dataset.load_dataset(self.dataset_model)
+        _pump()
+        full_x_range = baseline._plot.vb.viewRange()[0]
+        full_span = full_x_range[1] - full_x_range[0]
+        baseline._renderer.stop()
+        baseline.close()
+        self.dataset = DatasetModule()
         panel = self._build_panel(initial_view_range=((5.0, 45.0), (2.0, 30.0)))
         self.dataset.load_dataset(self.dataset_model)
         _pump()
@@ -1818,7 +1829,7 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
         # directly - 180 keeps real headroom against that while still being
         # nowhere near it, not pinned to the exact pixel geometry of one
         # particular toolbar height (same reasoning as the earlier bumps).
-        self.assertLess(x_range[1] - x_range[0], 400.0)  # 260 -> 400, 2026-10-14: the slider ribbon (~36 px) takes canvas height in this 280 px panel and the aspect lock turns less height into more x span; measured: restored span 302 vs full auto-fit 830 (ratio 0.36, was 0.37), so it is still clearly the restored range. 190 -> 260, 2026-10-04: the new "Chromatic Corrections" tab label widens the tab strip (the ribbon's minimum width) and so the canvas; measured here: restored span 203 vs full auto-fit 550, so it is still clearly the restored range
+        self.assertLess(x_range[1] - x_range[0], 0.7 * full_span)  # was an absolute bound; on 2026-10-16 the ROI row pushed the restored span to 442 px, over the old 400. History of the absolute bound: 260 -> 400, 2026-10-14: the slider ribbon (~36 px) takes canvas height in this 280 px panel and the aspect lock turns less height into more x span; measured: restored span 302 vs full auto-fit 830 (ratio 0.36, was 0.37), so it is still clearly the restored range. 190 -> 260, 2026-10-04: the new "Chromatic Corrections" tab label widens the tab strip (the ribbon's minimum width) and so the canvas; measured here: restored span 203 vs full auto-fit 550, so it is still clearly the restored range
 
     def test_the_saved_range_is_never_reapplied_on_a_later_frame_change(self) -> None:
         """Restoring must be a one-shot: navigating to a different frame

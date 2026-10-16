@@ -832,12 +832,13 @@ class SliderRibbonTest(unittest.TestCase):
         self.panel._slider_ribbon.slider_colors.color_changed.emit("mask", None)  # reset
         self.assertIsNone(store.get("image/slider_color_mask"))
 
-        store.set("image/slider_color_roi", "#445566")
+        store.set("image/slider_color_mask", "#445566")
+        store.set("image/slider_color_roi", "#778899")  # a leftover from before the ROI row lost its colour control: ignored
         store.set("image/slider_color_dark", 7)  # not a colour: a hand-edited file falls back to the default
         store.set("image/slider_color_reference", "not a colour")
         self.panel._restore_slider_colors(store)
         colors = self.panel._slider_colors
-        self.assertEqual(colors.color("roi"), "#445566")
+        self.assertEqual(colors.color("mask"), "#445566")
         self.assertIsNone(colors.override("dark"))
         self.assertIsNone(colors.override("reference"))
 
