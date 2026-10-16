@@ -31,8 +31,10 @@ try:
         END_CUBE,
         END_DATASET,
         MODE_ALL,
+        MODE_MASK_STATES,
         MODE_ONE_WAVELENGTH,
         MODE_ROI_STATES,
+        STATE_MODES,
         SlideshowSettings,
         first_frame,
         next_frame,
@@ -200,6 +202,17 @@ class RoiStatesModeTest(unittest.TestCase):
 
     def test_the_end_setting_means_nothing_here(self) -> None:
         self.assertEqual(_state_next(self.STATES, (0, 500.0), end=END_CUBE), (3, 500.0))
+
+    def test_mask_states_steps_exactly_like_roi_states_over_its_own_cubes(self) -> None:
+        mask_cubes = (1, 4, 6)
+        for current in ((0, 500.0), (1, 500.0), (3, 500.0), (4, 550.0), (7, 500.0)):
+            for step in (next_frame, previous_frame):
+                roi = step(mask_cubes, STATE_WAVELENGTHS, current, SlideshowSettings(mode=MODE_ROI_STATES))
+                mask = step(mask_cubes, STATE_WAVELENGTHS, current, SlideshowSettings(mode=MODE_MASK_STATES))
+                self.assertEqual(roi, mask, (step.__name__, current))
+        self.assertEqual(next_frame(mask_cubes, STATE_WAVELENGTHS, (2, 500.0), SlideshowSettings(mode=MODE_MASK_STATES)), (4, 500.0))
+        self.assertEqual(first_frame(mask_cubes, STATE_WAVELENGTHS, (9, 550.0), SlideshowSettings(mode=MODE_MASK_STATES)), (1, 550.0))
+        self.assertIn(MODE_MASK_STATES, STATE_MODES)
 
 
 class MeanIntervalTest(unittest.TestCase):

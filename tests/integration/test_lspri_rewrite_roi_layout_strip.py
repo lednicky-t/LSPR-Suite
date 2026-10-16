@@ -1,4 +1,4 @@
-"""The ROI row under the Cube slider (``RoiLayoutStrip``) and its ribbon toggles in the Image panel.
+"""The ROI row under the Cube slider (``TimelineStrip``) and its ribbon toggles in the Image panel.
 
 A real panel over a six-cube dataset. The row marks where the ROI *layout* changes: ``>`` persistent (and always at the
 first cube), a plain line individual. Design: apps/LSPRi/eva/docs/roi_layout_row_2026-10-16.md. One process per file.
@@ -43,7 +43,7 @@ try:
     )
     from lspr_imaging_app.panels.image import ImagePanel, roi_layout_menu
     from lspr_imaging_app.panels.image.data_axis_slider import axis_index, axis_x
-    from lspr_imaging_app.panels.image.roi_layout_strip import StripMark, governing_mark
+    from lspr_imaging_app.panels.image.timeline_strip import KIND_MIXED, StripMark, governing_mark
     from lspr_imaging_app.panels.image.slideshow import MODE_ALL, MODE_ONE_WAVELENGTH, MODE_ROI_STATES
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
@@ -82,6 +82,38 @@ class GoverningMarkTest(unittest.TestCase):
         self.assertIsNone(governing_mark(_marks((0, SCOPE_PERSISTENT)), None))
         self.assertIsNone(governing_mark(_marks((2, SCOPE_PERSISTENT)), 1))
         self.assertIsNone(governing_mark(_marks((2, SCOPE_INDIVIDUAL)), 3))  # an individual mark is its own cube only
+
+
+class MixedMarkTest(unittest.TestCase):
+    """The Mask row under the Cube slider: a cube with a persistent mask AND individual masks is a filled ">"."""
+
+    def test_a_mixed_mark_holds_from_its_cube_on_like_a_persistent_one(self) -> None:
+        marks = _marks((0, SCOPE_PERSISTENT), (3, KIND_MIXED), (5, SCOPE_INDIVIDUAL))
+        self.assertEqual([governing_mark(marks, c) for c in (2, 3, 4, 5, 6)], [0, 1, 1, 2, 1])
+
+    def test_a_mixed_mark_is_a_filled_chevron_a_persistent_one_is_only_an_outline(self) -> None:
+        from lspr_imaging_app.panels.image.timeline_strip import TimelineStrip
+
+        strip = TimelineStrip()
+        strip.resize(400, 14)
+        strip.set_axis_count(11)
+        strip.set_color("#ff0000")
+        strip.set_marks([StripMark(3, SCOPE_PERSISTENT, ""), StripMark(8, KIND_MIXED, "")])
+        image = strip.grab().toImage()
+        ratio = image.devicePixelRatio()
+
+        def pixel(x: float, y: int):
+            return image.pixelColor(int(x * ratio), int(y * ratio))
+
+        def distance(a, b) -> int:
+            return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue())
+
+        background = pixel(2, 8)
+        # a pixel well inside the chevron (about 1 px right of the mark, below the rail line at y = 7)
+        inside_outline = pixel(int(axis_x(3, 11, 400)) + 1, 8)
+        inside_filled = pixel(int(axis_x(8, 11, 400)) + 1, 8)
+        self.assertGreater(distance(inside_filled, background), 150)  # painted in the mark's colour
+        self.assertLess(distance(inside_outline, background), 0.3 * distance(inside_filled, background))  # only an outline
 
 
 class AxisMappingTest(unittest.TestCase):
@@ -231,10 +263,11 @@ class RoiLayoutRowTest(unittest.TestCase):
         from lspr_ui import get_active_theme
 
         self.assertEqual(self.strip._color, get_active_theme().accent_blue)
-        self.panel._on_slider_color_changed("mask", "#ff0000")  # another slider colour changing leaves the row alone
+        self.panel._on_slider_color_changed("ignored", "#ff0000")  # another slider colour changing leaves the row alone
         self.assertEqual(self.strip._color, get_active_theme().accent_blue)
-        with self.assertRaises(ValueError):
-            self.panel._slider_colors.set("roi", "#ff0000")  # the role is gone
+        for role in ("roi", "mask"):
+            with self.assertRaises(ValueError):
+                self.panel._slider_colors.set(role, "#ff0000")  # these roles are gone: the rows under the sliders have fixed colours
 
     def test_the_toggles_are_remembered_without_saving_what_was_just_read(self) -> None:
         saved: list[dict] = []
@@ -483,15 +516,18 @@ class RoiLayoutRowTest(unittest.TestCase):
         self.assertIn(("Make individual (3 ROIs)", False), start)
         self.assertIn(("Delete this change (3 ROIs)", False), start)
 
-    def test_the_rois_section_has_just_the_two_toggles_and_mask_keeps_slider_colors(self) -> None:
-        section = self.ribbon.roi_row_button.parentWidget()
-        self.assertIs(self.ribbon.roi_selected_button.parentWidget(), section)
-        self.assertIsNot(self.ribbon.slider_colors.swatch("mask").parentWidget(), section)  # Mask is in "Slider colors"
+    def test_the_rois_and_mask_sections_have_just_their_toggles_and_no_colour_swatches(self) -> None:
         from lspr_imaging_app.panels.image.slider_colors import ColorSwatch
 
-        self.assertEqual(section.findChildren(ColorSwatch), [])  # no colour swatch in the ROIs section
-        with self.assertRaises(KeyError):
-            self.ribbon.slider_colors.swatch("roi")
+        roi_section = self.ribbon.roi_row_button.parentWidget()
+        self.assertIs(self.ribbon.roi_selected_button.parentWidget(), roi_section)
+        mask_section = self.ribbon.mask_rows_button.parentWidget()
+        self.assertIsNot(mask_section, roi_section)
+        for section in (roi_section, mask_section):
+            self.assertEqual(section.findChildren(ColorSwatch), [])
+        for role in ("roi", "mask"):
+            with self.assertRaises(KeyError):
+                self.ribbon.slider_colors.swatch(role)
 
 
 if __name__ == "__main__":
