@@ -257,10 +257,44 @@ class MaskRowsTest(unittest.TestCase):
         self.go_to(4, 550.0)
         self.wheel(self.wavelength_strip, 120)
         self.assertEqual(self.frame(), (4, 600.0))
-        self.wheel(self.wavelength_strip, 120)
-        self.assertEqual(self.frame(), (4, 600.0))  # no further mark
         self.wheel(self.wavelength_strip, -120)
         self.assertEqual(self.frame(), (4, 500.0))
+
+    def test_past_the_last_mask_of_a_cube_the_wheel_goes_on_to_the_nearest_marked_frame_of_another_cube(self) -> None:
+        self.draw_marks()  # individual masks: cube 4 at 500 and 600, cube 5 at 500 (cube 2 and 5's persistent ones are not on this row)
+        self.go_to(4, 600.0)
+        self.wheel(self.wavelength_strip, 120)
+        self.assertEqual(self.frame(), (5, 500.0))  # the first mark of the next cube that has one
+        self.wheel(self.wavelength_strip, 120)
+        self.assertEqual(self.frame(), (5, 500.0))  # nothing later: stays
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (4, 600.0))  # back past the first mark: the last mark of the previous cube
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (4, 500.0))
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (4, 500.0))  # no earlier cube with an individual mask
+
+    def test_a_standing_scan_pointer_counts_as_a_frame_to_go_to_and_a_dismissed_one_does_not(self) -> None:
+        from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, TransientEvent
+        from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
+
+        events = self.panel._transient_events
+        pointer = TransientEvent(
+            frame=(7, 550.0), kind=KIND_PARTICLE, area_px=90, centroid_xy=(10.0, 8.0), bbox_xyxy=(5, 4, 15, 12), depth=0.8, z=120.0
+        )
+        events.set_scan_result(ScanResult(
+            events=[pointer], frames_in_range=1, frames_screened=1, frames_hit=1, failed_frames=[], seconds=0.1,
+            stage_seconds={}, params=ScanParams(),
+        ))
+        self.draw_marks()
+        self.go_to(5, 500.0)  # the last individual mask
+        self.wheel(self.wavelength_strip, 120)
+        self.assertEqual(self.frame(), (7, 550.0))  # the nearest later pointer, past cube 6 which has nothing
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (5, 500.0))
+        events.dismiss([record.id for record in events.records()])
+        self.wheel(self.wavelength_strip, 120)
+        self.assertEqual(self.frame(), (5, 500.0))  # a dismissed pointer is not a place to go
 
     def test_mask_states_is_a_stepping_choice_for_previous_next_and_play(self) -> None:
         self.draw_marks()

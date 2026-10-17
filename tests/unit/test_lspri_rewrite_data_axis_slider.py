@@ -27,6 +27,8 @@ import sys
 import unittest
 
 from PyQt6 import QtWidgets
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QMouseEvent, QWheelEvent
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -39,7 +41,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.panels.image.data_axis_slider import DataAxisSlider
+    from lspr_imaging_app.panels.image.data_axis_slider import DataAxisSlider, axis_x
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
 
@@ -108,6 +110,96 @@ class DataAxisSliderGapBreakTests(unittest.TestCase):
         self.slider.grab()
         self.slider.setEnabled(False)
         self.slider.grab()
+
+
+class DataAxisSliderFollowTests(unittest.TestCase):
+    """A zoomed slider keeps its handle in the middle and slides the ticks past it (2026-10-17, maintainer request)."""
+
+    COUNT = 60
+
+    def setUp(self) -> None:
+        self.slider = DataAxisSlider()
+        self.slider.resize(400, 32)
+        self.slider.setEnabled(True)
+        self.slider.setMaximum(self.COUNT - 1)
+        self.slider.setSingleStep(1)  # as the Image panel sets them: one tick per wheel notch
+        self.slider.setPageStep(1)
+        self.slider.set_ticks(list(range(self.COUNT)), {})
+        self.window = self.slider.axis_window()
+        self.window.zoom(5.0, 0.0)  # about 12 ticks on screen, from the start
+
+    def middle(self) -> float:
+        return sum(self.window.view()) / 2.0
+
+    def send_mouse(self, kind: QEvent.Type, index_for_x: int, view: tuple[float, float]) -> None:
+        x = axis_x(index_for_x, self.COUNT, self.slider.width(), view)
+        buttons = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseButtonRelease else Qt.MouseButton.LeftButton
+        event = QMouseEvent(
+            kind, QPointF(x, 5.0), QPointF(self.slider.mapToGlobal(QPoint(int(x), 5))),
+            Qt.MouseButton.LeftButton, buttons, Qt.KeyboardModifier.NoModifier,
+        )
+        QtWidgets.QApplication.sendEvent(self.slider, event)
+
+    def test_a_new_value_slides_the_ticks_so_the_handle_is_in_the_middle(self) -> None:
+        self.slider.setValue(30)
+        self.assertAlmostEqual(self.middle(), 30.0)
+        x = axis_x(30, self.COUNT, self.slider.width(), self.window.view())
+        self.assertAlmostEqual(x, self.slider.width() / 2.0)  # the handle is drawn at the middle of the widget
+
+    def test_it_follows_also_when_the_signals_are_blocked_as_the_panel_sets_it(self) -> None:
+        self.slider.blockSignals(True)
+        self.slider.setValue(40)
+        self.slider.blockSignals(False)
+        self.assertAlmostEqual(self.middle(), 40.0)
+
+    def test_stepping_moves_the_ticks_by_one_tick_not_the_handle(self) -> None:
+        self.slider.setValue(30)
+        x30 = axis_x(40, self.COUNT, self.slider.width(), self.window.view())
+        self.slider.setValue(31)
+        x30_next = axis_x(40, self.COUNT, self.slider.width(), self.window.view())
+        tick_width = (self.slider.width() - 28.0) / (self.window.view()[1] - self.window.view()[0])
+        self.assertAlmostEqual(x30 - x30_next, tick_width)  # tick 40 moved one tick to the left
+        self.assertAlmostEqual(self.middle(), 31.0)
+
+    def test_a_plain_wheel_steps_the_value_and_the_ticks_follow(self) -> None:
+        self.slider.setValue(30)
+        event = QWheelEvent(
+            QPointF(200.0, 5.0), QPointF(200.0, 5.0), QPoint(0, 0), QPoint(0, 120),
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False,
+        )
+        QtWidgets.QApplication.sendEvent(self.slider, event)
+        self.assertEqual(self.slider.value(), 31)
+        self.assertAlmostEqual(self.middle(), 31.0)
+
+    def test_near_the_start_the_handle_runs_to_the_end_of_the_rail_instead_of_staying_in_the_middle(self) -> None:
+        self.slider.setValue(2)
+        self.assertEqual(self.window.view()[0], 0.0)
+        self.assertLess(axis_x(2, self.COUNT, self.slider.width(), self.window.view()), self.slider.width() / 2.0)
+
+    def test_the_whole_axis_is_left_alone(self) -> None:
+        self.window.reset()
+        self.slider.setValue(30)
+        self.assertEqual(self.window.view(), (0.0, self.COUNT - 1.0))
+
+    def test_while_the_button_is_down_the_ticks_stand_still_and_on_release_the_value_is_centred(self) -> None:
+        self.slider.setValue(30)
+        view = self.window.view()
+        self.send_mouse(QEvent.Type.MouseButtonPress, 33, view)
+        self.assertEqual(self.slider.value(), 33)
+        self.assertEqual(self.window.view(), view)  # not moved under the pointer
+        self.send_mouse(QEvent.Type.MouseMove, 35, view)  # dragged on: the pointer still means the tick it points at
+        self.assertEqual(self.slider.value(), 35)
+        self.assertEqual(self.window.view(), view)
+        self.send_mouse(QEvent.Type.MouseButtonRelease, 35, view)
+        self.assertAlmostEqual(self.middle(), 35.0)
+
+    def test_hiding_the_slider_never_leaves_the_axis_held(self) -> None:
+        self.slider.show()
+        self.slider.setValue(30)
+        self.send_mouse(QEvent.Type.MouseButtonPress, 33, self.window.view())
+        self.slider.hide()  # the release will never arrive
+        self.slider.setValue(20)
+        self.assertAlmostEqual(self.middle(), 20.0)
 
 
 if __name__ == "__main__":

@@ -219,6 +219,78 @@ class AxisZoomTest(unittest.TestCase):
         lo, hi = self.window.view()
         self.assertTrue(lo <= 1 <= hi, (lo, hi))
 
+    # -- the cube stays in the middle, the rails move (2026-10-17, maintainer request) -------------------------
+
+    def handle_x(self, cube: int, widget=None) -> float:
+        widget = widget or self.slider
+        return axis_x(cube, _CUBES, widget.width(), self.window.view())
+
+    def test_the_cube_stays_in_the_middle_and_the_row_with_its_marks_slides_past(self) -> None:
+        self.window.zoom(4.0, 0.0)
+        self.selection.set_cube(27)  # about cubes 22 to 32 are on screen: the row's mark at cube 30 among them
+        _pump(0.1)
+        self.assertAlmostEqual(self.handle_x(27), self.slider.width() / 2.0)
+        mark_x = self.handle_x(30, self.strip)
+        self.assertEqual(self.strip.mark_near(mark_x).index, 30)
+        self.selection.set_cube(28)
+        _pump(0.1)
+        self.assertAlmostEqual(self.handle_x(28), self.slider.width() / 2.0)  # the handle did not move ...
+        moved_mark_x = self.handle_x(30, self.strip)
+        self.assertLess(moved_mark_x, mark_x)  # ... the rails did
+        self.assertEqual(self.strip.mark_near(moved_mark_x).index, 30)  # and the row's mark moved with its tick
+        self.assertEqual(self.strip._view(), self.window.view())
+
+    def test_play_steps_keep_the_cube_in_the_middle(self) -> None:
+        from lspr_imaging_app.panels.image.slideshow import MODE_ALL
+
+        self.window.zoom(4.0, 0.0)
+        self.selection.set_cube(15)
+        _pump(0.1)
+        for expected in range(16, 23):
+            self.assertTrue(self.panel._slideshow.step(1, MODE_ALL))
+            _pump(0.05)
+            self.assertEqual(int(self.selection.current_cube()), expected)
+            self.assertAlmostEqual(self.handle_x(expected), self.slider.width() / 2.0)
+
+    def test_near_the_ends_of_the_dataset_the_handle_runs_to_the_end_of_the_rail(self) -> None:
+        self.window.zoom(4.0, 0.5)
+        self.selection.set_cube(_CUBES - 1)
+        _pump(0.1)
+        self.assertEqual(self.window.view()[1], _CUBES - 1.0)
+        self.assertGreater(self.handle_x(_CUBES - 1), self.slider.width() / 2.0)
+
+    def test_scrubbing_along_the_row_does_not_run_away_and_centres_when_the_button_is_up(self) -> None:
+        self.window.zoom(4.0, 0.5)
+        view = self.window.view()
+        press_x, move_x = axis_x(17, _CUBES, self.strip.width(), view), axis_x(21, _CUBES, self.strip.width(), view)
+        self.send_mouse(self.strip, QEvent.Type.MouseButtonPress, press_x, Qt.MouseButton.LeftButton)
+        self.assertEqual(self.slider.value(), 17)
+        self.send_mouse(self.strip, QEvent.Type.MouseMove, move_x, Qt.MouseButton.LeftButton)
+        self.assertEqual(self.slider.value(), 21)  # the tick under the pointer, not a runaway
+        self.assertEqual(self.window.view(), view)  # the rails stood still under the pointer
+        self.send_mouse(self.strip, QEvent.Type.MouseButtonRelease, move_x, Qt.MouseButton.LeftButton)
+        self.assertAlmostEqual(sum(self.window.view()) / 2.0, 21.0)
+        _pump(0.1)
+        self.assertEqual(int(self.selection.current_cube()), 21)
+
+    def test_a_click_on_the_slider_centres_the_picked_cube_when_the_button_is_released(self) -> None:
+        self.window.zoom(4.0, 1.0)  # the last ~10 cubes
+        view = self.window.view()
+        x = axis_x(32, _CUBES, self.slider.width(), view)  # far enough from the end for the window to be able to centre on it
+        self.send_mouse(self.slider, QEvent.Type.MouseButtonPress, x, Qt.MouseButton.LeftButton)
+        self.assertEqual(self.window.view(), view)
+        self.send_mouse(self.slider, QEvent.Type.MouseButtonRelease, x, Qt.MouseButton.LeftButton)
+        self.assertAlmostEqual(sum(self.window.view()) / 2.0, 32.0)
+
+    def test_the_wavelength_slider_follows_with_its_own_window(self) -> None:
+        wavelength_window = self.panel._wavelength_slider.axis_window()
+        self.assertIsNot(wavelength_window, self.window)
+        self.window.zoom(4.0, 0.0)
+        self.selection.set_cube(20)
+        _pump(0.1)
+        self.assertAlmostEqual(sum(self.window.view()) / 2.0, 20.0)  # the Cube axis moved ...
+        self.assertFalse(wavelength_window.is_zoomed())  # ... the wavelength axis is its own business
+
     def test_play_in_the_roi_states_mode_keeps_the_cube_on_screen(self) -> None:
         from dataclasses import replace
 

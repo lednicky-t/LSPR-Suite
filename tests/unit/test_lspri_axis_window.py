@@ -140,6 +140,87 @@ class WindowStateTest(unittest.TestCase):
         self.assertEqual(window.view(), (0.0, 25.0))  # clamped at the start
 
 
+class FollowTest(unittest.TestCase):
+    """The value stays in the middle and the axis slides past it (2026-10-17, maintainer request: like rails seen from a train)."""
+
+    def test_center_on_puts_the_tick_in_the_middle_and_keeps_the_zoom(self) -> None:
+        window = _window(101)
+        window.zoom(4.0, 0.0)  # [0, 25]
+        window.center_on(60)
+        self.assertEqual(window.view(), (47.5, 72.5))
+
+    def test_center_on_does_nothing_on_the_whole_axis(self) -> None:
+        window = _window(101)
+        window.center_on(60)
+        self.assertEqual(window.view(), (0.0, 100.0))
+
+    def test_near_the_ends_the_window_stops_and_the_tick_leaves_the_middle(self) -> None:
+        window = _window(101)
+        window.zoom(4.0, 0.0)
+        window.center_on(3)  # nothing lies before tick 0: the window cannot slide further
+        self.assertEqual(window.view(), (0.0, 25.0))
+        window.center_on(99)
+        self.assertEqual(window.view(), (75.0, 100.0))
+
+    def test_each_step_slides_the_window_by_one_tick_and_keeps_its_width(self) -> None:
+        window = _window(101)
+        window.zoom(4.0, 0.0)
+        window.follow(50)
+        before = window.view()
+        window.follow(51)
+        after = window.view()
+        self.assertAlmostEqual(after[0] - before[0], 1.0)
+        self.assertAlmostEqual(after[1] - after[0], before[1] - before[0])
+        self.assertAlmostEqual(sum(after) / 2.0, 51.0)
+
+    def test_following_a_tick_that_is_already_in_the_middle_announces_nothing(self) -> None:
+        window = _window(101)
+        window.zoom(4.0, 0.0)
+        changes: list[int] = []
+        window.changed.connect(lambda: changes.append(1))
+        window.follow(50)
+        window.follow(50)
+        self.assertEqual(len(changes), 1)
+
+    def test_a_held_pointer_stops_the_window_and_the_release_centres_on_the_last_value(self) -> None:
+        window = _window(101)
+        window.zoom(4.0, 0.0)  # [0, 25]
+        slider, row = object(), object()
+        window.hold(slider)
+        window.hold(row)
+        window.follow(12)
+        window.follow(20)
+        self.assertEqual(window.view(), (0.0, 25.0))  # stood still
+        window.release(row)
+        self.assertEqual(window.view(), (0.0, 25.0))  # the slider's button is still down
+        window.release(slider)
+        self.assertEqual(window.view(), (7.5, 32.5))  # centred on 20
+
+    def test_a_pan_in_progress_stops_following(self) -> None:
+        window = _window(101)
+        window.zoom(4.0, 0.0)
+        window.start_pan(100.0)
+        window.follow(80)
+        self.assertEqual(window.view(), (0.0, 25.0))
+        window.end_pan()
+        window.follow(80)
+        self.assertAlmostEqual(sum(window.view()) / 2.0, 80.0)
+
+    def test_releasing_without_having_followed_anything_changes_nothing(self) -> None:
+        window = _window(101)
+        window.zoom(4.0, 0.0)
+        owner = object()
+        window.hold(owner)
+        window.release(owner)
+        self.assertEqual(window.view(), (0.0, 25.0))
+
+    def test_ensure_visible_is_still_the_gentle_paging_rule(self) -> None:
+        window = _window(101)
+        window.zoom(4.0, 0.0)
+        window.ensure_visible(12)  # on screen: nothing moves
+        self.assertEqual(window.view(), (0.0, 25.0))
+
+
 class WheelGestureTest(unittest.TestCase):
     def test_ctrl_wheel_zooms_in_around_the_pointer_and_wheel_down_zooms_out(self) -> None:
         window = _window(101)
