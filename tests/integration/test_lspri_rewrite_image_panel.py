@@ -1220,27 +1220,30 @@ class RewriteImagePanelTest(unittest.TestCase):
         -> "Manual edit" once sibling groups ("General"/"PNG") landed
         beside it (2026-10-02, maintainer request)."""
         page = self.panel._tool_ribbon._stack.widget(2)
-        # Picker -> mask_edit_group (the labeled_icon_group wrapper) -> page
-        # - the same two-hop chain MaskOverlayControls's own group uses.
-        # **Not** picker -> a picker+stack row -> group (a 2026-10-02 report:
-        # wrapping the picker+stack *pair* made the "Manual edit" caption
-        # center under the *reserved* stack width - as wide as Morphology's
-        # own widest panel - rather than under the picker itself, so it
-        # visually floated away whenever a narrower panel was shown). The
-        # stack now sits as its own, uncaptioned, top-aligned sibling.
-        picker_group = self.panel._mask_tab._edit_picker.parentWidget()
-        self.assertIs(picker_group.parentWidget(), page)
+        # Picker + stack -> one row widget -> mask_edit_group (the
+        # labeled_icon_group wrapper) -> page. The caption wraps the whole
+        # picker+stack row so it is centred on the whole "Manual edit"
+        # section (2026-10-16, maintainer request; it used to sit under the
+        # picker only, with the stack as an uncaptioned sibling).
+        edit_content = self.panel._mask_tab._edit_picker.parentWidget()
+        self.assertIs(self.panel._mask_tab._edit_stack.parentWidget(), edit_content)
+        edit_group = edit_content.parentWidget()
+        self.assertIs(edit_group.parentWidget(), page)
         self.assertIs(self.panel._mask_tab._separators[2].parentWidget(), page)
         self.assertEqual(self.panel._mask_tab._edit_label.text(), "Manual edit")
 
         layout = page.layout()
         visibility_index = layout.indexOf(self.panel._mask_tab.overlay_controls.parentWidget())
         separator_index = layout.indexOf(self.panel._mask_tab._separators[2])
-        edit_index = layout.indexOf(picker_group)
-        stack_index = layout.indexOf(self.panel._mask_tab._edit_stack)
+        edit_index = layout.indexOf(edit_group)
         self.assertLess(visibility_index, separator_index)
         self.assertLess(separator_index, edit_index)
-        self.assertEqual(stack_index, edit_index + 1, "the stack sits immediately after the picker's own group")
+        row = edit_content.layout()
+        self.assertLess(
+            row.indexOf(self.panel._mask_tab._edit_picker),
+            row.indexOf(self.panel._mask_tab._edit_stack),
+            "the picker sits left of its tool-control stack",
+        )
 
     def test_general_group_is_the_leftmost_group_in_the_mask_tab(self) -> None:
         """"put this icon [Clear] in solo section 'General' and put section
@@ -1270,10 +1273,12 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(self.panel._mask_tab._png_label.text(), "PNG")
 
         layout = page.layout()
-        stack_index = layout.indexOf(self.panel._mask_tab._edit_stack)
+        edit_group = self.panel._mask_tab._edit_stack.parentWidget().parentWidget()
+        edit_index = layout.indexOf(edit_group)
         separator_index = layout.indexOf(self.panel._mask_tab._separators[3])
         png_index = layout.indexOf(png_group)
-        self.assertLess(stack_index, separator_index)
+        self.assertGreaterEqual(edit_index, 0)
+        self.assertLess(edit_index, separator_index)
         self.assertLess(separator_index, png_index)
 
     def test_png_group_order_is_load_then_save(self) -> None:

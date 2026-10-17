@@ -47,6 +47,9 @@ try:
         GeometryModule,
         MaskModule,
     )
+    from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, TransientEvent
+    from lspr_imaging_app.image_tools.mask.transient_events import TransientEventsModule
+    from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import SelectionModule
     from lspr_imaging_app.storage import session_index
@@ -264,15 +267,16 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.roi_toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.analysis_settings = AnalysisSettingsModule()
+        self.events = TransientEventsModule()
         self.coordinator = SessionCoordinator()
         self.autosave = _build_session_autosave(
             self.dataset, self.geometry, self.mask, self.chromatic,
-            self.background, self.roi_toolbox, self.selection, self.analysis_settings,
+            self.background, self.roi_toolbox, self.selection, self.analysis_settings, None, self.events,
         )
         _wire_session_coordinator(
             self.coordinator, self.autosave, _FakeAnalysisEngine(),
             self.geometry, self.mask, self.chromatic, self.background,
-            self.roi_toolbox, self.selection, self.analysis_settings,
+            self.roi_toolbox, self.selection, self.analysis_settings, None, self.events,
         )
         self.dataset.dataset_loaded.connect(lambda ds: self.coordinator.bind_dataset(ds.home))
         self.dataset.dataset_cleared.connect(self.coordinator.unbind)
@@ -322,6 +326,40 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         restored = self.roi_toolbox.rois()
         self.assertEqual(len(restored), 1)
         self.assertEqual((restored[0].center_x, restored[0].center_y), (8.0, 6.0))
+
+    def _scan_result(self) -> ScanResult:
+        events = [
+            TransientEvent(
+                frame=(0, 500.0), kind=KIND_PARTICLE, area_px=90, centroid_xy=(10.0, 8.0), bbox_xyxy=(5, 4, 15, 12), depth=0.8, z=120.0
+            )
+        ]
+        return ScanResult(
+            events=events, frames_in_range=1, frames_screened=1, frames_hit=1, failed_frames=[], seconds=0.1,
+            stage_seconds={}, params=ScanParams(),
+        )
+
+    def test_the_scan_pointers_are_written_and_come_back_after_a_restart(self) -> None:
+        """A scan takes minutes: its pointers (and the user's dismissals) are part of the session, saved by the autosave."""
+        self.dataset.load_dataset(self.dataset_model)
+        self.events.set_scan_result(self._scan_result())
+        self.events.dismiss([1])
+        self.autosave.flush()
+
+        self._build()
+        self.dataset.load_dataset(self.dataset_model)
+        records = self.events.records()
+        self.assertEqual([(r.id, r.event.frame, r.dismissed) for r in records], [(1, (0, 500.0), True)])
+        self.assertEqual(self.events.info().settings["stride"], 3)
+
+    def test_a_second_session_has_no_pointers_of_the_first(self) -> None:
+        self.dataset.load_dataset(self.dataset_model)
+        self.events.set_scan_result(self._scan_result())
+        self.autosave.flush()
+        first = self.coordinator.active_session_id()
+        self.coordinator.create_new()
+        self.assertFalse(self.events.has_events())
+        self.coordinator.switch_to(first)
+        self.assertTrue(self.events.has_events())
 
     def test_an_unreadable_session_disables_saving_rather_than_overwriting_it(self) -> None:
         """The destructive case. A session file this build cannot parse
