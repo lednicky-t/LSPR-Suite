@@ -20,8 +20,11 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PyQt6 import QtWidgets
 
@@ -38,7 +41,7 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.analysis import AnalysisSettingsModule
     from lspr_imaging_app.analysis.provenance import FrameNamingScheme
-    from lspr_imaging_app.app_rewrite import _build_session_autosave, _wire_session_coordinator
+    from lspr_imaging_app.app_rewrite import _build_session_autosave, _cached_frame_naming, _wire_session_coordinator
     from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
     from lspr_imaging_app.image_tools import (
@@ -53,7 +56,7 @@ try:
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import SelectionModule
     from lspr_imaging_app.storage import session_index
-    from lspr_imaging_app.storage.session import SessionState, session_path
+    from lspr_imaging_app.storage.session import PreparedSession, SessionState, session_path
     from lspr_imaging_app.storage.session_autosave import SessionAutosave
     from lspr_imaging_app.storage.session_coordinator import SessionCoordinator
     from lspr_imaging_app.undo import undo_manager
@@ -67,15 +70,18 @@ _NAMING = FrameNamingScheme.for_dataset([0], [500.0])
 
 
 class RecordingSave:
-    """Stands in for `save_session`, recording every call instead of
+    """Stands in for `SessionWriter.write`, recording every call instead of
     writing - what makes "did this save, and against which root" a plain
-    assertion rather than a stat() race."""
+    assertion rather than a stat() race. Runs on the autosave's worker thread
+    (2026-10-17), so `flush()` / `wait_until_written()` come before any assertion."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[Path, SessionState]] = []
+        self.calls: list[tuple[Path, PreparedSession]] = []
+        self.threads: list[threading.Thread] = []
 
-    def __call__(self, root: Path, state: SessionState, naming: FrameNamingScheme) -> Path:
-        self.calls.append((Path(root), state))
+    def __call__(self, root: Path, prepared: PreparedSession) -> Path:
+        self.threads.append(threading.current_thread())
+        self.calls.append((Path(root), prepared))
         return Path(root) / "session" / "session.json"
 
 
@@ -92,11 +98,12 @@ class SessionAutosaveDebounceTest(unittest.TestCase):
         self.autosave = SessionAutosave(
             capture=lambda: self.state,
             naming=lambda: _NAMING,
-            save=self.saved,
+            write=self.saved,
             interval_ms=60_000,
         )
 
     def tearDown(self) -> None:
+        self.autosave.close()
         self._tmp.cleanup()
 
     def test_nothing_is_written_before_the_debounce_elapses(self) -> None:
@@ -145,6 +152,7 @@ class SessionAutosaveDebounceTest(unittest.TestCase):
         self.autosave.set_root(self.root)
         self.autosave.schedule()
         self.autosave.set_root(other)
+        self.autosave.wait_until_written()  # the hand-over is written in the background
         self.assertEqual([call[0] for call in self.saved.calls], [self.root])
 
     def test_a_restore_does_not_save_itself_back(self) -> None:
@@ -178,13 +186,13 @@ class SessionAutosaveDebounceTest(unittest.TestCase):
         next quit would skip it as "nothing changed"."""
         attempts: list[int] = []
 
-        def _failing_then_working(root, state, naming):
+        def _failing_then_working(root, prepared):
             attempts.append(1)
             if len(attempts) == 1:
                 raise OSError("disk full")
             return Path(root)
 
-        self.autosave._save = _failing_then_working
+        self.autosave._write = _failing_then_working
         self.autosave.set_root(self.root)
         self.autosave.schedule()
         with self.assertLogs("lspr_imaging_app.storage.session_autosave", level="ERROR"):
@@ -198,10 +206,10 @@ class SessionAutosaveDebounceTest(unittest.TestCase):
         reported: list[str] = []
         self.autosave.save_failed.connect(reported.append)
 
-        def _always_failing(root, state, naming):
+        def _always_failing(root, prepared):
             raise OSError("disk full")
 
-        self.autosave._save = _always_failing
+        self.autosave._write = _always_failing
         self.autosave.set_root(self.root)
         self.autosave.schedule()
         with self.assertLogs("lspr_imaging_app.storage.session_autosave", level="ERROR"):
@@ -217,6 +225,168 @@ class SessionAutosaveDebounceTest(unittest.TestCase):
         self.autosave.schedule()
         self.autosave.flush()
         self.assertEqual(reported, [])
+
+
+class CachedFrameNamingTest(unittest.TestCase):
+    """The scheme walks every cube (16 ms for 314), so the autosave asks for it once per loaded dataset, not on every save."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.dataset_model = _write_dataset(Path(self._tmp.name))
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_it_is_worked_out_again_only_after_a_dataset_is_loaded_or_cleared(self) -> None:
+        dataset = DatasetModule()
+        naming = _cached_frame_naming(dataset)
+        with mock.patch("lspr_imaging_app.app_rewrite._frame_naming", return_value=_NAMING) as worked_out:
+            self.assertIs(naming(), _NAMING)
+            naming()
+            naming()
+            self.assertEqual(worked_out.call_count, 1)
+            dataset.load_dataset(self.dataset_model)
+            naming()
+            naming()
+            self.assertEqual(worked_out.call_count, 2)
+            dataset.clear_dataset()
+            naming()
+            self.assertEqual(worked_out.call_count, 3)
+
+
+class GatedWrite:
+    """A fake `SessionWriter.write` that can be held open, to show what the GUI thread does while a write runs."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Path, PreparedSession]] = []
+        self.threads: list[threading.Thread] = []
+        self.entered = threading.Event()  # a write has started
+        self.release = threading.Event()
+        self.block = False
+
+    def __call__(self, root: Path, prepared: PreparedSession) -> Path:
+        self.entered.set()
+        if self.block:
+            assert self.release.wait(10.0), "the test never released the write"
+        self.threads.append(threading.current_thread())
+        self.calls.append((Path(root), prepared))
+        return Path(root) / "session" / "session.json"
+
+
+class SessionAutosaveThreadingTest(unittest.TestCase):
+    """The write runs on its own thread (2026-10-17): the GUI thread only reads the modules' state and hands a copy over."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self._tmp.name)
+        self.write = GatedWrite()
+        self.state = SessionState()
+        self.capture_threads: list[threading.Thread] = []
+        self.autosave = SessionAutosave(
+            capture=self._capture, naming=lambda: _NAMING, write=self.write, interval_ms=60_000,
+        )
+        self.autosave.set_root(self.root)
+
+    def _capture(self) -> SessionState:
+        self.capture_threads.append(threading.current_thread())
+        return self.state
+
+    def tearDown(self) -> None:
+        self.write.release.set()
+        self.autosave.close()
+        self._tmp.cleanup()
+
+    def _edit_and_hand_over(self, cube: int) -> None:
+        """What the debounce timer does when it fires, after an edit that left the Cube at *cube*."""
+        self.state = SessionState(selected_cube=cube)
+        self.autosave.schedule()
+        self.autosave._save_now()
+
+    def test_the_state_is_read_on_the_gui_thread_and_written_on_another(self) -> None:
+        self.autosave.schedule()
+        self.autosave.flush()
+        self.assertEqual(self.capture_threads, [threading.current_thread()])
+        self.assertEqual(len(self.write.threads), 1)
+        self.assertIsNot(self.write.threads[0], threading.current_thread())
+
+    def test_a_slow_write_does_not_block_the_gui_thread(self) -> None:
+        self.write.block = True
+        began = time.perf_counter()
+        self._edit_and_hand_over(1)
+        self.assertLess(time.perf_counter() - began, 1.0)  # returned while the write is still held open
+        self.assertTrue(self.write.entered.wait(5.0))
+        self.assertEqual(self.write.calls, [])  # it has started, it has not finished
+        self.write.release.set()
+        self.autosave.wait_until_written()
+        self.assertEqual(len(self.write.calls), 1)
+
+    def test_edits_made_during_a_write_collapse_into_one_more_write_with_the_newest_state(self) -> None:
+        self.write.block = True
+        self._edit_and_hand_over(1)
+        self.assertTrue(self.write.entered.wait(5.0))
+        self._edit_and_hand_over(2)  # waits behind the running write
+        self._edit_and_hand_over(3)  # replaces the one waiting: its state includes the older edit
+        self.write.release.set()
+        self.autosave.wait_until_written()
+        cubes = [prepared.payload["selection"]["cube_index"] for _root, prepared in self.write.calls]
+        self.assertEqual(cubes, [1, 3])
+
+    def test_a_pending_write_for_the_old_root_survives_a_switch_and_lands_in_the_old_folder(self) -> None:
+        other = self.root / "other"
+        self.write.block = True
+        self._edit_and_hand_over(1)  # running (root)
+        self.assertTrue(self.write.entered.wait(5.0))
+        self._edit_and_hand_over(2)  # waiting (root)
+        self.autosave.set_root(other)  # hands the waiting one over; must not be replaced by anything for `other`
+        self._edit_and_hand_over(3)  # waiting (other)
+        threading.Timer(0.2, self.write.release.set).start()
+        self.autosave.flush()
+        self.assertEqual(
+            [(call_root, prepared.payload["selection"]["cube_index"]) for call_root, prepared in self.write.calls],
+            [(self.root, 1), (self.root, 2), (other, 3)],
+        )
+
+    def test_flush_returns_only_when_the_write_has_finished(self) -> None:
+        def slow(root, prepared):
+            time.sleep(0.3)
+            self.write(root, prepared)
+
+        self.autosave._write = slow
+        self.autosave.schedule()
+        self.autosave.flush()
+        self.assertEqual(len(self.write.calls), 1)
+
+    def test_waiting_for_one_root_does_not_wait_for_another(self) -> None:
+        other = self.root / "other"
+        self.write.block = True
+        self._edit_and_hand_over(1)
+        self.assertTrue(self.write.entered.wait(5.0))
+        began = time.perf_counter()
+        self.assertTrue(self.autosave.wait_until_written(other, timeout_s=5.0))  # nothing is being written to `other`
+        self.assertLess(time.perf_counter() - began, 1.0)
+        with self.assertLogs("lspr_imaging_app.storage.session_autosave", level="WARNING"):
+            self.assertFalse(self.autosave.wait_until_written(self.root, timeout_s=0.2))  # this one is still running
+
+    def test_a_failure_in_the_background_reaches_the_gui_thread_by_itself(self) -> None:
+        """No flush here: the user keeps working, and the message must still arrive, on the GUI thread, via the event loop."""
+        arrived: list[tuple[str, threading.Thread]] = []
+        self.autosave.save_failed.connect(lambda message: arrived.append((message, threading.current_thread())))
+
+        def failing(root, prepared):
+            raise OSError("disk full")
+
+        self.autosave._write = failing
+        self.autosave.schedule()
+        with self.assertLogs("lspr_imaging_app.storage.session_autosave", level="ERROR"):
+            self.autosave._save_now()
+            deadline = time.monotonic() + 5.0
+            while not arrived and time.monotonic() < deadline:
+                _APP.processEvents()
+                time.sleep(0.01)
+        self.assertEqual(len(arrived), 1)
+        self.assertIn("disk full", arrived[0][0])
+        self.assertIs(arrived[0][1], threading.current_thread())
+        self.assertTrue(self.autosave._dirty)  # still pending: the next edit or the quit flush tries again
 
 
 def _write_dataset(root: Path) -> ImageDataset:
@@ -251,9 +421,12 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self._tmp.name)
         self.dataset_model = _write_dataset(self.root)
+        self._autosaves: list[SessionAutosave] = []
         self._build()
 
     def tearDown(self) -> None:
+        for autosave in self._autosaves:
+            autosave.close()
         undo_manager.clear()
         self._tmp.cleanup()
 
@@ -273,6 +446,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, self.analysis_settings, None, self.events,
         )
+        self._autosaves.append(self.autosave)
         _wire_session_coordinator(
             self.coordinator, self.autosave, _FakeAnalysisEngine(),
             self.geometry, self.mask, self.chromatic, self.background,
@@ -310,6 +484,22 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.dataset.load_dataset(self.dataset_model)
         self.autosave.flush()
         self.assertEqual(self._active_session_path().stat().st_mtime_ns, written_at)
+
+    def test_reopening_the_session_just_edited_waits_for_its_background_write(self) -> None:
+        """The flush on a session switch is written in the background. Opening the *same* session again straight away must
+        not read the folder before that write has landed: it would restore the previous save (here: no file, so no ROI), and
+        the next autosave would then write that over the edit."""
+        self.dataset.load_dataset(self.dataset_model)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
+        real_write = self.autosave._write
+
+        def slow_write(root, prepared):
+            time.sleep(0.4)
+            return real_write(root, prepared)
+
+        self.autosave._write = slow_write
+        self.coordinator.switch_to(self.coordinator.active_session_id())  # no explicit flush
+        self.assertEqual(len(self.roi_toolbox.rois()), 1)
 
     def test_a_second_session_is_independent_of_the_first(self) -> None:
         """The whole point of sessions: a new one never sees the previous
