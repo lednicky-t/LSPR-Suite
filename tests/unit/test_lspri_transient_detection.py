@@ -196,10 +196,58 @@ class LinkingTests(unittest.TestCase):
         self.assertEqual(len({e.passage_id for e in linked}), 2)
         self.assertEqual(len(linked), 6)
 
-    def test_an_object_that_does_not_move_for_three_frames_is_an_artefact(self) -> None:
-        events = [_event(self.ORDER[i], 500, 400) for i in range(3)]
+    def test_an_object_that_stays_at_one_place_for_three_frames_is_a_particle_at_rest(self) -> None:
+        """A particle that arrives and stays (maintainer, 2026-10-18): labelled, kept a particle, so Auto mask masks every frame."""
+        events = [_event(self.ORDER[i], 500 + i, 400) for i in range(3)]
+        linked = td.link_passages(events, self.ORDER, image_shape=(900, 1300))
+        self.assertEqual({e.kind for e in linked}, {td.KIND_PARTICLE})
+        self.assertEqual(len({e.passage_id for e in linked}), 1)
+        self.assertIsNotNone(linked[0].passage_id)
+        self.assertTrue(all(td.is_resting(e) for e in linked))
+        self.assertTrue(all(e.step_px == 1.0 for e in linked))  # the shift between frames, not zero for a flowing particle
+
+    def test_a_flowing_particle_is_not_resting(self) -> None:
+        events = [_event(self.ORDER[i], 100 + 190 * i, 300) for i in range(4)]
+        linked = td.link_passages(events, self.ORDER, image_shape=(900, 1300))
+        self.assertFalse(any(td.is_resting(e) for e in linked))
+        self.assertFalse(td.is_resting(_event(self.ORDER[0], 5, 5)))  # no passage at all
+
+    def test_a_particle_at_rest_across_a_cube_boundary_is_one_passage(self) -> None:
+        events = [_event(self.ORDER[i], 500, 400) for i in (2, 3, 4, 5)]  # the last two wavelengths of cube 0, the first two of cube 1
+        linked = td.link_passages(events, self.ORDER, image_shape=(900, 1300))
+        self.assertEqual(len({e.passage_id for e in linked}), 1)
+        self.assertEqual({e.kind for e in linked}, {td.KIND_PARTICLE})
+
+    def test_a_particle_at_rest_and_a_flowing_one_in_the_same_frames_are_two_passages(self) -> None:
+        events = [_event(self.ORDER[i], 500, 400) for i in range(4)] + [_event(self.ORDER[i], 100 + 190 * i, 700) for i in range(4)]
+        linked = td.link_passages(events, self.ORDER, image_shape=(900, 1300))
+        resting = [e for e in linked if td.is_resting(e)]
+        self.assertEqual((len(resting), len({e.passage_id for e in resting}), len({e.passage_id for e in linked})), (4, 1, 2))
+
+    def test_a_particle_that_arrives_flowing_and_then_rests_keeps_its_resting_frames_together(self) -> None:
+        xs = [100, 290, 480, 481, 482, 482]
+        events = [_event(self.ORDER[i], x, 400) for i, x in enumerate(xs)]
+        linked = td.link_passages(events, self.ORDER, image_shape=(900, 1300))
+        self.assertEqual({e.kind for e in linked}, {td.KIND_PARTICLE})  # none of it is dropped as an artefact
+        self.assertEqual(len({e.passage_id for e in linked[2:]}), 1)  # the frame where it stopped and the frames at rest: one passage
+        self.assertTrue(all(td.is_resting(e) for e in linked[2:]))
+        self.assertTrue(all(e.passage_id is not None and not td.is_resting(e) for e in linked[:2]))  # the flowing part: its own
+
+    def test_an_object_that_stays_on_the_image_border_is_still_an_artefact(self) -> None:
+        """The corners and edges of cube 0 and the top edge of cubes 175-185 of the test dataset: 356 of the 374 stationary objects the first version of the rule called artefacts."""
+        events = [_event(self.ORDER[i], 1295, 400) for i in range(3)]
         linked = td.link_passages(events, self.ORDER, image_shape=(900, 1300))
         self.assertEqual({e.kind for e in linked}, {td.KIND_ARTEFACT})
+        self.assertEqual({e.passage_id for e in linked}, {None})
+
+    def test_one_member_on_the_border_makes_the_whole_resting_run_the_borders(self) -> None:
+        events = [_event(self.ORDER[i], x, 400) for i, x in enumerate([1270, 1281, 1290])]  # drifting towards the edge
+        linked = td.link_passages(events, self.ORDER, image_shape=(900, 1300))
+        self.assertEqual({e.kind for e in linked}, {td.KIND_ARTEFACT})
+
+    def test_without_the_image_size_nothing_is_an_artefact_because_of_the_border(self) -> None:
+        events = [_event(self.ORDER[i], 1295, 400) for i in range(3)]
+        self.assertEqual({e.kind for e in td.link_passages(events, self.ORDER)}, {td.KIND_PARTICLE})
 
     def test_one_coincidence_in_a_dense_stream_is_not_an_artefact(self) -> None:
         """Particle spacing equal to the step: object 2 of frame k+1 lands where object 1 of frame k was. Two frames only."""
@@ -216,6 +264,59 @@ class LinkingTests(unittest.TestCase):
     def test_global_events_pass_through(self) -> None:
         pointer = _event(self.ORDER[0], 600, 400, area=9000, kind=td.KIND_GLOBAL)
         self.assertEqual(td.link_passages([pointer], self.ORDER), [pointer])
+
+
+class RestingParticleScanTests(unittest.TestCase):
+    """A particle that arrives in cube 3 and stays at one place while four wavelengths are taken (maintainer, 2026-10-18): the scan
+    finds all four frames and calls them a particle at rest, not an artefact, so the Auto mask step masks every one."""
+
+    CUBES = 6
+    WAVELENGTHS = [0.0] + [470.0 + 10 * i for i in range(7)]
+    X = {2: 200.0, 3: 201.0, 4: 200.0, 5: 202.0}
+
+    def load_plane(self, cube: int, wavelength: float) -> np.ndarray:
+        index = int(round((wavelength - 470.0) / 10)) + 1 if wavelength > 0 else 0
+        frame = _field(index, cube, np.random.default_rng(cube * 100 + index))
+        x = self.X.get(index) if cube == 3 else None
+        return _blob(frame, x, 80, 6, 0.2) if x is not None else frame
+
+    def test_it_is_found_in_every_frame_as_a_particle_at_rest(self) -> None:
+        index = {c: list(self.WAVELENGTHS) for c in range(self.CUBES)}
+        params = ScanParams(detection=_params(max_particle_area_px=2000), workers=2, stride=1)
+        result = scan_transients(index, self.load_plane, params)
+        self.assertEqual({e.frame for e in result.events}, {(3, 480.0 + 10 * i) for i in range(4)})
+        self.assertEqual({e.kind for e in result.events}, {td.KIND_PARTICLE})
+        self.assertEqual(len({e.passage_id for e in result.events}), 1)
+        self.assertTrue(all(td.is_resting(e) for e in result.events))
+        self.assertTrue(all(e.contour is not None for e in result.events), "a contour is what Auto mask masks")
+
+    def test_a_particle_resting_over_a_cube_boundary_is_found_in_both_cubes_as_one_passage(self) -> None:
+        """It arrives in cube 3 at 510 nm and stays for one cube's worth of frames: cube 3 from 510 nm on, cube 4 up to 500 nm."""
+        def load(cube: int, wavelength: float) -> np.ndarray:
+            index = int(round((wavelength - 470.0) / 10)) + 1 if wavelength > 0 else 0
+            frame = _field(index, cube, np.random.default_rng(cube * 100 + index))
+            rests = (cube == 3 and index >= 5) or (cube == 4 and index <= 4)
+            return _blob(frame, 200, 80, 6, 0.2) if rests and index > 0 else frame
+
+        index = {c: list(self.WAVELENGTHS) for c in range(self.CUBES)}
+        result = scan_transients(index, load, ScanParams(detection=_params(max_particle_area_px=2000), workers=2, stride=1))
+        self.assertEqual({e.frame for e in result.events}, {(3, 510.0), (3, 520.0), (3, 530.0), (4, 470.0), (4, 480.0), (4, 490.0), (4, 500.0)})
+        self.assertEqual({e.kind for e in result.events}, {td.KIND_PARTICLE})
+        self.assertEqual(len({e.passage_id for e in result.events}), 1)
+        self.assertTrue(all(td.is_resting(e) for e in result.events))
+
+    def test_known_limit_a_particle_resting_for_more_than_one_cube_is_found_only_in_the_first(self) -> None:
+        """Every frame is compared with the same wavelength in the PREVIOUS cube, so once the particle is in that frame too it is no
+        longer 'new'. Pinned so that nobody is surprised; the way round it (a reference from before it arrived) is a separate
+        feature: docs/auto_transient_scan_and_mask_plan_2026-10-16.md section 12."""
+        def load(cube: int, wavelength: float) -> np.ndarray:
+            index = int(round((wavelength - 470.0) / 10)) + 1 if wavelength > 0 else 0
+            frame = _field(index, cube, np.random.default_rng(cube * 100 + index))
+            return _blob(frame, 200, 80, 6, 0.2) if cube in (3, 4) and index in (2, 3, 4, 5) else frame
+
+        index = {c: list(self.WAVELENGTHS) for c in range(self.CUBES)}
+        result = scan_transients(index, load, ScanParams(detection=_params(max_particle_area_px=2000), workers=2, stride=1))
+        self.assertEqual({e.frame[0] for e in result.events}, {3})
 
 
 class ScanTests(unittest.TestCase):
@@ -369,6 +470,17 @@ class GapTargetTests(unittest.TestCase):
         extra = _event(self.ORDER[5], 1075, 305)  # already found there
         targets = tg.find_gap_targets(linked + [extra], self.ORDER, td.DetectionParams(), image_shape=self.SHAPE)
         self.assertNotIn(self.ORDER[5], {t.frame for t in targets})
+
+    def test_a_particle_at_rest_is_followed_one_frame_beyond_each_end_at_the_same_spot(self) -> None:
+        """Its first and last frames may be too faint (it is arriving / leaving): the spot is known, so look there at the lower threshold."""
+        linked = self._linked([(2, 500, 400), (3, 500, 401), (4, 501, 400)])
+        self.assertTrue(all(td.is_resting(e) for e in linked))
+        targets = {t.frame: t for t in tg.find_gap_targets(linked, self.ORDER, td.DetectionParams(), image_shape=self.SHAPE)}
+        self.assertEqual(set(targets), {self.ORDER[1], self.ORDER[5]})
+        for target in targets.values():
+            self.assertAlmostEqual(target.predicted_xy[0], 500, delta=2.0)
+            self.assertAlmostEqual(target.predicted_xy[1], 400, delta=2.0)
+            self.assertAlmostEqual(target.search_px, 40.0, delta=1.0)
 
     def test_a_lone_event_has_no_velocity_and_is_not_extended(self) -> None:
         self.assertEqual(tg.find_gap_targets(self._linked([(3, 500, 300)]), self.ORDER, td.DetectionParams(), image_shape=self.SHAPE), [])

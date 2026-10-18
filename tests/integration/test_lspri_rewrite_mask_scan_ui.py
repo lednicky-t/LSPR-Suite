@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -199,6 +200,27 @@ class MaskScanUiTest(unittest.TestCase):
             self.assertEqual(strip.marks(), ())  # a pointer is not a mask mark
         self.go_to(1)
         self.assertEqual(self.rows.wavelength_strip.event_marks(), ())  # the wavelength row follows the cube shown
+
+    def test_a_particle_at_rest_is_labelled_as_such_and_masked_like_any_other(self) -> None:
+        """A particle that arrived and stays (maintainer, 2026-10-18): its pointers say 'at rest', and Auto mask masks every frame."""
+        from dataclasses import replace
+
+        from lspr_imaging_app.image_tools.mask.transient_events_state import EventRecord, TransientEventsState
+
+        self.run_scan()
+        resting = tuple(
+            EventRecord(r.id, replace(r.event, passage_id=7, step_px=1.0), r.dismissed) for r in self.events.records()
+        )
+        self.events.restore_state(TransientEventsState(self.events.info(), resting))
+        _pump(0.3)
+        self.go_to(3)
+        cube_tip = self.rows.cube_strip.event_marks()[0].tip
+        self.assertIn("particle at rest 500-600 nm (3 frames)", cube_tip)
+        self.assertNotIn("px per frame", cube_tip)
+        self.assertIn("at rest (passage 7)", self.rows.wavelength_strip.event_marks()[1].tip)
+        self.panel._mask_tab.auto_controls._apply_button.click()
+        self.wait_for_auto_mask()
+        self.assertEqual(self.mask.individual_cubes(), {3: _WAVELENGTHS})  # all three frames
 
     def test_the_pointers_do_not_hide_a_mask_mark_and_each_has_its_own_menu(self) -> None:
         self.run_scan()
@@ -480,6 +502,82 @@ class MaskScanUiTest(unittest.TestCase):
         self.dataset.clear_dataset()
         _pump(0.3)
         self.assertEqual(self.rows.cube_strip.event_marks(), ())
+
+    # -- a task never outlives the dataset it started with (audit A1, 2026-10-17) -------------------------------------------
+
+    def _pump_until(self, event: threading.Event, seconds: float = 10.0) -> None:
+        deadline = time.monotonic() + seconds
+        while not event.is_set() and time.monotonic() < deadline:
+            QtWidgets.QApplication.processEvents()
+            time.sleep(0.005)
+
+    def test_clearing_the_dataset_stops_a_running_scan_and_installs_nothing(self) -> None:
+        self.load()
+        gate, started = threading.Event(), threading.Event()
+        real = self.dataset.load_plane_uncached
+
+        def slow(cube, wavelength):
+            started.set()
+            gate.wait(10.0)
+            return real(cube, wavelength)
+
+        with mock.patch.object(self.dataset, "load_plane_uncached", side_effect=slow):
+            self.controls._scan_button.click()
+            self._pump_until(started)
+            self.dataset.clear_dataset()
+            gate.set()
+            deadline = time.monotonic() + 20.0
+            while not self.finished and time.monotonic() < deadline:
+                QtWidgets.QApplication.processEvents()
+                time.sleep(0.01)
+        self.assertEqual(self.finished, ["cancelled"])
+        self.assertFalse(self.events.has_events())
+
+    def test_loading_another_dataset_stops_a_running_scan_too(self) -> None:
+        self.load()
+        gate, started = threading.Event(), threading.Event()
+        real = self.dataset.load_plane_uncached
+
+        def slow(cube, wavelength):
+            started.set()
+            gate.wait(10.0)
+            return real(cube, wavelength)
+
+        with mock.patch.object(self.dataset, "load_plane_uncached", side_effect=slow):
+            self.controls._scan_button.click()
+            self._pump_until(started)
+            self.dataset.load_dataset(_write_dataset(Path(self._tmp.name)))  # "another" dataset (same files: the signal is what counts)
+            gate.set()
+            deadline = time.monotonic() + 20.0
+            while not self.finished and time.monotonic() < deadline:
+                QtWidgets.QApplication.processEvents()
+                time.sleep(0.01)
+        self.assertEqual(self.finished, ["cancelled"])
+        self.assertFalse(self.events.has_events())
+
+    def test_clearing_the_dataset_stops_a_running_auto_mask_and_writes_no_mask(self) -> None:
+        from lspr_imaging_app.image_tools import mask_auto_task
+
+        self.run_scan()
+        outcomes: list[str] = []
+        self.panel._mask_auto.task_finished.connect(lambda _id, outcome, _text: outcomes.append(outcome))
+        gate, reached = threading.Event(), threading.Event()
+        real = mask_auto_task.frame_mask
+
+        def held(*args, **kwargs):
+            reached.set()
+            gate.wait(10.0)
+            return real(*args, **kwargs)
+
+        with mock.patch.object(mask_auto_task, "frame_mask", side_effect=held):
+            self.panel._mask_tab.auto_controls._apply_button.click()
+            self._pump_until(reached)
+            self.dataset.clear_dataset()
+            gate.set()
+            self.wait_for_auto_mask()
+        self.assertEqual(outcomes, ["cancelled"])
+        self.assertEqual(self.mask.individual_cubes(), {})
+        self.assertFalse(undo_manager.can_undo)
 
 
 if __name__ == "__main__":

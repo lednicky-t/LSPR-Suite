@@ -13,6 +13,7 @@ one undo step, a readable failure, and cancellation.
 
 from __future__ import annotations
 
+import gc
 import sys
 import tempfile
 import time
@@ -20,6 +21,7 @@ import unittest
 from pathlib import Path
 
 from PyQt6 import QtWidgets
+from PyQt6.QtCore import QCoreApplication, QEvent
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -97,6 +99,15 @@ class ChromaticTabTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.panel._chromatic_auto.shutdown()
         self.panel._renderer.stop()
+        # Destroy the panel now, here, in order. Left alone (it was) the panels of all earlier tests wait for the cyclic garbage
+        # collector's first full pass and are destroyed in one go in the middle of a later test's event loop, which crashes Qt natively
+        # (the known "many panels GC'd at once" crash class; with the collector off this file never crashed, and a one-line change
+        # elsewhere in the app moved it from 0 to ~50 % of the runs; 2026-10-18).
+        self.panel.hide()
+        self.panel.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        _APP.processEvents()
+        gc.collect()
         self._tmp.cleanup()
 
     def _load(self, blank: bool = False) -> None:

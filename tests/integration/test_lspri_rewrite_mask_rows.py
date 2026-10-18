@@ -260,41 +260,145 @@ class MaskRowsTest(unittest.TestCase):
         self.wheel(self.wavelength_strip, -120)
         self.assertEqual(self.frame(), (4, 500.0))
 
-    def test_past_the_last_mask_of_a_cube_the_wheel_goes_on_to_the_nearest_marked_frame_of_another_cube(self) -> None:
-        self.draw_marks()  # individual masks: cube 4 at 500 and 600, cube 5 at 500 (cube 2 and 5's persistent ones are not on this row)
-        self.go_to(4, 600.0)
-        self.wheel(self.wavelength_strip, 120)
-        self.assertEqual(self.frame(), (5, 500.0))  # the first mark of the next cube that has one
-        self.wheel(self.wavelength_strip, 120)
-        self.assertEqual(self.frame(), (5, 500.0))  # nothing later: stays
-        self.wheel(self.wavelength_strip, -120)
-        self.assertEqual(self.frame(), (4, 600.0))  # back past the first mark: the last mark of the previous cube
-        self.wheel(self.wavelength_strip, -120)
-        self.assertEqual(self.frame(), (4, 500.0))
-        self.wheel(self.wavelength_strip, -120)
-        self.assertEqual(self.frame(), (4, 500.0))  # no earlier cube with an individual mask
+    # -- the wheel hops between ALL a row's marks, masks and scan pointers, and never beyond the row (2026-10-18) ----------------
 
-    def test_a_standing_scan_pointer_counts_as_a_frame_to_go_to_and_a_dismissed_one_does_not(self) -> None:
+    def add_pointers(self, *frames) -> list:
         from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, TransientEvent
         from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
 
         events = self.panel._transient_events
-        pointer = TransientEvent(
-            frame=(7, 550.0), kind=KIND_PARTICLE, area_px=90, centroid_xy=(10.0, 8.0), bbox_xyxy=(5, 4, 15, 12), depth=0.8, z=120.0
-        )
+        found = [
+            TransientEvent(frame=frame, kind=KIND_PARTICLE, area_px=90, centroid_xy=(10.0, 8.0), bbox_xyxy=(5, 4, 15, 12), depth=0.8, z=120.0)
+            for frame in frames
+        ]
         events.set_scan_result(ScanResult(
-            events=[pointer], frames_in_range=1, frames_screened=1, frames_hit=1, failed_frames=[], seconds=0.1,
+            events=found, frames_in_range=1, frames_screened=1, frames_hit=1, failed_frames=[], seconds=0.1,
             stage_seconds={}, params=ScanParams(),
         ))
-        self.draw_marks()
-        self.go_to(5, 500.0)  # the last individual mask
+        _pump(0.3)
+        return list(events.records())
+
+
+    def test_past_the_last_mark_of_a_cube_the_wheel_goes_on_to_the_next_cube_with_one_at_its_lowest(self) -> None:
+        """The one rule for sets (2026-10-18): leave the set going up -> the next available set, at its lowest element."""
+        self.draw_marks()  # individual masks: cube 4 at 500 and 600, cube 5 at 500 (the persistent ones of cubes 2 and 5 are not on this row)
+        self.go_to(4, 600.0)
         self.wheel(self.wavelength_strip, 120)
-        self.assertEqual(self.frame(), (7, 550.0))  # the nearest later pointer, past cube 6 which has nothing
-        self.wheel(self.wavelength_strip, -120)
         self.assertEqual(self.frame(), (5, 500.0))
-        events.dismiss([record.id for record in events.records()])
         self.wheel(self.wavelength_strip, 120)
-        self.assertEqual(self.frame(), (5, 500.0))  # a dismissed pointer is not a place to go
+        self.assertEqual(self.frame(), (5, 500.0))  # no cube after it has a mark: stays
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (4, 600.0))  # leaving the set going down -> the previous set, at its highest element
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (4, 500.0))
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (4, 500.0))  # no cube before it has a mark: stays
+
+
+    def test_a_cube_without_a_mark_sends_the_wheel_to_the_nearest_marked_cube_in_that_direction(self) -> None:
+        self.draw_marks()
+        self.go_to(1, 550.0)  # cube 1 has no individual mask and no pointer
+        self.wheel(self.wavelength_strip, 120)
+        self.assertEqual(self.frame(), (4, 500.0))  # up: the lowest mark of the nearest later cube that has one
+        self.go_to(7, 550.0)
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (5, 500.0))  # down: the highest mark of the nearest earlier cube that has one (cube 5 has just one)
+        self.go_to(0, 550.0)
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (0, 550.0))  # nothing before cube 0
+
+    def test_the_wheel_over_the_wavelength_row_does_nothing_when_no_cube_has_a_mark(self) -> None:
+        self.go_to(3, 550.0)
+        self.assertFalse(self.wavelength_strip.has_marks_to_hop_to())
+        self.wheel(self.wavelength_strip, 120)
+        self.wheel(self.wavelength_strip, -120)
+        self.assertEqual(self.frame(), (3, 550.0))
+
+
+    def test_the_wheel_over_the_wavelength_row_hops_between_pointers_and_on_into_the_next_cube_with_one(self) -> None:
+        self.add_pointers((3, 500.0), (3, 600.0), (6, 550.0))
+        self.go_to(3, 500.0)
+        visited = []
+        for delta in (120, 120, 120, -120, -120, -120):
+            self.wheel(self.wavelength_strip, delta)
+            visited.append(self.frame())
+        self.assertEqual(visited, [(3, 600.0), (6, 550.0), (6, 550.0), (3, 600.0), (3, 500.0), (3, 500.0)])
+
+
+    def test_masks_and_pointers_of_one_cube_are_hopped_through_together(self) -> None:
+        self.draw_marks()  # cube 4: masks at 500 and 600; cube 5: a mask at 500
+        self.add_pointers((4, 550.0))
+        self.go_to(4, 500.0)
+        visited = []
+        for _ in range(4):
+            self.wheel(self.wavelength_strip, 120)
+            visited.append(self.frame())
+        self.assertEqual(visited, [(4, 550.0), (4, 600.0), (5, 500.0), (5, 500.0)])
+
+
+    def test_a_dismissed_pointer_is_not_a_place_to_go(self) -> None:
+        records = self.add_pointers((3, 500.0), (3, 600.0), (6, 550.0))
+        self.panel._transient_events.dismiss([r.id for r in records if r.event.frame[1] == 600.0 or r.event.frame[0] == 6])
+        _pump(0.3)
+        self.go_to(3, 500.0)
+        self.wheel(self.wavelength_strip, 120)
+        self.assertEqual(self.frame(), (3, 500.0))  # the 600 nm pointer and the cube 6 one are dismissed (faint): nowhere to go
+        self.panel._transient_events.dismiss([r.id for r in records])
+        _pump(0.3)
+        self.assertFalse(self.wavelength_strip.has_marks_to_hop_to())
+
+    def test_the_wheel_over_the_cube_row_hops_between_the_cubes_with_a_pointer_too(self) -> None:
+        """Pointers only (a scan, no mask yet): the Cube row used to ignore the wheel."""
+        self.add_pointers((3, 550.0), (6, 550.0))
+        self.go_to(0)
+        visited = []
+        for delta in (120, 120, 120, -120, -120, -120):
+            self.wheel(self.cube_strip, delta)
+            visited.append(self.frame()[0])
+        self.assertEqual(visited, [3, 6, 6, 3, 3, 3])
+        self.assertEqual(self.frame()[1], 550.0)
+
+    def test_masks_and_pointers_share_the_cube_row_hops(self) -> None:
+        self.draw_marks()  # masks: cubes 2, 4, 5
+        self.add_pointers((3, 550.0), (7, 550.0))
+        self.assertEqual(self.rows.marked_cubes(), (2, 3, 4, 5, 7))
+        self.go_to(0)
+        visited = []
+        for _ in range(6):
+            self.wheel(self.cube_strip, 120)
+            visited.append(self.frame()[0])
+        self.assertEqual(visited, [2, 3, 4, 5, 7, 7])
+
+    def test_a_dismissed_pointer_is_not_a_cube_to_hop_to(self) -> None:
+        records = self.add_pointers((3, 550.0), (6, 550.0))
+        self.panel._transient_events.dismiss([r.id for r in records if r.event.frame[0] == 3])
+        _pump(0.3)
+        self.assertEqual(self.rows.marked_cubes(), (6,))
+        self.go_to(0)
+        self.wheel(self.cube_strip, 120)
+        self.assertEqual(self.frame()[0], 6)
+
+    def test_the_wheel_over_the_cube_row_does_nothing_without_a_mark_or_a_pointer(self) -> None:
+        self.go_to(2, 600.0)
+        self.assertFalse(self.cube_strip.has_marks_to_hop_to())
+        self.wheel(self.cube_strip, 120)
+        self.wheel(self.cube_strip, -120)
+        self.assertEqual(self.frame(), (2, 600.0))
+
+    def test_zooming_the_cube_slider_does_not_change_what_the_wheel_over_the_rows_does(self) -> None:
+        self.draw_marks()
+        self.add_pointers((7, 550.0))
+        self.go_to(0)
+        self.panel._cube_slider.axis_window().zoom(3.0)
+        _pump(0.2)
+        visited = []
+        for _ in range(5):
+            self.wheel(self.cube_strip, 120)
+            visited.append(self.frame()[0])
+        self.assertEqual(visited, [2, 4, 5, 7, 7])
+        self.go_to(4, 500.0)
+        self.wheel(self.wavelength_strip, 120)
+        self.assertEqual(self.frame(), (4, 600.0))
 
     def test_mask_states_is_a_stepping_choice_for_previous_next_and_play(self) -> None:
         self.draw_marks()

@@ -26,7 +26,8 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.image_tools.mask.transient_detection import DetectionParams
     from lspr_imaging_app.image_tools.mask.transient_events import TransientEventsModule
-    from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams
+    from lspr_imaging_app.image_tools.mask.transient_events_state import TransientEventsState
+    from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, scan_transients
     from lspr_imaging_app.image_tools.mask_scan_task import TASK_ID, ScanSummary, TransientScanTask
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
@@ -168,6 +169,118 @@ class TransientScanTaskTest(unittest.TestCase):
             gate.set()
             self.task.cancel()
             _pump(lambda: bool(self.finished))
+
+    # -- the audit fixes (2026-10-17): apps/LSPRi/eva/docs/transient_scan_automask_slider_audit_2026-10-17.md ------------------
+
+    def _slow_loader(self):
+        started, gate = threading.Event(), threading.Event()
+
+        def load(cube: int, wavelength: float) -> np.ndarray:
+            started.set()
+            gate.wait(10.0)
+            return _load(cube, wavelength)
+
+        return load, started, gate
+
+    def test_a_dataset_change_mid_scan_stops_it_and_its_result_is_not_installed(self) -> None:
+        """A1: the worker reads through the dataset module as it is at each read, so a result after a dataset change is a mixture."""
+        load, started, gate = self._slow_loader()
+        self.task.start(self.index, load, self.params)
+        _pump(started.is_set, 5.0)
+        self.task.invalidate()  # what the Image panel does when the dataset is loaded or cleared
+        gate.set()
+        _pump(lambda: bool(self.finished))
+        _APP.processEvents()
+        self.assertEqual([f[1] for f in self.finished], ["cancelled"])
+        self.assertIn("dataset or the session changed", self.finished[0][2])
+        self.assertEqual(self.cancelled, [True])
+        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.task.is_running())
+
+    def test_a_result_that_arrives_after_the_change_is_dropped_even_when_the_scan_ran_to_the_end(self) -> None:
+        """The scan may finish before it notices it was stopped; the generation number, not the cancel flag, decides."""
+        complete = scan_transients(self.index, _load, self.params)
+        gate, started = threading.Event(), threading.Event()
+
+        def slow_but_unstoppable(*_args, **_kwargs):
+            started.set()
+            gate.wait(10.0)
+            return complete
+
+        with mock.patch("lspr_imaging_app.image_tools.mask_scan_task.scan_transients", side_effect=slow_but_unstoppable):
+            self.task.start(self.index, _load, self.params)
+            _pump(started.is_set, 5.0)
+            self.task.invalidate()
+            gate.set()
+            _pump(lambda: bool(self.finished))
+            _APP.processEvents()
+        self.assertEqual([f[1] for f in self.finished], ["cancelled"])
+        self.assertFalse(self.events.has_events())
+        self.assertEqual(self.completed, [])
+
+    def test_restoring_a_session_stops_a_running_scan(self) -> None:
+        load, started, gate = self._slow_loader()
+        self.task.start(self.index, load, self.params)
+        _pump(started.is_set, 5.0)
+        self.events.restore_state(TransientEventsState())  # a session switch / dataset load restores every module
+        gate.set()
+        _pump(lambda: bool(self.finished))
+        _APP.processEvents()
+        self.assertEqual([f[1] for f in self.finished], ["cancelled"])
+        self.assertFalse(self.events.has_events())
+
+    def test_a_scan_started_after_a_change_works_normally(self) -> None:
+        self.task.invalidate()
+        self.events.restore_state(TransientEventsState())
+        self._run()
+        self.assertEqual([f[1] for f in self.finished], ["completed"])
+        self.assertTrue(self.events.has_events())
+
+    def test_one_cube_cannot_be_scanned_and_the_sentence_says_why(self) -> None:
+        """A3: with nothing to compare with the scan would end in a clean-looking '0 particles'."""
+        self.task.start({3: list(WAVELENGTHS)}, _load, self.params)
+        _APP.processEvents()
+        self.assertEqual(len(self.failed), 1)
+        self.assertIn("at least two cubes", self.failed[0])
+        self.assertIn("the dataset has 1", self.failed[0])
+        self.assertFalse(self.task.is_running())
+        self.assertEqual(self.running, [])
+
+    def test_a_range_of_one_cube_is_refused_too(self) -> None:
+        params = ScanParams(detection=self.params.detection, stride=1, workers=2, cube_range=(2, 2))
+        self.task.start(self.index, _load, params)
+        _APP.processEvents()
+        self.assertIn("the chosen range holds 1", self.failed[0])
+
+    def test_a_dark_frame_only_cube_does_not_count_as_a_cube(self) -> None:
+        self.task.start({0: list(WAVELENGTHS), 1: [0.0]}, _load, self.params)
+        _APP.processEvents()
+        self.assertIn("at least two cubes", self.failed[0])
+
+    def test_the_done_message_says_how_many_frames_were_really_compared(self) -> None:
+        self._run()
+        summary = self.completed[0]
+        self.assertEqual((summary.frames_screened, summary.frames_in_range), (CUBES * 7, CUBES * 7))  # stride 1: every frame
+        self.assertIn(f"{CUBES * 7} of {CUBES * 7} frames compared", self.finished[0][2])
+
+    def test_both_thread_pools_get_the_worker_init(self) -> None:
+        """B2: the reading pool and the screening pool both start their threads through `worker_init` (priority, decoder)."""
+        import lspr_imaging_app.image_tools.mask.transient_scan as scan_module
+
+        real, initializers = scan_module.ThreadPoolExecutor, []
+
+        def spy(*args, **kwargs):
+            initializers.append(kwargs.get("initializer"))
+            return real(*args, **kwargs)
+
+        def init() -> None:
+            pass
+
+        with mock.patch.object(scan_module, "ThreadPoolExecutor", side_effect=spy):
+            self.task.start(self.index, _load, self.params, worker_init=init)
+            _pump(lambda: bool(self.finished or self.failed))
+            _APP.processEvents()
+        self.assertEqual(initializers, [init, init])
 
 
 if __name__ == "__main__":
