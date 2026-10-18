@@ -53,3 +53,17 @@ the default stays the generic stand-in ("Sans Serif"), so set the font on the wi
 One process per file, 6 at a time, took 9.4 minutes for all 287 files (the single-process run takes over an hour).
 The script used lived in the session scratchpad (about 30 lines: `subprocess.run([python, "-m", "pytest", file, "-q"])` in a thread pool).
 It does not replace the CI run: it cannot see order dependencies between files.
+
+## What CI itself still showed (read with `gh run view <id> --log-failed`, runs 96f88fe and 7dabc14)
+
+CI (Python 3.12, windows-latest, headless since the pin, one process, 3610 tests in 32 to 49 min) failed three tests:
+
+| Failure | Cause | Fix |
+|---|---|---|
+| `unit.test_lspri_scale_bar_overlay` ERROR (`unittest.loader._FailedTest`) | The file was pytest-style (`import pytest`, `@pytest.mark.parametrize`). CI installs no pytest, so the import failed; and `unittest` finds no test in a function-style file even when pytest is installed. The only pytest-style file in the suite. | Rewritten with `unittest.TestCase` and `subTest` (same 21 cases, same tolerance), and given the standard LSPRi import guard. |
+| `overlay_layer_cache::test_cached_picture_differs_from_direct_painting_only_slightly` (max 252/255, 0.10 % of pixels) | Reproduced locally only with the real fonts loaded AND the app theme applied (what earlier test files leave in the single process, and what the real app always has). The strict limit had only ever been measured without them. Only the vertical group label text differs; circles, rings and ROI labels are identical (0/255). | The strict test now runs without group labels. New test for the group label text: through the cache it has about 23 % less ink (77 % of direct) and sits about 1 px to the left and 0.6 px higher; bounded at 60 % to 110 % ink and 1.5 px. |
+| `RewriteImagePanelTest::test_spin_boxes_share_one_width...` (run 96f88fe only) | The font-change pollution described above. | Fixed in run 7dabc14, which no longer shows it. |
+
+Not a bug, accepted by the maintainer as cosmetic (2026-10-18): with the overlay cache on, group label text looks lighter (about 23 % less ink)
+and about a pixel off. Recorded in `overlay_cache.py`'s docstring and bounded by the new test. The way out, if it ever matters: draw the group
+labels outside the cached layer (they then repaint every frame).

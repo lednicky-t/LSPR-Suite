@@ -103,6 +103,10 @@ class _Case(unittest.TestCase):
 
 class AppearanceTests(_Case):
     def test_cached_picture_differs_from_direct_painting_only_slightly(self) -> None:
+        """Circles, rings and the ROI labels: the strict limit. The group label text has its own, looser test below:
+        text drawn into the cache's transparent layer is anti-aliased without the dark background under it."""
+        self.overlay.group_labels.visible = False
+        self.overlay.group_label_item.set_settings(self.overlay.group_labels)
         self.overlay.layers.enabled = False
         self.draw(3)
         direct = self.paint()
@@ -120,6 +124,54 @@ class AppearanceTests(_Case):
             print(f"\n[overlay layer cache] {label}: max channel difference {int(difference.max())}/255, differing pixels {share:.4%}")
             self.assertLessEqual(int(difference.max()), MAX_PIXEL_DIFFERENCE, label)
             self.assertLessEqual(share, MAX_DIFFERING_SHARE, label)
+
+    def _group_label_picture(self, labels: bool, cached: bool) -> np.ndarray:
+        """The scene with the group labels on or off, painted directly or through the cache (made, kept, then a hit)."""
+        self.overlay.layers.invalidate()
+        self.overlay.group_labels.visible = labels
+        self.overlay.group_label_item.set_settings(self.overlay.group_labels)
+        self.overlay.layers.enabled = cached
+        if not cached:
+            self.draw(3)
+            return self.paint()
+        self.assertFalse(self.show_state(3))
+        self.paint()
+        self.assertFalse(self.show_state(3))
+        self.paint()
+        self.assertTrue(self.show_state(3))
+        return self.paint()
+
+    @staticmethod
+    def _ink(with_labels: np.ndarray, without_labels: np.ndarray) -> dict:
+        """Where the group labels' pixels are: the ones that change when the labels are switched on."""
+        change = np.abs(with_labels.astype(np.int16) - without_labels.astype(np.int16)).max(axis=2)
+        ys, xs = np.nonzero(change > 60)
+        weights = change.astype(float)
+        cy, cx = (np.indices(change.shape) * weights).reshape(2, -1).sum(axis=1) / weights.sum()
+        return {"box": (int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())), "centroid": (float(cx), float(cy)), "ink": float(weights.sum())}
+
+    def test_group_label_text_is_lighter_and_a_pixel_off_through_the_cache_but_not_more(self) -> None:
+        """Measured 2026-10-18 (headless, app theme and real fonts loaded, as in the app and in CI): through the cache the
+        group label text differs by up to 252/255 on 0.1 % of the pixels (glyph edges), has about 23 % less ink (77 % of
+        direct: text drawn into a transparent layer gets no dark background to be blended against) and sits about 1 px
+        to the left and 0.6 px higher (centroid 104.17, 340.45 direct; 103.16, 339.89 cached). Without the theme or fonts
+        the two are nearly identical (1/255), which is how a strict per-pixel limit first looked fine.
+        Cosmetic, so bounded here: same size, a shift of at most 1.5 px, between 60 % and 110 % of the direct ink (the
+        text must neither vanish nor fade), few pixels changed. Accepted by the maintainer (2026-10-18) as cosmetic; the
+        way out, if it ever matters, is in `overlay_cache.py`'s docstring."""
+        direct = self._group_label_picture(True, cached=False)
+        cached = self._group_label_picture(True, cached=True)
+        ink_direct = self._ink(direct, self._group_label_picture(False, cached=False))
+        ink_cached = self._ink(cached, self._group_label_picture(False, cached=True))
+        for before, after in zip(ink_direct["box"], ink_cached["box"]):
+            self.assertLessEqual(abs(before - after), 2, f"{ink_direct['box']} vs {ink_cached['box']}")
+        for before, after in zip(ink_direct["centroid"], ink_cached["centroid"]):
+            self.assertLessEqual(abs(before - after), 1.5, f"{ink_direct['centroid']} vs {ink_cached['centroid']}")
+        ratio = ink_cached["ink"] / ink_direct["ink"]
+        print(f"\n[overlay layer cache] group labels: ink through the cache {ratio:.1%} of direct")
+        self.assertTrue(0.6 <= ratio <= 1.1, f"ink ratio {ratio:.3f}")
+        share = float((np.abs(cached.astype(np.int16) - direct.astype(np.int16)).max(axis=2) > 0).mean())
+        self.assertLessEqual(share, MAX_DIFFERING_SHARE)
 
     def test_the_overlay_really_is_in_the_picture(self) -> None:
         self.overlay.layers.enabled = False
