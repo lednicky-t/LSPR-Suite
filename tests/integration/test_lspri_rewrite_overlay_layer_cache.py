@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -34,7 +34,8 @@ try:
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.undo import undo_manager
 except ImportError as error:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite not importable: {error}") from error
+    skip_if_lspri_rewrite_absent(error)
+    raise
 
 _APP = QApplication.instance() or QApplication([])
 

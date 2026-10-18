@@ -33,7 +33,7 @@ from PyQt6 import QtWidgets
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -55,7 +55,8 @@ try:
         sessions_root,
     )
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 class SessionIndexTest(unittest.TestCase):

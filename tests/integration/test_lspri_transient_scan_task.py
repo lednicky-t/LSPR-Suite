@@ -15,7 +15,7 @@ from unittest import mock
 import numpy as np
 from PyQt6 import QtWidgets
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -30,7 +30,8 @@ try:
     from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, scan_transients
     from lspr_imaging_app.image_tools.mask_scan_task import TASK_ID, ScanSummary, TransientScanTask
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 

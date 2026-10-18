@@ -19,7 +19,7 @@ import unittest
 import numpy as np
 from PyQt6.QtCore import Qt
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -32,7 +32,8 @@ try:
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.panels.image.render import ImageRenderer, RenderRequest
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 WAIT = 5.0
 PLANE = np.full((6, 8), 1000.0, dtype=np.float32)

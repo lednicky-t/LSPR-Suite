@@ -15,7 +15,7 @@ from PyQt6.QtGui import QWheelEvent
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -27,7 +27,8 @@ try:
     from lspr_imaging_app.panels.image.data_axis_slider import AxisWindow, axis_index, axis_track, axis_x
     from lspr_imaging_app.panels.image.slider_ticks import cube_slider_major_ticks, major_indices, wavelength_slider_major_ticks
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 WIDTH = 400  # widget width in these tests; the axis runs along 372 px of it
 

@@ -32,7 +32,7 @@ from PyQt6.QtGui import QMouseEvent, QWheelEvent
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -43,7 +43,8 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.panels.image.data_axis_slider import DataAxisSlider, axis_x
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 class DataAxisSliderGapBreakTests(unittest.TestCase):

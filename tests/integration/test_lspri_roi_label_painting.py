@@ -12,7 +12,7 @@ from PyQt6 import QtWidgets
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -26,7 +26,8 @@ try:
     from lspr_imaging_app.panels.image.roi_label_overlay import RoiLabelItem
     from tests._qt_fonts import load_system_fonts
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 load_system_fonts()  # offscreen Qt on Windows has no fonts; where the text ends depends on its measured width
 

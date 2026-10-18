@@ -27,7 +27,7 @@ from __future__ import annotations
 import sys
 import unittest
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -39,7 +39,8 @@ try:
     from lspr_imaging_app.image_tools.geometry.module import GeometryModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 class MeasurementAnchorsTest(unittest.TestCase):

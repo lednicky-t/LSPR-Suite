@@ -21,7 +21,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -42,7 +42,8 @@ try:
     from lspr_imaging_app.roi.model import AreaRoi
     from lspr_imaging_app.roi.rasterize import effective_reference_diameters
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 import numpy as np  # noqa: E402
 

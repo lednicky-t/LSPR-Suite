@@ -21,7 +21,7 @@ from PyQt6 import QtWidgets
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -37,7 +37,8 @@ try:
     from lspr_imaging_app.panels.workflow.dataset_experimental_plan import ExperimentalPlanSection
     from lspr_imaging_app.selection import SelectionModule
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 def _dataset_with_regular_cadence(cube_count: int, interval_ms: int) -> ImageDataset:

@@ -16,7 +16,7 @@ from PyQt6 import QtWidgets
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -41,7 +41,8 @@ try:
         previous_frame,
     )
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 CUBES = (0, 1, 2)
 WAVELENGTHS = {0: (500.0, 550.0, 600.0), 1: (500.0, 600.0), 2: (500.0, 550.0, 600.0)}  # cube 1 lacks 550

@@ -16,7 +16,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -36,7 +36,8 @@ try:
         cube_interval_stats,
     )
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 def _cube_start_timings(start_ms_by_cube: dict[int, int]) -> list[ImagingCubeTiming]:

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -29,7 +29,8 @@ try:
     from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.progress import Cancelled
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 SHAPE = (40, 60)
 NAMING = FrameNamingScheme.for_dataset([0, 61, 313], [500.0, 550.0, 620.0])

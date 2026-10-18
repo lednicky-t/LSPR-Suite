@@ -15,7 +15,7 @@ import unittest
 
 import numpy as np
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -34,7 +34,8 @@ try:
     from lspr_imaging_app.panels.image.render import ImageRenderer, RenderRequest
     from lspr_imaging_app.panels.image.timed_canvas import TimedImageItem
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 

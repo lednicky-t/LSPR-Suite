@@ -13,7 +13,7 @@ from PyQt6.QtGui import QFontMetrics
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -24,7 +24,8 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.panels.image.display_range_controls import FULL_16BIT_RANGE, VALUE_MAX, DisplayRangeControls
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 from tests._qt_fonts import load_system_fonts  # noqa: E402
 

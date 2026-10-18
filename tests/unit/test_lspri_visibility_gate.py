@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import unittest
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -16,7 +16,8 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.panels.visibility_gate import HiddenPanelGate
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 class HiddenPanelGateTest(unittest.TestCase):

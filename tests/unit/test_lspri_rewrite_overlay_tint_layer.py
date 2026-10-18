@@ -10,7 +10,7 @@ import unittest
 
 import numpy as np
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -21,7 +21,8 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.panels.image.overlay_tint import rgba_layer
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 RGBA = np.array([255, 128, 0, 115], dtype=np.uint8)
 

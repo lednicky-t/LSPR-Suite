@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -39,7 +39,8 @@ try:
     from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
     from lspr_imaging_app.storage.session import SessionState, load_session, save_session, session_path
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 def _event(cube, wavelength, x=100.0, y=200.0, kind=KIND_PARTICLE, area=80, passage=None, contour=True, **kwargs):

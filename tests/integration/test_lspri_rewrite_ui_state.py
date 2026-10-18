@@ -17,7 +17,7 @@ from PyQt6.QtTest import QTest
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -36,7 +36,8 @@ try:
     from lspr_imaging_app.panels.workflow.dataset_export import DatasetExportSection
     from lspr_imaging_app.storage.app_settings import AppSettings, load_app_settings, save_app_settings
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 class UiStateStoreTests(unittest.TestCase):

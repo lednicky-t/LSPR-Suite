@@ -19,7 +19,7 @@ import numpy as np
 from PyQt6.QtCore import QPointF, Qt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -54,7 +54,8 @@ try:
 
     from tests.integration.test_lspri_rewrite_image_panel import _pump, _write_dataset
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 _MENU = "lspr_imaging_app.panels.image.interaction.show_roi_context_menu"
 _NAME_DIALOG = "lspr_imaging_app.panels.image.interaction.QInputDialog.getText"

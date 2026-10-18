@@ -27,7 +27,7 @@ import unittest
 
 import numpy as np
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -46,7 +46,8 @@ try:
     from lspr_imaging_app.roi.rasterize import crop_mask, expand_mask, remap_roi_mask
     from lspr_imaging_app.roi.toolbox import _remap_roi_shape
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 def _blob(shape: tuple[int, int], cx: float, cy: float, sigma: float = 1.5) -> np.ndarray:

@@ -19,7 +19,7 @@ from unittest import mock
 import numpy as np
 from PyQt6 import QtWidgets
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -39,7 +39,8 @@ try:
     from lspr_imaging_app.panels.mask_edit_common import plan_mask_edit_base
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 

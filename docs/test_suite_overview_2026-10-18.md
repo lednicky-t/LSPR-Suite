@@ -36,8 +36,15 @@ full-window GUI tests. Slowest per test: `lspri_workflow_panel_subsection_restor
   roi_array_membership_reindex, roi_table_diameter_edit, sensorgram_stale_mid_run_settings_change, sensorgram_time_axis.
   `run.py` still starts the old app, so they still protect something real; retire them with the old code at the cut-over (audit item D3).
   Also dead with its code (audit D5): the test of `workflow/mask_highlight_actions.py`.
-- Risk: 91 test files raise `unittest.SkipTest` when `lspr_imaging_app` rewrite modules cannot be imported. A real import
-  error in app code (a typo, a missing dependency) then shows as green "skipped" instead of red. Narrower rule suggested: skip only when
-  the submodule folder is absent, let a genuine `ImportError` fail. Not changed (91 files; hiding errors is on the approval list).
+- Fixed (same day): 91 test files used to `raise unittest.SkipTest` on any `ImportError` of the LSPRi rewrite modules, so a real
+  import error in app code (a typo, a renamed module, a missing dependency) showed as green "skipped" instead of red.
+  They now call `skip_if_lspri_rewrite_absent(exc)` from `tests/_paths.py` and then `raise`: the file is skipped only when
+  `apps/LSPRi/eva/src/lspr_imaging_app/app_rewrite.py` is not on disk (submodule not checked out, or on a branch without the
+  rewrite). With the code present, an `ImportError` fails the file (pytest "1 error", unittest "FAILED (errors=1)"; proven with a
+  throwaway file holding a bad import). Expect CI to turn red once if some file was secretly skipping there before.
+- Load-sensitive tests (fail when the machine is busy, pass alone): in one 20-minute parallel run (the usual one takes 9) these failed and
+  then passed alone: `test_live_processing_worker.py` (relays child logs; fewer results when frames queue up; its child process also
+  kept the runner's pipe open until the 20-minute timeout) and `test_lspri_rewrite_visual_settings_restore.py::...highlight_range_is_persisted_with_its_dataset`.
+  Earlier: some Histogram tests. If one of these fails in CI, rerun it alone before looking for a cause.
 - Tests can be wrong too. On 2026-10-18 the red CI came from stale tests, a timing flake, a measuring artefact and test pollution
   (see `test_platform_and_ci_failures_2026-10-18.md`), not from broken measurements.

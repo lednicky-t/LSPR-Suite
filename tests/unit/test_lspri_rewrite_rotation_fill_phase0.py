@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -47,7 +47,8 @@ try:
     )
     from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 # Fill-pixel counts for a 300x400 raw image, recorded 2026-10-03 from the old
 # dark-fill HEAD (audit §6: 10.4% / 34.6% / 49.0% of the canvas). Geometry

@@ -16,7 +16,7 @@ from unittest import mock
 
 import numpy as np
 
-from tests._paths import REPO_ROOT, ensure_repo_paths
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
 ensure_repo_paths()
 
@@ -31,7 +31,8 @@ try:
     from lspr_imaging_app.image_tools.geometry.model import CropDefinition, GeometrySettings
     from lspr_imaging_app.panels.image import render
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable: {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 def _blob_mask(shape=(120, 160), seed=0) -> np.ndarray:

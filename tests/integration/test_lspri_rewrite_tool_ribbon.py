@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import QLabel, QWidget
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -33,7 +33,8 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.panels.image.tool_ribbon import ImageToolRibbon, _ROW_HEIGHT
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 class ImageToolRibbonTest(unittest.TestCase):

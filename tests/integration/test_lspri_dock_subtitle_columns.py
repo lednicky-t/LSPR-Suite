@@ -19,7 +19,7 @@ from PyQt6.QtGui import QFontMetrics
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
+from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
 
 ensure_repo_paths()
 
@@ -33,7 +33,8 @@ try:
     from lspr_imaging_app.panels.dock_container import PanelContainer
     from lspr_imaging_app.panels.subtitle_column import SubtitleColumn
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
-    raise unittest.SkipTest(f"LSPRi rewrite modules unavailable (not on the `rewrite` branch): {exc}") from exc
+    skip_if_lspri_rewrite_absent(exc)
+    raise
 
 
 def _pump(seconds: float = 0.1) -> None:
