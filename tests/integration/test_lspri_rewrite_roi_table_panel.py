@@ -961,8 +961,13 @@ class LayoutAndPaintTest(_PanelCase):
     @staticmethod
     def _painted_extent(button: QToolButton) -> int:
         """Width in pixels of what the button actually paints for its icon
-        (the pixels that differ from the button's own background)."""
-        image = button.grab().toImage()
+        (the pixels that differ from the button's own background).
+
+        Read as straight (not pre-multiplied) colours: on a pre-multiplied picture `pixel()` darkens the soft edge
+        pixels, and an edge of one saturated hue (the colour button's rainbow droplet: green on the left, blue on the
+        right) then falls under the contrast limit that a grey icon's edge passes, so the same-sized icon measured 2 px
+        narrower."""
+        image = button.grab().toImage().convertToFormat(QImage.Format.Format_ARGB32)
         background = QColor(image.pixel(1, 1))
         columns = [
             x

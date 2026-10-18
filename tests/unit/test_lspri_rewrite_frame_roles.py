@@ -227,14 +227,20 @@ class WorkflowRowsAndLabelTest(unittest.TestCase):
         ref.set_manual_frame(2, 550.0)
         colors = SliderColors()
         colors.set("dark", "#112233")
-        fake = SimpleNamespace(_frame_roles=roles, _slider_colors=colors)
+        def stand_in(**attributes):
+            # `_with_role_prefix` asks its panel for `_role_word`, so the bare stand-in needs the real method too.
+            fake = SimpleNamespace(**attributes)
+            fake._role_word = lambda cube, wavelength: ImagePanel._role_word(fake, cube, wavelength)
+            return fake
+
+        fake = stand_in(_frame_roles=roles, _slider_colors=colors)
         prefix = ImagePanel._with_role_prefix
         self.assertEqual(prefix(fake, "Cube 0, 500 nm | N/A", 0, 500.0), "Cube 0, 500 nm | N/A")
         dark = prefix(fake, "Cube 0, 0 nm | a<b", 0, 0.0)
         self.assertIn('<span style="color:#112233">Dark background</span> Cube 0, 0 nm | a&lt;b', dark)
         self.assertIn(f'style="color:{colors.color("reference")}">Reference</span>', prefix(fake, "Cube 2, 550 nm", 2, 550.0))
         self.assertIn(f'style="color:{colors.color("ignored")}">Ignored</span>', prefix(fake, "Cube 3, 500 nm | N/A", 3, 500.0))
-        self.assertEqual(prefix(SimpleNamespace(_frame_roles=None), "x", 0, 0.0), "x")
+        self.assertEqual(prefix(stand_in(_frame_roles=None), "x", 0, 0.0), "x")
 
 
 if __name__ == "__main__":

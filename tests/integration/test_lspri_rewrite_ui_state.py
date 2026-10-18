@@ -11,7 +11,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 from PyQt6 import QtWidgets
 from PyQt6.QtTest import QTest
@@ -151,43 +150,8 @@ class WindowRestoreTests(unittest.TestCase):
             save_app_settings(AppSettings(ui_state={"a/b": 1}), path)
             self.assertEqual(load_app_settings(path).ui_state, {"a/b": 1})
 
-    # -- reference frame: remembered per dataset ---------------------------
-
-    def _homes(self) -> tuple[str, str]:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        d1, d2 = Path(tmp.name) / "D1", Path(tmp.name) / "D2"
-        d1.mkdir()
-        d2.mkdir()
-        return str(d1), str(d2)
-
-    def test_manual_reference_frame_returns_only_for_the_same_dataset(self) -> None:
-        d1, d2 = self._homes()
-        saved_ref = {"dataset": d1, "mode": "manual", "cube": 2, "wavelength": 640.0}
-        window = self._build(
-            initial_settings=AppSettings(ui_state={"reference_frame": saved_ref}, auto_reopen_last_dataset=False)
-        )
-        image = _panel(window, "Image", ImagePanel)
-        reference = image._reference_frame
-        image._dataset.dataset_loaded.emit(SimpleNamespace(home=Path(d2)))
-        self.assertEqual(reference.mode(), "auto")
-        image._dataset.dataset_loaded.emit(SimpleNamespace(home=Path(d1)))
-        self.assertEqual(reference.mode(), "manual")
-        self.assertEqual(reference.manual_frame(), (2, 640.0))
-
-    def test_choosing_a_reference_frame_is_saved_with_its_dataset(self) -> None:
-        d1, _d2 = self._homes()
-        saved: list[AppSettings] = []
-        window = self._build(
-            initial_settings=AppSettings(last_dataset_folder=d1, auto_reopen_last_dataset=False),
-            on_settings_changed=saved.append,
-        )
-        _panel(window, "Image", ImagePanel)._reference_frame.set_manual_frame(1, 550.0)
-        _wait_until(lambda: any("reference_frame" in s.ui_state for s in saved))
-        self.assertEqual(
-            saved[-1].ui_state["reference_frame"],
-            {"dataset": d1, "mode": "manual", "cube": 1, "wavelength": 550.0},
-        )
+    # (The reference frame is no longer a UI-state key: it is saved with the other frame roles in the
+    # session, `selection/frame_roles_state.py`. Its round trip is tested in test_lspri_rewrite_frame_roles.py.)
 
 
 if __name__ == "__main__":

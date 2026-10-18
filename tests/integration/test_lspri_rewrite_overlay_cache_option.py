@@ -152,9 +152,18 @@ class PanelOptionTests(unittest.TestCase):
             tifffile.imwrite(str(path), np.full((64, 80), 200.0, dtype=np.float32))
             records.append(ImageRecord(key=ImageKey(wavelength_nm=wavelength, spectral_cube_index=0), path=path))
         dataset = ImageDataset(folder=root, records=records, source_format="image_stack")
+        rendered: list[bool] = []
+        self.panel.image_rendered.connect(lambda *_args: rendered.append(True))
         self.panel._dataset.load_dataset(dataset)
-        deadline = time.monotonic() + 0.6  # let the first render land: the view range settles, then it stays put
-        while time.monotonic() < deadline:
+        # Let the first render land: the view range settles then and stays put. Wait for the render itself, not for a
+        # fixed time: on a busy machine (the full suite, CI) it can take seconds, and a view range that changes later
+        # clears the cache in the middle of the scenario below.
+        deadline = time.monotonic() + 30.0
+        while not rendered and time.monotonic() < deadline:
+            _APP.processEvents()
+            time.sleep(0.01)
+        self.assertTrue(rendered, "the first render never landed")
+        for _drain in range(10):  # the auto-range update that follows is queued, not immediate
             _APP.processEvents()
             time.sleep(0.01)
         roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)

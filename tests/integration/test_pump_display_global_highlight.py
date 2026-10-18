@@ -24,8 +24,9 @@ APP_SRC = REPO_ROOT / "apps" / "sLSPR" / "acq" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
+from tests._qt_fonts import load_system_fonts
 from PyQt6.QtCore import QRect
-from PyQt6.QtGui import QPainter, QPixmap
+from PyQt6.QtGui import QFont, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QStyleOptionViewItem, QTableView
 
 from lspr_app.device.reglo_icc import PUMP_DISPLAY_MAX_LENGTH
@@ -54,6 +55,7 @@ def _has_overflow_color(pixmap: QPixmap) -> bool:
 # a Python reference to it, which crashes the process (natively, with no Python traceback)
 # on the next widget construction - this keeps exactly one alive for the whole test run.
 _APP = QApplication.instance() or QApplication([])
+load_system_fonts()  # headless Qt has no fonts of its own; "fits without scrolling" needs real text widths
 
 
 class _FakeWindow:
@@ -136,6 +138,7 @@ class HighlightingCommentLineEditTests(unittest.TestCase):
         # glyph pixels by a row or two, which made a pixel-color assertion
         # here flaky across environments even when the highlight painted fine.
         editor = _HighlightingCommentLineEdit(highlight_active=True)
+        editor.setFont(QFont("Segoe UI", 9))  # headless Qt's default font is a much wider stand-in, even with fonts loaded
         editor.setGeometry(QRect(0, 0, 400, 24))
         editor.setText(_LONG_COMMENT)
         self.assertTrue(editor._fits_without_scrolling())

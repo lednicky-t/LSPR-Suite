@@ -38,7 +38,7 @@ class LauncherRegistryTests(unittest.TestCase):
     def test_target_registry_contains_expected_apps(self) -> None:
         self.assertEqual(
             {target.key for target in TARGETS},
-            {"slspr_acq", "slspr_eva", "lspri_acq", "lspri_eva"},
+            {"slspr_acq", "slspr_eva", "lspri_acq", "lspri_eva", "lspri_eva_rewrite"},
         )
         self.assertTrue(all(target.title for target in TARGETS))
         self.assertFalse(next(target for target in TARGETS if target.key == "lspri_acq").enabled)
