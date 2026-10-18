@@ -260,19 +260,19 @@ class MaskScanUiTest(unittest.TestCase):
 
     def test_events_is_a_stepping_choice_and_skips_dismissed_cubes(self) -> None:
         self.run_scan()
-        panel = self.ribbon._settings_panel
-        panel._mode_events.click()
+        button = self.ribbon._mode_button
+        button._actions[MODE_EVENTS].trigger()  # the menu entry
         self.assertEqual(self.ribbon.settings().mode, MODE_EVENTS)
-        self.assertTrue(panel._mode_events.isChecked())
-        self.assertFalse(panel._mode_mask.isChecked())
-        self.assertIn("scan pointer", self.ribbon._next.toolTip())
+        self.assertEqual(button.mode(), MODE_EVENTS)
+        self.assertTrue(button._actions[MODE_EVENTS].isChecked())
+        self.assertIn("Scan pointers", button.toolTip())
         self.go_to(0)
-        self.ribbon._next.click()
+        self.panel._slideshow.step(1)
         self.assertEqual(self.frame()[0], 3)
         self.events.dismiss([r.id for r in self.events.records()])
         self.go_to(0)
         self.assertEqual(self.rows.event_state_cubes(), ())
-        self.ribbon._next.click()
+        self.panel._slideshow.step(1)
         self.assertNotEqual(self.frame()[0], 3)  # a dismissed cube is not a stop
 
     def test_the_events_stepping_choice_is_remembered(self) -> None:

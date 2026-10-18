@@ -307,27 +307,28 @@ class RoiLayoutRowTest(unittest.TestCase):
         )
         QtWidgets.QApplication.sendEvent(self.strip, event)
 
-    def test_previous_and_next_follow_what_play_steps_through(self) -> None:
+    def test_manual_steps_follow_what_play_steps_through(self) -> None:
+        step = self.panel._slideshow.step
         self.go_to(0, 500.0)
-        self.ribbon._next.click()  # every wavelength of every cube: the next one is the next wavelength
+        step(1)  # every wavelength of every cube: the next one is the next wavelength
         self.assertEqual(self.frame(), (0, 550.0))
-        self.ribbon._previous.click()
+        step(-1)
         self.assertEqual(self.frame(), (0, 500.0))
         self.set_mode(MODE_ONE_WAVELENGTH)
-        self.ribbon._next.click()  # one wavelength: the next cube
+        step(1)  # one wavelength: the next cube
         self.assertEqual(self.frame(), (1, 500.0))
-        self.ribbon._previous.click()
+        step(-1)
         self.assertEqual(self.frame(), (0, 500.0))
-        self.ribbon._previous.click()  # the first cube: it does not wrap
+        step(-1)  # the first cube: it does not wrap
         self.assertEqual(self.frame(), (0, 500.0))
 
-    def test_in_roi_states_mode_previous_and_next_hop_between_the_marks_on_one_wavelength(self) -> None:
+    def test_in_roi_states_mode_manual_steps_hop_between_the_marks_on_one_wavelength(self) -> None:
         self.make_states()
         self.set_mode(MODE_ROI_STATES)
         self.go_to(0)
         steps = []
-        for button in (self.ribbon._next, self.ribbon._next, self.ribbon._next, self.ribbon._previous, self.ribbon._previous, self.ribbon._previous):
-            button.click()
+        for direction in (1, 1, 1, -1, -1, -1):
+            self.panel._slideshow.step(direction)
             steps.append(self.frame())
         self.assertEqual(steps, [(2, 550.0), (4, 550.0), (4, 550.0), (2, 550.0), (0, 550.0), (0, 550.0)])  # no wrapping at the ends
 
@@ -335,10 +336,10 @@ class RoiLayoutRowTest(unittest.TestCase):
         self.make_states()
         self.set_mode(MODE_ROI_STATES)
         self.go_to(3)
-        self.ribbon._next.click()
+        self.panel._slideshow.step(1)
         self.assertEqual(self.frame()[0], 4)
         self.go_to(3)
-        self.ribbon._previous.click()
+        self.panel._slideshow.step(-1)
         self.assertEqual(self.frame()[0], 2)
 
     def test_the_wheel_over_the_row_hops_between_marks_whatever_play_steps_through(self) -> None:
@@ -376,13 +377,13 @@ class RoiLayoutRowTest(unittest.TestCase):
         self.ribbon.roi_selected_button.click()
         self.selection.set_roi_selection({1})  # ROI 1 changed at cube 2 only
         self.go_to(0)
-        self.ribbon._next.click()
+        self.panel._slideshow.step(1)
         self.assertEqual(self.frame()[0], 2)
-        self.ribbon._next.click()
+        self.panel._slideshow.step(1)
         self.assertEqual(self.frame()[0], 2)  # no more marks for ROI 1
         self.selection.set_roi_selection({2})  # ROI 2: cube 4
         self.go_to(0)
-        self.ribbon._next.click()
+        self.panel._slideshow.step(1)
         self.assertEqual(self.frame()[0], 4)
 
     def test_play_in_roi_states_mode_visits_only_the_marks(self) -> None:
@@ -395,18 +396,17 @@ class RoiLayoutRowTest(unittest.TestCase):
         finally:
             self.panel._slideshow.stop()
 
-    def test_roi_states_is_a_choice_in_the_settings_and_the_buttons_say_so(self) -> None:
-        panel = self.ribbon._settings_panel
-        panel._mode_roi.click()
+    def test_roi_states_is_a_choice_of_the_mode_menu_and_the_button_says_so(self) -> None:
+        button = self.ribbon._mode_button
+        button._actions[MODE_ROI_STATES].trigger()  # the menu entry
         self.assertEqual(self.ribbon.settings().mode, MODE_ROI_STATES)
-        self.assertTrue(panel._mode_roi.isChecked())
-        self.assertFalse(panel._mode_all.isChecked())
-        self.assertFalse(panel._end_cube.isEnabled())  # the End setting only means something with every wavelength shown
-        self.assertIn("ROI layout change", self.ribbon._next.toolTip())
-        self.assertIn("ROI layout change", self.ribbon._previous.toolTip())
-        panel._mode_one.click()
-        self.assertIn("cube", self.ribbon._next.toolTip())
-        self.assertNotIn("ROI layout", self.ribbon._next.toolTip())
+        self.assertTrue(button._actions[MODE_ROI_STATES].isChecked())
+        self.assertFalse(button._actions[MODE_ALL].isChecked())
+        self.assertFalse(self.ribbon._settings_panel._end_cube.isEnabled())  # the End setting only means something with every wavelength shown
+        self.assertIn("ROI layout change", button.toolTip())
+        button._actions[MODE_ONE_WAVELENGTH].trigger()
+        self.assertIn("Cubes", button.toolTip())
+        self.assertNotIn("ROI layout", button.toolTip())
 
     def test_the_stepping_choice_is_remembered_including_roi_states(self) -> None:
         saved: list[dict] = []

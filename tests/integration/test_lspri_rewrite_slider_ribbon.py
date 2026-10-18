@@ -16,7 +16,8 @@ import unittest
 from pathlib import Path
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtTest import QTest
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -42,7 +43,17 @@ try:
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.frame_tools import FrameToolsWidget
-    from lspr_imaging_app.panels.image.slideshow import END_CUBE, MODE_ONE_WAVELENGTH, SlideshowSettings
+    from lspr_imaging_app.panels.image.mark_colors import EVENT_COLOR, MASK_COLOR, cube_color, wavelength_color
+    from lspr_imaging_app.panels.image.slideshow import (
+        END_CUBE,
+        MODE_ALL,
+        MODE_EVENTS,
+        MODE_MASK_STATES,
+        MODE_ONE_WAVELENGTH,
+        MODE_ROI_STATES,
+        SlideshowSettings,
+    )
+    from lspr_imaging_app.panels.image.slideshow_ribbon_controls import MODES, mode_icon
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.selection.frame_roles_module import FrameRolesModule
@@ -690,24 +701,91 @@ class SliderRibbonTest(unittest.TestCase):
         self.assertFalse(self.panel._slideshow.is_playing())
         self.assertIn("Play", ribbon._play.toolTip())
 
-    def test_settings_panel_changes_reach_the_controller_and_the_store(self) -> None:
+    def test_ribbon_and_pop_out_changes_reach_the_controller_and_the_store(self) -> None:
         ribbon = self.panel._slider_ribbon
         panel = ribbon._settings_panel
+        modes = ribbon._mode_button._actions
         saved: list[SlideshowSettings] = []
         ribbon.settings_changed.connect(saved.append)
-        panel._speed.setValue(3)  # the fourth tick: 10x
-        panel._mode_one.click()
-        panel._repeat.click()
+        for _ in range(3):
+            ribbon._speed_button.click()  # 1x, 2x, 5x, 10x
+        modes[MODE_ONE_WAVELENGTH].trigger()
+        panel._repeat.click()  # the pop-out works on its own copy of the settings: it must not undo the speed or the mode
         settings = self.panel._slideshow.settings()
         self.assertEqual((settings.speed, settings.mode, settings.repeat), (10, MODE_ONE_WAVELENGTH, True))
         self.assertEqual(saved[-1], settings)
-        self.assertEqual(panel._speed_label.text(), "10x")
+        self.assertEqual(ribbon._speed_button.text(), "10x")
         # In one-wavelength mode the End icons are greyed out; back in all-wavelengths mode they work.
         self.assertFalse(panel._end_cube.isEnabled() or panel._end_dataset.isEnabled())
-        panel._mode_all.click()
+        modes[MODE_ALL].trigger()
+        self.assertTrue(panel._end_cube.isEnabled())  # the pop-out follows the mode chosen on the ribbon
         panel._end_cube.click()
         self.assertEqual(self.panel._slideshow.settings().end, END_CUBE)
-        self.assertTrue(panel._end_cube.isEnabled())
+        self.assertEqual(self.panel._slideshow.settings().speed, 10)
+
+    def test_speed_text_goes_round_on_a_click_and_stops_at_both_ends_on_the_wheel(self) -> None:
+        ribbon = self.panel._slider_ribbon
+        button = ribbon._speed_button
+        shown = [button.text()]
+        for _ in range(5):
+            button.click()
+            shown.append(button.text())
+        self.assertEqual(shown, ["1x", "2x", "5x", "10x", "1x", "2x"])  # from the fastest back to 1x
+        self.assertEqual(self.panel._slideshow.settings().speed, 2)
+
+        def wheel(delta: int) -> None:
+            event = QWheelEvent(
+                QPointF(5.0, 5.0), QPointF(5.0, 5.0), QPoint(0, 0), QPoint(0, delta),
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False,
+            )
+            QtWidgets.QApplication.sendEvent(button, event)
+
+        wheel(120)  # up = faster
+        self.assertEqual(button.text(), "5x")
+        wheel(60)
+        self.assertEqual(button.text(), "5x")  # half a notch: not yet
+        wheel(60)
+        self.assertEqual(button.text(), "10x")
+        wheel(120)
+        wheel(120)
+        self.assertEqual(button.text(), "10x")  # stops at the highest, it does not wrap
+        wheel(-120 * 10)
+        self.assertEqual(button.text(), "1x")  # stops at the lowest
+        wheel(-120)
+        self.assertEqual((button.text(), self.panel._slideshow.settings().speed), ("1x", 1))
+
+    def test_mode_menu_has_the_five_modes_and_each_icon_wears_the_colour_of_what_it_steps_through(self) -> None:
+        ribbon = self.panel._slider_ribbon
+        button = ribbon._mode_button
+        self.assertEqual(
+            [mode for mode, _label, _description in MODES],
+            [MODE_ONE_WAVELENGTH, MODE_ALL, MODE_ROI_STATES, MODE_MASK_STATES, MODE_EVENTS],
+        )
+        self.assertEqual(list(button._actions), [mode for mode, _label, _description in MODES])
+        for mode in (MODE_ONE_WAVELENGTH, MODE_ALL, MODE_ROI_STATES, MODE_MASK_STATES, MODE_EVENTS):
+            button._actions[mode].trigger()
+            self.assertEqual(ribbon.settings().mode, mode)
+            self.assertEqual(self.panel._slideshow.settings().mode, mode)
+            self.assertEqual(sum(action.isChecked() for action in button._actions.values()), 1)
+            self.assertFalse(button.icon().isNull())
+        # The colours are the sliders' and rows' own: one definition for both.
+        self.assertEqual(cube_color(), self.panel._cube_slider._accent_color)
+        self.assertEqual(wavelength_color(), self.panel._wavelength_slider._accent_color)
+        self.assertEqual(MASK_COLOR, self.panel._mask_rows.cube_strip._color)
+        self.assertEqual(EVENT_COLOR, self.panel._mask_rows.cube_strip._event_color)
+        for mode in (MODE_ONE_WAVELENGTH, MODE_ALL, MODE_ROI_STATES, MODE_MASK_STATES, MODE_EVENTS):
+            self.assertFalse(mode_icon(mode).pixmap(16, 16).isNull())
+
+    def test_the_ribbon_controls_show_what_was_restored(self) -> None:
+        from lspr_imaging_app.panels.ui_state import UiStateStore
+
+        store = UiStateStore()
+        store.set("image/slideshow_speed", 5)
+        store.set("image/slideshow_mode", "events")
+        self.panel._restore_slideshow_settings(store)
+        ribbon = self.panel._slider_ribbon
+        self.assertEqual((ribbon._speed_button.text(), ribbon._mode_button.mode()), ("5x", MODE_EVENTS))
+        self.assertTrue(ribbon._mode_button._actions[MODE_EVENTS].isChecked())
 
     def test_settings_survive_through_the_ui_state_store(self) -> None:
         from lspr_imaging_app.panels.ui_state import UiStateStore

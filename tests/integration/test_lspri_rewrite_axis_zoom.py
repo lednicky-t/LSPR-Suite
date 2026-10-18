@@ -300,7 +300,7 @@ class AxisZoomTest(unittest.TestCase):
         ribbon.set_settings(replace(ribbon.settings(), mode=MODE_ROI_STATES), emit=True)
         self.window.zoom(5.0, 0.0)
         self.selection.set_cube(0)
-        ribbon._next.click()  # the next mark is cube 30, far off screen
+        self.panel._slideshow.step(1)  # the next mark is cube 30, far off screen
         _pump(0.1)
         lo, hi = self.window.view()
         self.assertEqual(int(self.selection.current_cube()), 30)

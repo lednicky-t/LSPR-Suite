@@ -400,21 +400,22 @@ class MaskRowsTest(unittest.TestCase):
         self.wheel(self.wavelength_strip, 120)
         self.assertEqual(self.frame(), (4, 600.0))
 
-    def test_mask_states_is_a_stepping_choice_for_previous_next_and_play(self) -> None:
+    def test_mask_states_is_a_stepping_choice_for_manual_steps_and_play(self) -> None:
         self.draw_marks()
-        panel = self.ribbon._settings_panel
-        panel._mode_mask.click()
+        button = self.ribbon._mode_button
+        button._actions[MODE_MASK_STATES].trigger()  # the menu entry
         self.assertEqual(self.ribbon.settings().mode, MODE_MASK_STATES)
-        self.assertTrue(panel._mode_mask.isChecked())
-        self.assertFalse(panel._mode_roi.isChecked())
-        self.assertIn("mask change", self.ribbon._next.toolTip())
+        self.assertEqual(button.mode(), MODE_MASK_STATES)
+        self.assertTrue(button._actions[MODE_MASK_STATES].isChecked())
+        self.assertEqual(sum(action.isChecked() for action in button._actions.values()), 1)
+        self.assertIn("Mask changes", button.toolTip())
         self.go_to(0)
         steps = []
         for _ in range(4):
-            self.ribbon._next.click()
+            self.panel._slideshow.step(1)
             steps.append(self.frame()[0])
         self.assertEqual(steps, [2, 4, 5, 5])
-        self.ribbon._previous.click()
+        self.panel._slideshow.step(-1)
         self.assertEqual(self.frame()[0], 4)
         self.go_to(0)
         self.panel._slideshow.play()
