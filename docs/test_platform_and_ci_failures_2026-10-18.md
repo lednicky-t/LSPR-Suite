@@ -32,9 +32,21 @@ the default stays the generic stand-in ("Sans Serif"), so set the font on the wi
   faint green and blue edge columns but kept the grey icon's. Fix: convert the grab to straight `Format_ARGB32` first. The
   regression it guards still shows: without `padding: 0` the measured widths fall from 20 / 16 / 18 px to 6 / 4 / 4.
   Lesson: a pixel test that thresholds on colour contrast depends on the icon's hue; measure the alpha or the straight colours.
-- `test_lspri_rewrite_image_panel.py::...::test_spin_boxes_share_one_width_fitted_to_their_text` failed once in a headless full
-  `unittest discover` run (about 1 hour in) and passes alone, per file, and after the three font-loading files before it. Not reproduced.
-  If CI shows it, suspect state leaked from an earlier test file in the same process (application font or stylesheet).
+- (Fixed, same day) `test_lspri_rewrite_image_panel.py::...::test_spin_boxes_share_one_width_fitted_to_their_text`, which failed once
+  in a headless full `unittest discover` run (55 != 42) and passed alone. Test pollution, reproduced on demand with three files in one
+  process: `test_lspri_display_range_controls.py` (loads real fonts) + `test_lspri_log_panel.py` (builds a main window, which applies
+  the app theme to the shared QApplication and leaves it there; about ten test files do this) + the image-panel file.
+  Mechanism: `ImagePanel._fit_spin_widths` measures the spin box text once, in the constructor, with the default font ("Sans Serif");
+  the app stylesheet then switches the spin box to Segoe UI. With no real font loaded both resolve to the same stand-in, so nothing
+  shows; with fonts loaded they differ (55 px vs 42 px) and the test compared two fonts.
+  It was a real (small) weakness in the app, not only in the tests: `_fit_spin_widths` ran only on value changes, never on a font
+  change, so a system whose default font is not Segoe UI, or a theme switch, would keep a slightly wrong width until the next value
+  change. Fix (LSPRi/eva, `panels/image/panel.py`): the panel installs its event filter on both spin boxes and re-fits on
+  `QEvent.FontChange`. A first attempt cleared the app stylesheet in the test class; that was dropped because it hid the fix.
+  New test `test_spin_box_widths_follow_a_font_change_after_the_panel_was_built` changes the font through the field's own
+  stylesheet (wins over any app stylesheet, so independent of other tests) and fails without the fix (`90 != 188`).
+  Qt applies a stylesheet's font at the widget's first polish, so a test must call `ensurePolished()` before reading `font()`.
+  Related leak, not fixed: `build_main_window()` never undoes its app theme, so any later font-measuring test can see it.
 
 ## Running the suite fast
 

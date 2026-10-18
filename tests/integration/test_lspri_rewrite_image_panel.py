@@ -888,6 +888,28 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(cube.width(), expected)
         self.assertEqual(wavelength.width(), expected)
 
+    def test_spin_box_widths_follow_a_font_change_after_the_panel_was_built(self) -> None:
+        """Regression (2026-10-18): the widths were measured once, in the constructor. An app stylesheet naming another
+        font (building a main window leaves one behind) or a theme switch changes the fields' font later, and the
+        width stayed fitted to the old font: this test failed late in a full run, never alone. Here the font changes
+        through the field's own stylesheet, which wins over any app stylesheet, so the result does not depend on what
+        other tests left behind."""
+        from PyQt6.QtGui import QFontMetrics
+
+        cube, wavelength = self.panel._cube_spin, self.panel._wavelength_spin
+        before = cube.width()
+        cube.setStyleSheet(cube.styleSheet() + " QAbstractSpinBox { font-size: 26px; }")
+        cube.ensurePolished()  # Qt applies a stylesheet's font when the widget is polished (at the latest when it is shown)
+        metrics = QFontMetrics(cube.font())
+        expected = max(
+            metrics.horizontalAdvance(cube.text()),
+            metrics.horizontalAdvance(wavelength.text()),
+            metrics.horizontalAdvance("0:00:00"),
+        ) + 6
+        self.assertGreater(expected, before, "the scenario must make the text wider")
+        self.assertEqual(cube.width(), expected)
+        self.assertEqual(wavelength.width(), expected)
+
     def test_canvas_is_above_the_navigation_bar(self) -> None:
         """Moved to the bottom of the panel (2026-09-30, maintainer
         request) - the outer layout must place the canvas column before the
