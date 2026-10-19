@@ -285,7 +285,6 @@ class HitAndMissTests(_Case):
             lambda: setattr(self.overlay.sample, "alpha", 0.3),
             lambda: setattr(self.overlay.reference, "visible", False),
             lambda: setattr(self.overlay, "labels_visible", False),
-            lambda: setattr(self.overlay, "fill_max_opacity", 0.4),
             lambda: setattr(self.overlay.group_labels, "angle", 45),
             lambda: self.overlay.sample_circles.set_width(1.0),
             lambda: self.overlay.set_label_placement("bottom"),

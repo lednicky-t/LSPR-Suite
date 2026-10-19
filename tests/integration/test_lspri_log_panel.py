@@ -244,9 +244,9 @@ class LogConsoleWindowTest(unittest.TestCase):
             self.assertTrue(panel._gate.visible)
 
     def test_log_is_not_listed_among_the_workspace_panels(self) -> None:
-        panels_menu = next(a.menu() for a in self._menu("&View").actions() if a.text() == "Panels")
-        self.assertNotIn("Log", [a.text() for a in panels_menu.actions()])
-        self.assertNotIn("Log Console", [a.text() for a in panels_menu.actions()])
+        view_texts = [a.text() for a in self._menu("&View").actions()]
+        self.assertNotIn("Log", view_texts)
+        self.assertNotIn("Log Console", view_texts)
 
 
 if __name__ == "__main__":

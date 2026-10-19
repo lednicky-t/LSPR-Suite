@@ -203,18 +203,9 @@ class RoiOverlayControlsTest(unittest.TestCase):
             self.assertGreater(overlay.sample_circles.fill_color(color).alphaF(), 0.0, f"{color}: filled, not just outlined")
             self.assertEqual(overlay.sample_circles.fill_color(color).name(), color)
         self.sample._alpha_slider.setValue(50)
-        self.assertAlmostEqual(overlay.sample_circles.fill_color(own).alphaF(), 0.5, delta=0.01, msg="default maximum fill opacity is 100 %")
-
-    def test_fill_maximum_opacity_preference_caps_the_fill_and_is_remembered(self) -> None:
-        self.two_rois()
-        overlay = self.panel._roi_overlay
-        own = self.roi_toolbox.roi_by_id(1).sample_color_hex
+        self.assertAlmostEqual(overlay.sample_circles.fill_color(own).alphaF(), 0.5, delta=0.01, msg="the fill is as opaque as the slider says")
         self.sample._alpha_slider.setValue(100)
-        self.assertAlmostEqual(overlay.sample_circles.fill_color(own).alphaF(), 1.0, delta=0.01)
-        self.panel.set_roi_fill_max_opacity(0.3)
-        self.assertAlmostEqual(overlay.sample_circles.fill_color(own).alphaF(), 0.3, delta=0.01)
-        self.assertAlmostEqual(overlay.reference_fill.brush().color().alphaF(), 0.3, delta=0.01)
-        self.assertAlmostEqual(overlay.sample_circles.outline_color(own).alphaF(), 1.0, delta=0.01, msg="outline unaffected")
+        self.assertAlmostEqual(overlay.sample_circles.fill_color(own).alphaF(), 1.0, delta=0.01, msg="slider 100 % = fully opaque fill")
 
     def test_reference_rings_are_filled_as_rings_and_follow_their_own_transparency(self) -> None:
         self.two_rois()

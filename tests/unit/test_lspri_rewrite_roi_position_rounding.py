@@ -1,5 +1,6 @@
-"""ROI centres are stored to 0.1 px (Options -> Round ROI Positions), and the
-preference can be turned off. **Only runs on the `rewrite` branch.**"""
+"""ROI centres are always stored to 0.1 px (until 2026-10-19 an Options-menu preference that
+could be turned off; the preference was removed, the rounding stayed). **Only runs on the
+`rewrite` branch.**"""
 
 from __future__ import annotations
 
@@ -35,10 +36,8 @@ class RoiPositionRoundingTest(unittest.TestCase):
         self.toolbox.translate_rois([roi_id], 0.04, 0.04)
         self.assertEqual((roi.center_x, roi.center_y), (5.0, 8.0))
 
-    def test_preference_off_keeps_full_precision(self) -> None:
-        self.toolbox.round_positions = False
-        roi = self.toolbox.roi_by_id(self.toolbox.add_roi(10.26, 20.84))
-        self.assertEqual((roi.center_x, roi.center_y), (10.26, 20.84))
+    def test_there_is_no_switch_any_more(self) -> None:
+        self.assertFalse(hasattr(self.toolbox, "round_positions"), "the preference was removed; rounding is unconditional")
 
 
 if __name__ == "__main__":

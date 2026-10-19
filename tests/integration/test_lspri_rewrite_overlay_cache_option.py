@@ -1,8 +1,7 @@
-"""Options -> "ROI Overlay Cache" (2026-10-14): the memory budget of the ROI overlay cache, chosen in the menu, saved with the
-other UI state, applied at once, and overridable at start-up by `LSPR_OVERLAY_CACHE_MB`.
+"""The ROI overlay cache size (2026-10-14; chosen in Edit -> Preferences since 2026-10-19): the memory budget of the cache, saved
+with the other UI state, applied at once, and overridable at start-up by `LSPR_OVERLAY_CACHE_MB`.
 
-The cache itself is pinned in `test_lspri_rewrite_overlay_layer_cache.py`. Menus are driven through their actions
-(`trigger()`), never by screen coordinate.
+The cache itself is pinned in `test_lspri_rewrite_overlay_layer_cache.py`; the dialog in `test_lspri_rewrite_preferences.py`.
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ try:
     import pyqtgraph as pg
     from PyQt6.QtWidgets import QApplication
 
-    from lspr_imaging_app.app_rewrite import build_main_window
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.overlay_cache import (
         BUDGET_CHOICES_MB,
@@ -187,41 +185,10 @@ class PanelOptionTests(unittest.TestCase):
             self.assertAlmostEqual(float(np.nanmean(xs[:-1])), expected[0], places=6, msg="stale overlay left on screen")
 
 
-class OptionsMenuTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.window = build_main_window()
-        self.panel = self.window.findChild(ImagePanel)
-
-    def tearDown(self) -> None:
-        self.window.close()
-
-    def _submenu(self):
-        options = next(a.menu() for a in self.window.menuBar().actions() if a.text() == "&Options")
-        return next(a.menu() for a in options.actions() if a.menu() is not None and a.text() == "ROI Overlay Cache")
-
-    def test_the_menu_lists_off_and_the_sizes_with_the_default_marked_and_checked(self) -> None:
-        self.assertIsNotNone(self.panel)
-        actions = [a for a in self._submenu().actions() if not a.isSeparator()]
-        self.assertFalse(actions[0].isEnabled(), "the first line is information, not a choice")
-        labels = [a.text() for a in actions[1:]]
-        self.assertEqual(labels, ["Off", "128 MB", "256 MB (default)", "512 MB", "1024 MB"])
+class ChoicesTests(unittest.TestCase):
+    def test_the_choices(self) -> None:
         self.assertEqual(tuple(BUDGET_CHOICES_MB), (0, 128, 256, 512, 1024))
-        checked = [a.text() for a in actions[1:] if a.isChecked()]
-        self.assertEqual(checked, [f"{self.panel.overlay_cache_mb} MB" + (" (default)" if self.panel.overlay_cache_mb == 256 else "")])
-
-    def test_choosing_a_size_sets_the_panel_and_the_checkmark_follows(self) -> None:
-        menu = self._submenu()
-        by_label = {a.text(): a for a in menu.actions() if not a.isSeparator()}
-        by_label["Off"].trigger()
-        self.assertEqual(self.panel.overlay_cache_mb, 0)
-        menu.aboutToShow.emit()
-        self.assertTrue(by_label["Off"].isChecked())
-        self.assertIn("Off", [a.text() for a in menu.actions()][0])
-        by_label["512 MB"].trigger()
-        self.assertEqual(self.panel.overlay_cache_mb, 512)
-        menu.aboutToShow.emit()
-        self.assertTrue(by_label["512 MB"].isChecked())
-        self.assertFalse(by_label["Off"].isChecked())
+        self.assertIn(DEFAULT_BUDGET_MB, BUDGET_CHOICES_MB)
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ class AppSettingsTest(unittest.TestCase):
 
     def test_defaults_favor_auto_reopen_and_dark_theme(self) -> None:
         """The maintainer's explicit choice (2026-09-26): auto-reopen is on
-        by default, changeable via the Options menu toggle - not an opt-in."""
+        by default, changeable in Edit -> Preferences - not an opt-in."""
         defaults = AppSettings()
         self.assertTrue(defaults.auto_reopen_last_dataset)
         self.assertEqual(defaults.theme, "dark")
