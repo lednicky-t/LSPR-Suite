@@ -174,8 +174,8 @@ class MaskRowsTest(unittest.TestCase):
         for strip, slider in ((self.cube_strip, self.panel._cube_slider), (self.wavelength_strip, self.panel._wavelength_slider)):
             self.assertEqual(strip.width(), slider.width())
             self.assertEqual(strip.mapTo(self.panel, QPoint(0, 0)).x(), slider.mapTo(self.panel, QPoint(0, 0)).x())
-        for spacer in self.rows.spacers:
-            self.assertEqual(spacer.width(), self.panel._cube_spin.width())
+        # (Equal widths and equal left edges: the strips also end where their sliders end. They used to need a
+        # right-hand spacer the width of the number field next to each slider; those fields are gone, 2026-10-18.)
 
     def test_the_rows_stack_in_the_agreed_order_cube_rois_mask_wavelength_mask(self) -> None:
         def y(widget) -> int:

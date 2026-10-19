@@ -78,6 +78,19 @@ def _pump(seconds: float = 0.5) -> None:
         time.sleep(0.01)
 
 
+def _pump_until(condition, seconds: float = 20.0) -> bool:
+    """Like `_pump`, but returns True as soon as *condition* holds and False after *seconds*. For
+    what the render thread has to deliver: a fixed pause is long enough on a quiet machine and came
+    up short on a loaded CI runner (2026-10-18: `levels` was still None half a second after the load)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        _APP.processEvents()
+        if condition():
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def _write_dataset(root: Path) -> ImageDataset:
     records = []
     rng = np.random.default_rng(3)
@@ -124,6 +137,9 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def _load(self) -> None:
         self.dataset.load_dataset(self.dataset_model)
+        # The first picture is drawn once the render thread has delivered it: wait for that, not for a
+        # fixed time. The image and its levels are set in the same `setImage` call.
+        _pump_until(lambda: self.panel._image_item.image is not None and self.panel._image_item.levels is not None)
         _pump()
 
     # -- Background tab -----------------------------------------------------
@@ -212,13 +228,13 @@ class RewriteImagePanelTest(unittest.TestCase):
     # -- lifecycle ------------------------------------------------------
 
     def test_empty_before_a_dataset_is_loaded(self) -> None:
-        self.assertFalse(self.panel._cube_spin.isEnabled())
+        self.assertFalse(self.panel._cube_slider.isEnabled())
         self.assertIn("No dataset", self.panel._frame_status)
 
     def test_renders_a_real_image_after_load(self) -> None:
         self._load()
-        self.assertTrue(self.panel._cube_spin.isEnabled())
-        self.assertEqual((self.panel._cube_spin.minimum(), self.panel._cube_spin.maximum()), (0, 1))
+        self.assertTrue(self.panel._cube_slider.isEnabled())
+        self.assertEqual((self.panel._cube_slider.minimum(), self.panel._cube_slider.maximum()), (0, 1))
         self.assertIsNotNone(self.panel._image_item.image)
         self.assertEqual(self.panel._image_item.image.shape, (64, 80))
 
@@ -238,7 +254,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.dataset.clear_dataset()
         _pump()
         self.assertIsNone(self.panel._image_item.image)
-        self.assertFalse(self.panel._cube_spin.isEnabled())
+        self.assertFalse(self.panel._cube_slider.isEnabled())
         self.assertIn("No dataset", self.panel._frame_status)
 
     # -- geometry -------------------------------------------------------
@@ -414,7 +430,7 @@ class RewriteImagePanelTest(unittest.TestCase):
     def test_a_cube_short_a_wavelength_snaps_instead_of_erroring(self) -> None:
         self._load()
         self.selection.set_wavelength(550.0)
-        self.panel._cube_spin.setValue(1)  # the signal a real click produces
+        self.panel._cube_slider.setValue(1)  # the signal a real click produces (index 1 = cube 1)
         _pump()
 
         self.assertIn(self.panel._current_wavelength(), (500.0, 600.0))
@@ -496,6 +512,18 @@ class RewriteImagePanelTest(unittest.TestCase):
     def _levels_on_screen(self) -> np.ndarray:
         return np.asarray(self.panel._image_item.levels, dtype=np.float32)
 
+    def _wait_for_levels(self, expected, atol: float = 0.0) -> None:
+        """Pump until the picture on screen has the *expected* levels (the render thread draws them, so a
+        fixed pause can come up short on a loaded runner). Returns either way: the caller's own assert
+        reports a mismatch with the real numbers."""
+        expected = np.asarray(expected, dtype=np.float32)
+
+        def matches() -> bool:
+            levels = self.panel._image_item.levels
+            return levels is not None and np.allclose(np.asarray(levels, dtype=np.float32), expected, rtol=0, atol=atol)
+
+        _pump_until(matches)
+
     @staticmethod
     def _type_into(edit, text: str) -> None:
         """What a user does in one of the Display range fields: replace the text, press Enter."""
@@ -556,19 +584,19 @@ class RewriteImagePanelTest(unittest.TestCase):
         auto = self._levels_on_screen()
         self.assertEqual(controls._low_edit.text(), str(round(float(auto[0]))), "the greyed fields show this frame's own range")
         controls._toggle.click()  # a fixed range starts at the whole 16-bit scale
-        _pump()
+        self._wait_for_levels((0.0, 65535.0))
         self.assertEqual(reported[-1], (True, 0.0, 65535.0))
         np.testing.assert_array_equal(self._levels_on_screen(), np.asarray((0.0, 65535.0), np.float32))
         self._type_into(controls._high_edit, "2500")
-        _pump()
+        self._wait_for_levels((0.0, 2500.0))
         self.assertEqual(self.panel.display_range()[0:1] + self.panel.display_range()[2:], (True, 2500.0))
         self.assertEqual(float(self._levels_on_screen()[1]), 2500.0)
         self.assertEqual(reported[-1][2], 2500.0)
         controls._fit.click()  # this frame's own range
-        _pump()
+        self._wait_for_levels(auto, atol=0.51)
         np.testing.assert_allclose(self._levels_on_screen(), auto, rtol=0, atol=0.51)  # the fields hold whole numbers
         controls._full.click()  # and back to the whole 16-bit scale
-        _pump()
+        self._wait_for_levels((0.0, 65535.0))
         np.testing.assert_array_equal(self._levels_on_screen(), np.asarray((0.0, 65535.0), np.float32))
 
     def test_an_unusable_range_falls_back_to_automatic_and_says_so(self) -> None:
@@ -669,53 +697,68 @@ class RewriteImagePanelTest(unittest.TestCase):
         stable app's single dataset-wide wavelength array - the slider must
         re-tick on every cube change, not just once at dataset load."""
         self._load()
-        self.panel._cube_spin.setValue(1)  # cube 1 only has 500.0/600.0
+        self.panel._cube_slider.setValue(1)  # cube 1 only has 500.0/600.0
         self.assertEqual(self.panel._wavelength_slider.maximum(), 1)
 
-    def test_dragging_the_cube_slider_drives_selection_and_spin(self) -> None:
-        """The slider is a second front door onto the same
-        `SelectionModule.set_cube` command the spin box already uses - never
-        a direct write to the spin box."""
+    def test_dragging_the_cube_slider_drives_selection(self) -> None:
+        """The slider is the front door onto `SelectionModule.set_cube`."""
         self._load()
         self.panel._cube_slider.setValue(1)  # click/drag, same signal a real gesture produces
         self.assertEqual(self.selection.current_cube(), 1)
-        self.assertEqual(self.panel._cube_spin.value(), 1)
 
-    def test_dragging_the_wavelength_slider_drives_selection_and_spin(self) -> None:
+    def test_dragging_the_wavelength_slider_drives_selection(self) -> None:
         self._load()
         self.panel._wavelength_slider.setValue(2)  # index 2 -> 600.0 nm on cube 0
         self.assertEqual(self.selection.current_wavelength(), 600.0)
-        self.assertEqual(self.panel._wavelength_spin.value(), 600.0)
 
     def test_selection_changed_elsewhere_still_updates_the_nav_widgets(self) -> None:
         """The one-way-flow property applied to the nav widgets themselves:
         a change that did not come from this panel's own handlers (e.g. a
         future ROI-table "go to this ROI's cube" action) must still be
-        reflected, not just changes the panel's own spin/slider caused."""
+        reflected, not just changes the panel's own slider caused."""
         self._load()
-        self.selection.set_cube(1)  # bypasses the panel's own spin/slider handlers entirely
-        self.assertEqual(self.panel._cube_spin.value(), 1)
+        self.selection.set_cube(1)  # bypasses the panel's own slider handlers entirely
         self.assertEqual(self.panel._cube_slider.value(), 1)
 
     def test_reference_highlight_tracks_the_manual_reference_frame(self) -> None:
         self._load()
         self.reference_frame.set_manual_frame(1, 600.0)
-        self.panel._cube_spin.setValue(0)
-        self.panel._wavelength_spin.setValue(500.0)
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
         self.assertIsNone(self.panel._cube_slider._reference_highlight_color)
         self.assertIsNone(self.panel._wavelength_slider._reference_highlight_color)
 
-        self.panel._cube_spin.setValue(1)
-        self.panel._wavelength_spin.setValue(600.0)
+        self.selection.set_cube(1)
+        self.selection.set_wavelength(600.0)
         self.assertIsNotNone(self.panel._cube_slider._reference_highlight_color)
         self.assertIsNotNone(self.panel._wavelength_slider._reference_highlight_color)
 
-    def test_wavelength_jump_completer_lists_the_current_cubes_wavelengths(self) -> None:
-        self._load()
-        self.panel._cube_spin.setValue(1)  # 500.0 / 600.0 only
-        model = self.panel._wavelength_completer.model()
-        texts = {model.data(model.index(i, 0)) for i in range(model.rowCount())}
-        self.assertEqual(texts, {"500", "600"})
+    def test_the_sliders_have_no_number_fields_next_to_them(self) -> None:
+        """Removed 2026-10-18 (maintainer request): the typed cube / wavelength fields (with the wavelength
+        autocomplete) that sat right of each slider. The current cube, wavelength and time are in the dock title
+        bar; each row is now just title + slider."""
+        for name in ("_cube_spin", "_wavelength_spin", "_wavelength_completer", "_roi_row_spacer"):
+            self.assertFalse(hasattr(self.panel, name), name)
+        self.assertFalse(hasattr(self.panel._mask_rows, "spacers"))
+
+        def row_holding(layout, widget):
+            """The (nested) layout that directly holds *widget*."""
+            for index in range(layout.count()):
+                item = layout.itemAt(index)
+                if item.widget() is widget:
+                    return layout
+                child = item.layout()
+                found = row_holding(child, widget) if child is not None else None
+                if found is not None:
+                    return found
+            return None
+
+        for slider in (self.panel._cube_slider, self.panel._wavelength_slider):
+            row = row_holding(self.panel._controls_bar.layout(), slider)
+            self.assertIsNotNone(row, "the slider sits in a row of the navigation bar")
+            self.assertEqual(row.count(), 2, "title + slider, nothing after the slider")
+            self.assertIsInstance(row.itemAt(0).widget(), QtWidgets.QLabel)
+            self.assertIs(row.itemAt(1).widget(), slider)
 
     # -- navigation bar border (2026-09-30, maintainer request, reversed
     # same day) - the seam line added earlier 2026-09-30 turned out to read
@@ -768,15 +811,16 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(outer_layout.contentsMargins().bottom(), 0)
         self.assertEqual(outer_layout.spacing(), 0)
 
-    def test_nav_bar_has_left_right_margin_only(self) -> None:
+    def test_nav_bar_has_a_left_margin_only(self) -> None:
         """The Cube/λ titles shouldn't start flush against the dock's left
-        edge, and the number fields shouldn't end flush against its right
         edge (maintainer request) - scoped to this bar's own `controls`
-        layout, not the whole panel."""
+        layout, not the whole panel. No right margin since 2026-10-18 (the
+        gap between the sliders and the panel edge was too big): each slider
+        still keeps `SIDE_INSET` px inside itself for its end tick labels."""
         controls_layout = self.panel._controls_bar.layout()
         self.assertEqual(controls_layout.contentsMargins().left(), 10)
         self.assertEqual(controls_layout.contentsMargins().top(), 0)
-        self.assertEqual(controls_layout.contentsMargins().right(), 10)
+        self.assertEqual(controls_layout.contentsMargins().right(), 0)
         self.assertEqual(controls_layout.contentsMargins().bottom(), 0)
 
     # -- wavelength slider tick labels (2026-09-30, real bug) ----------------
@@ -837,27 +881,12 @@ class RewriteImagePanelTest(unittest.TestCase):
     def test_reference_jump_button_no_longer_exists(self) -> None:
         self.assertFalse(hasattr(self.panel, "_reference_jump_button"))
 
-    def test_number_fields_show_plain_numbers_no_unit_text(self) -> None:
-        """"Cube "/" nm" removed from the fields themselves - the row's own
-        title label ("Cube" / "λ (nm)") already says what the number means,
-        so the field repeating it was redundant."""
-        self._load()
-        self.assertEqual(self.panel._cube_spin.prefix(), "")
-        self.assertEqual(self.panel._cube_spin.suffix(), "")
-        self.assertEqual(self.panel._wavelength_spin.prefix(), "")
-        self.assertEqual(self.panel._wavelength_spin.suffix(), "")
-        self.assertEqual(self.panel._cube_spin.text(), "0")
-        self.assertEqual(self.panel._wavelength_spin.text(), "500")
-
-    def test_titles_and_number_fields_share_one_width_each(self) -> None:
-        """"Cube" and "λ (nm)" are different lengths, and so are their
-        number fields' typical contents - without a shared fixed width,
-        the two sliders started at different x positions and the two
-        number fields didn't line up on the right."""
+    def test_titles_share_one_width(self) -> None:
+        """"Cube" and "λ (nm)" are different lengths - without a shared fixed
+        width, the two sliders started at different x positions."""
         # Located by content rather than assuming child order.
         labels = {label.text(): label for label in self.panel.findChildren(QtWidgets.QLabel)}
         self.assertEqual(self.panel._cube_title.width(), labels["λ (nm)"].width())
-        self.assertEqual(self.panel._cube_spin.width(), self.panel._wavelength_spin.width())
 
     def test_cube_title_names_the_unit(self) -> None:
         self._load()
@@ -866,50 +895,12 @@ class RewriteImagePanelTest(unittest.TestCase):
     def test_set_reference_tick_marks_the_reference_cube_and_wavelength(self) -> None:
         self._load()
         self.reference_frame.set_manual_frame(1, 600.0)
-        self.panel._cube_spin.setValue(0)
-        self.panel._wavelength_spin.setValue(500.0)
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
         # Cube 0 is viewed, but the marked ticks are the reference's own: cube 1 -> index 1,
         # and 600 nm in cube 0's wavelengths (500, 550, 600) -> index 2.
         self.assertEqual(self.panel._cube_slider._reference_tick_index, 1)
         self.assertEqual(self.panel._wavelength_slider._reference_tick_index, 2)
-
-    def test_spin_boxes_share_one_width_fitted_to_their_text(self) -> None:
-        """The borderless number fields (2026-10-11, maintainer request) are
-        sized to their current text - the longer of the two - so the sliders
-        get the rest, and both share one width so the sliders end together."""
-        from PyQt6.QtGui import QFontMetrics
-
-        cube, wavelength = self.panel._cube_spin, self.panel._wavelength_spin
-        metrics = QFontMetrics(cube.font())
-        expected = max(
-            metrics.horizontalAdvance(cube.text()),
-            metrics.horizontalAdvance(wavelength.text()),
-            metrics.horizontalAdvance("0:00:00"),
-        ) + 6
-        self.assertEqual(cube.width(), expected)
-        self.assertEqual(wavelength.width(), expected)
-
-    def test_spin_box_widths_follow_a_font_change_after_the_panel_was_built(self) -> None:
-        """Regression (2026-10-18): the widths were measured once, in the constructor. An app stylesheet naming another
-        font (building a main window leaves one behind) or a theme switch changes the fields' font later, and the
-        width stayed fitted to the old font: this test failed late in a full run, never alone. Here the font changes
-        through the field's own stylesheet, which wins over any app stylesheet, so the result does not depend on what
-        other tests left behind."""
-        from PyQt6.QtGui import QFontMetrics
-
-        cube, wavelength = self.panel._cube_spin, self.panel._wavelength_spin
-        before = cube.width()
-        cube.setStyleSheet(cube.styleSheet() + " QAbstractSpinBox { font-size: 26px; }")
-        cube.ensurePolished()  # Qt applies a stylesheet's font when the widget is polished (at the latest when it is shown)
-        metrics = QFontMetrics(cube.font())
-        expected = max(
-            metrics.horizontalAdvance(cube.text()),
-            metrics.horizontalAdvance(wavelength.text()),
-            metrics.horizontalAdvance("0:00:00"),
-        ) + 6
-        self.assertGreater(expected, before, "the scenario must make the text wider")
-        self.assertEqual(cube.width(), expected)
-        self.assertEqual(wavelength.width(), expected)
 
     def test_canvas_is_above_the_navigation_bar(self) -> None:
         """Moved to the bottom of the panel (2026-09-30, maintainer
@@ -942,7 +933,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self._load()
         values: list[str] = []
         self.panel.frame_status_changed.connect(lambda text, _tooltip: values.append(text))
-        self.panel._cube_spin.setValue(1)
+        self.panel._cube_slider.setValue(1)
         _pump()
         self.assertIn("Cube 1, 500 nm | N/A", values)
 
@@ -1716,7 +1707,59 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertIsNotNone(canvas_column)
         self.assertLess(canvas_column.indexOf(self.panel._top_bar), canvas_column.indexOf(self.panel._view))
         style = self.panel._top_bar.styleSheet()
-        self.assertIn("border-bottom: 1px solid", style)
+        self.assertIn("border: none", style)
+        self.assertNotIn("border-bottom", style)  # the edge line under the top ribbon was removed, 2026-10-18
+
+    def test_the_tool_ribbon_dividers_span_the_icons_not_the_captions(self) -> None:
+        """Maintainer (2026-10-18): the | between the groups of the top ribbon ran the full row height, caption
+        included, so its centre sat ~11 px below the icons'. Now each line is as tall as an icon button and
+        starts where the icon row starts - in every tab, and for the divider after the General group."""
+        from lspr_imaging_app.panels.image.tool_ribbon import ImageToolRibbon
+        from lspr_imaging_app.panels.ribbon_group import RibbonSeparator
+
+        self._load()
+        ribbon = self.panel.findChild(ImageToolRibbon)
+        self.panel.resize(1400, 400)
+        self.panel.show()
+        try:
+            def extent(widget, top: int, bottom: int) -> tuple[int, int]:  # a y-range of `widget`, in the ribbon's coordinates
+                return (
+                    ribbon.mapFromGlobal(widget.mapToGlobal(QPoint(0, top))).y(),
+                    ribbon.mapFromGlobal(widget.mapToGlobal(QPoint(0, bottom))).y(),
+                )
+
+            def first_icon(page):
+                icons = [
+                    b for b in page.findChildren(QtWidgets.QToolButton)
+                    if b.isVisibleTo(page) and b.text() == "" and not b.icon().isNull() and b.height() >= 20
+                ]
+                return icons[0]
+
+            checked = 0
+            for index, name in enumerate(ribbon._category_names):
+                ribbon.set_category(name)
+                _pump(0.1)
+                page = ribbon._stack.widget(index)
+                icon_top, icon_bottom = extent(first_icon(page), 0, first_icon(page).height())
+                separators = [s for s in page.findChildren(RibbonSeparator) if s.isVisibleTo(page)]
+                self.assertTrue(separators, f"{name}: the tab has dividers")
+                for separator in separators:
+                    top, bottom = separator.line_span()
+                    line = extent(separator, top, bottom)
+                    self.assertEqual(line[1] - line[0], icon_bottom - icon_top, f"{name}: as tall as an icon button")
+                    self.assertAlmostEqual(line[0], icon_top, delta=1, msg=f"{name}: starts where the icons start")
+                    checked += 1
+            # The divider after the General group: aligned to the General icons.
+            general = self.panel._general_row
+            general_button = next(b for b in general.findChildren(QtWidgets.QToolButton) if b.height() >= 20)
+            top, bottom = ribbon._pinned_separator.line_span()
+            line = extent(ribbon._pinned_separator, top, bottom)
+            expected = extent(general_button, 0, general_button.height())
+            self.assertEqual(line[1] - line[0], expected[1] - expected[0])
+            self.assertAlmostEqual(line[0], expected[0], delta=1)
+            self.assertGreaterEqual(checked, 6)
+        finally:
+            self.panel.hide()
 
     def test_double_click_on_empty_space_rolls_the_tool_ribbon_up_and_the_handle_rolls_it_down(self) -> None:
         """2026-10-16, maintainer request: the top ribbon rolls up like the slider ribbon,

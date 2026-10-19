@@ -1,9 +1,10 @@
 """Regression test: every ``CollapsibleSection`` inside the Workflow panel
-must fit within its fixed 340px dock width
-(``docs/rewrite_gui_shell_design_2026-09.md`` §4) - the panel is a real
-fixed-width tool panel now (``PanelContainer``'s ``fixed_width`` option),
-not a resizable one a user could drag wider to make room for an
-overlooked wide row.
+must fit within the dock's default 340px width
+(``docs/rewrite_gui_shell_design_2026-09.md`` §4). Until 2026-10-18 that
+width was fixed; it is now only the starting width (the panel is resizable,
+and scrolls sideways when narrower than a row - see
+``test_lspri_workflow_dock_resizable.py``), but a row wider than the default
+would still force that scroll bar on at the width every user starts with.
 
 Catches exactly the class of bug found 2026-09-25: three real rows/
 sections (``ReferenceFrameRow``, ``MaskSettingsSection``,
@@ -57,12 +58,13 @@ from lspr_imaging_app.panels.workflow.collapsible_section import CollapsibleSect
 from lspr_imaging_app.panels.workflow.panel import WorkflowPanel  # noqa: E402
 from lspr_imaging_app.panels.workflow.reference_frame_row import ReferenceFrameRow  # noqa: E402
 
-# The dock is fixed at 340px (app_rewrite.build_main_window). The budget
+# The dock starts at 340px (app_rewrite._WORKFLOW_DEFAULT_WIDTH_PX). The budget
 # checked against is intentionally narrower, leaving headroom for a
 # vertical scrollbar that only appears once content overflows the current
 # window height - a widget must already fit before one is ever visible, or
 # the moment enough sections are expanded to need one, everything shifts.
 _DOCK_WIDTH_PX = 340
+_DOCK_WIDTH_TOLERANCE_PX = 12  # Qt places the separator, not exactly on the requested pixel
 _WIDTH_BUDGET_PX = 320
 
 
@@ -81,11 +83,11 @@ class WorkflowPanelWidthBudgetTests(unittest.TestCase):
         self.window.deleteLater()
         _APP.processEvents()
 
-    def test_dock_is_fixed_at_the_expected_width(self) -> None:
+    def test_dock_starts_at_the_expected_width(self) -> None:
         # If this assumption ever changes, _WIDTH_BUDGET_PX above needs to
         # change with it - a silent drift here would make every other
         # check in this file measure against the wrong number.
-        self.assertEqual(self.workflow_dock.width(), _DOCK_WIDTH_PX)
+        self.assertAlmostEqual(self.workflow_dock.width(), _DOCK_WIDTH_PX, delta=_DOCK_WIDTH_TOLERANCE_PX)
 
     def test_every_collapsible_section_fits_the_width_budget(self) -> None:
         """Force-expands every section before measuring - see this file's

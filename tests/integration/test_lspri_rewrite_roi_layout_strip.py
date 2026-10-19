@@ -248,7 +248,8 @@ class RoiLayoutRowTest(unittest.TestCase):
         slider, strip = self.panel._cube_slider, self.strip
         self.assertEqual(slider.width(), strip.width())
         self.assertEqual(slider.mapTo(self.panel, QPoint(0, 0)).x(), strip.mapTo(self.panel, QPoint(0, 0)).x())
-        self.assertEqual(self.panel._roi_row_spacer.width(), self.panel._cube_spin.width())
+        # (Same width and left edge, so the strip also ends where the slider ends; the number field next to the
+        # slider, and the spacer that matched it, are gone since 2026-10-18.)
 
     # -- ribbon: show / hide, colour, remembering -------------------------------------------------------------
 

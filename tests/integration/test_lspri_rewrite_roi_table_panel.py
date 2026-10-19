@@ -84,6 +84,20 @@ def _pump_events(seconds: float) -> None:
         _time.sleep(0.01)
 
 
+def _pump_until(condition, seconds: float = 10.0) -> bool:
+    """Process events until *condition* holds (True) or *seconds* have passed (False). For things a timer
+    does: a fixed wait is long enough on a quiet machine, and came up short on a loaded CI runner."""
+    import time as _time
+
+    deadline = _time.monotonic() + seconds
+    while _time.monotonic() < deadline:
+        _APP.processEvents()
+        if condition():
+            return True
+        _time.sleep(0.01)
+    return False
+
+
 class _PanelCase(unittest.TestCase):
     def setUp(self) -> None:
         undo_manager.clear()
@@ -195,8 +209,15 @@ class AppearanceTest(_PanelCase):
         self.toolbox.add_roi(60.0, 5.0)
         self.assertTrue(self.panel._redraw_timer.isActive())
         self.assertEqual(len(self.model.rows()), 5, "not rebuilt yet")
-        QTest.qWait(250)
-        self.assertEqual(len(self.model.rows()), 6)
+        # Wait for the rebuild itself, not a fixed 250 ms: the timer is 100 ms, but with ~3600 tests in one
+        # process a loaded CI runner once missed that (2026-10-18: 5 rows instead of 6).
+        rebuilt = _pump_until(lambda: len(self.model.rows()) == 6)
+        self.assertTrue(
+            rebuilt,
+            f"the table was never rebuilt (rows {len(self.model.rows())}, timer active {self.panel._redraw_timer.isActive()}, "
+            f"panel visible-for-redraw {self.panel._gate.visible})",
+        )
+        self.assertFalse(self.panel._redraw_timer.isActive(), "one rebuild, then the timer is done")
 
     def test_flat_until_there_are_groups_then_headers(self) -> None:
         self.assertFalse(self.model.is_grouped_view())
@@ -1007,7 +1028,12 @@ class LayoutAndPaintTest(_PanelCase):
                 _APP.processEvents()
                 expected = self._painted_extent(reference)
                 self.assertGreaterEqual(expected, 10, f"{name}: the reference itself must be a normal-sized icon")
-                self.assertGreaterEqual(self._painted_extent(button), expected - 1, f"{name} icon is smaller than the ribbon's")
+                # 2 px of slack (was 1 at the 22 px ribbon icons; ribbon icons are 18 px since 2026-10-18). The rainbow
+                # colour droplet's saturated edge falls under the contrast limit (see `_painted_extent`), which at
+                # 18 px costs it 2 px against the grey reference. Checked then: every button here and its reference
+                # have the same icon size (18) and an identical painted alpha extent (18 px) - only this contrast
+                # reading of the gradient differs. A real regression (the 22 px icon shrunk to ~4 px) still fails.
+                self.assertGreaterEqual(self._painted_extent(button), expected - 2, f"{name} icon is smaller than the ribbon's")
                 reference.hide()
         finally:
             self.panel.hide()

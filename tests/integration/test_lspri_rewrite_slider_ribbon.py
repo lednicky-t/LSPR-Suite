@@ -174,7 +174,8 @@ class SliderRibbonTest(unittest.TestCase):
         self.tools._go_ref.click()
         _pump(0.1)
         self.assertEqual((self.selection.current_cube(), self.selection.current_wavelength()), (1, 600.0))
-        self.assertEqual((self.panel._cube_spin.value(), self.panel._wavelength_spin.value()), (1, 600.0))
+        # ... and the sliders follow: cube 1 is index 1 of cubes (0, 1); 600 nm is index 2 of (500, 550, 600).
+        self.assertEqual((self.panel._cube_slider.value(), self.panel._wavelength_slider.value()), (1, 2))
         # The right-click menu has the same icon, and it closes the menu like every other one.
         self.selection.set_cube(0)
         self.selection.set_wavelength(500.0)
@@ -254,6 +255,28 @@ class SliderRibbonTest(unittest.TestCase):
         _pump(0.2)
         self.assertFalse(finder.is_running())
         self.assertEqual(self.reference.manual_frame(), frame)
+
+    def test_the_dividers_line_up_with_the_icons_not_with_the_captions(self) -> None:
+        """Maintainer (2026-10-18): the | between the groups was centred on the whole group, caption included,
+        so it sat above the icons' centre. It must span the icon row: same centre, and at least as tall as the buttons."""
+        from PyQt6.QtWidgets import QFrame
+
+        self.panel.show()
+        _pump(0.2)
+        ribbon = self.panel._slider_ribbon
+
+        def centre_y(widget) -> float:  # in the ribbon's coordinates, whatever the widget's own parent is
+            return ribbon.mapFromGlobal(widget.mapToGlobal(widget.rect().center())).y()
+
+        dividers = [
+            frame for frame in ribbon.findChildren(QFrame) if frame.frameShape() == QFrame.Shape.VLine and frame.isVisibleTo(ribbon)
+        ]
+        self.assertEqual(len(dividers), 5, "2 inside the frame tools (Reference | Ignore | Dark) + 3 between the groups")
+        icon = self.tools._go_ref
+        for divider in dividers:
+            self.assertAlmostEqual(centre_y(divider), centre_y(icon), delta=1.0)
+            self.assertGreaterEqual(divider.height(), icon.height())
+        self.assertAlmostEqual(centre_y(ribbon._play), centre_y(icon), delta=1.0)  # the icons share one row
 
     # -- roll up / down ---------------------------------------------------------
 

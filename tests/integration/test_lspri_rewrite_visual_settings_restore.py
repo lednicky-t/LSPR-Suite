@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -53,9 +54,14 @@ def _panel(window: QtWidgets.QMainWindow, title: str, panel_type: type) -> objec
     return docks[0].findChild(panel_type)
 
 
-def _flushed() -> None:
-    """Wait for `UiStateStore`'s short write pause."""
+def _flushed(saved: list) -> None:
+    """Wait for `UiStateStore`'s short write pause (400 ms). If nothing has been written after the usual 600 ms
+    (a busy machine: it happened with 16 test files running at once), keep waiting, up to 10 s, instead of
+    letting the caller's "something was saved" assert fail on a timing margin of 200 ms."""
     QTest.qWait(600)
+    deadline = time.monotonic() + 10.0
+    while not saved and time.monotonic() < deadline:
+        QTest.qWait(50)
 
 
 class VisualSettingsRestoreTests(unittest.TestCase):
@@ -97,7 +103,7 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         panel = _panel(window, "Histogram", HistogramPanel)
         panel._show_settings_dialog()
         panel._settings_dialog.scale_combo.setCurrentIndex(1)  # Log
-        _flushed()
+        _flushed(saved)
         self.assertTrue(saved)
         self.assertTrue(saved[-1].ui_state["histogram/log_y"])
 
@@ -127,7 +133,7 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         window = self._build(on_settings_changed=saved.append)
         panel = _panel(window, "Image", ImagePanel)
         panel.view_range_changed.emit(3.0, 77.0, 4.0, 60.0)
-        _flushed()
+        _flushed(saved)
         self.assertTrue(saved)
         self.assertEqual(saved[-1].ui_state[keys.IMAGE_VIEW_RANGE], [[3.0, 77.0], [4.0, 60.0]])
 
@@ -142,7 +148,7 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         panel = _panel(window, "Image", ImagePanel)
         self.assertEqual(panel.active_ribbon_category(), "ROIs")
         panel._tool_ribbon.set_category("Mask")
-        _flushed()
+        _flushed(saved)
         self.assertEqual(saved[-1].ui_state["image/ribbon_category"], "Mask")
 
     def test_the_old_histogram_tab_name_restores_as_view(self) -> None:
@@ -186,7 +192,7 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         panel._view_tab.highlight_controls.alpha_changed.emit(0.9)
         panel._view_tab.highlight_controls.alpha_changed.emit(0.8)
         self.assertEqual(saved, [])  # debounced: nothing written mid-burst
-        _flushed()
+        _flushed(saved)
         self.assertFalse(saved[-1].ui_state["image/highlight_overlay_visible"])
         self.assertAlmostEqual(saved[-1].ui_state["image/highlight_overlay_alpha"], 0.8)
 
@@ -213,7 +219,7 @@ class VisualSettingsRestoreTests(unittest.TestCase):
             on_settings_changed=saved.append,
         )
         _panel(window, "Image", ImagePanel)._highlight_range.set_range(100.0, 900.0)
-        _flushed()
+        _flushed(saved)
         self.assertEqual(
             saved[-1].ui_state[keys.HIGHLIGHT_RANGE], {"dataset": d1, "min": 100.0, "max": 900.0}
         )
