@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from dataclasses import replace
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
@@ -29,17 +30,21 @@ try:
     from lspr_imaging_app.analysis.frame_reduce import (
         REFERENCE,
         SAMPLE,
+        LayoutCache,
+        build_layout,
         build_roi_set,
         locate_pixels,
         reduce_frame,
+        segment_mean_std,
         segment_std,
     )
     from lspr_imaging_app.analysis.provenance import REFERENCE_EXCLUSION_MODES
     from lspr_imaging_app.analysis.reduction import REDUCTION_METHODS, reduce_sample_and_reference
-    from lspr_imaging_app.image_tools.background.estimate import roi_exclusion_mask
+    from lspr_imaging_app.image_tools.background import estimate as bg_estimate
+    from lspr_imaging_app.image_tools.background.estimate import BackgroundWeightsCache, roi_exclusion_mask
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
-    from lspr_imaging_app.image_tools.preprocess import apply_preprocessing
+    from lspr_imaging_app.image_tools.preprocess import apply_preprocessing, apply_preprocessing_at
     from lspr_imaging_app.roi import rasterize as rz
     from lspr_imaging_app.roi.model import AreaRoi, RoiMask
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -96,7 +101,7 @@ def _reference_cells(rois, processed, ignore, affine, mode, methods, trimmed=0.1
         union = np.zeros(shape, dtype=bool)
         for roi in rois:
             union |= rz.rasterize_sample(roi, shape, affine)
-    out = {"nominal": [], "valid": [], "std": [], "values": {m: [] for m in methods}}
+    out = {"nominal": [], "valid": [], "std": [], "mean64": [], "values": {m: [] for m in methods}}
     for roi in rois:
         sample = rz.rasterize_sample(roi, shape, affine)
         ring = rz.rasterize_reference(roi, shape, affine, default_inner_diameter_px=INNER, default_outer_diameter_px=OUTER)
@@ -110,6 +115,10 @@ def _reference_cells(rois, processed, ignore, affine, mode, methods, trimmed=0.1
         yy, xx = np.nonzero(ring & valid)
         out["valid"].append((sample_px.size, ring_px.size))
         out["std"].append(tuple(p.astype(np.float64).std(ddof=1) if p.size > 1 else np.nan for p in (sample_px, ring_px)))
+        out["mean64"].append(
+            (float(np.mean(sample_px.astype(np.float64))), float(np.mean(ring_px.astype(np.float64))))
+            if sample_px.size and ring_px.size else (np.nan, np.nan)
+        )
         for m in methods:
             if sample_px.size == 0 or ring_px.size == 0:
                 pair = (np.nan, np.nan)
@@ -172,7 +181,13 @@ class ReduceFrameTests(unittest.TestCase):
                         self.assertTrue(_same(got.n_nominal, expected["nominal"]))
                         self.assertTrue(_same(got.n_valid, expected["valid"]))
                         for method in REDUCTION_METHODS:
-                            self.assertTrue(_same(got.values[method], expected["values"][method]), method)
+                            if method == "mean":
+                                # Accumulated in float64 (maintainer, 2026-10-19): equal to a float64 reference, and within
+                                # 1e-6 relative of the old float32 mean (in practice ~1e-7).
+                                np.testing.assert_allclose(got.values["mean"], np.array(expected["mean64"]), rtol=1e-12, atol=0.0)
+                                np.testing.assert_allclose(got.values["mean"], np.array(expected["values"]["mean"]), rtol=1e-6, atol=0.0)
+                            else:
+                                self.assertTrue(_same(got.values[method], expected["values"][method]), method)
                         np.testing.assert_allclose(got.std, np.array(expected["std"]), rtol=1e-12, atol=0.0)
 
     def test_the_fixture_really_exercises_the_awkward_cases(self) -> None:
@@ -218,6 +233,56 @@ class ReduceFrameTests(unittest.TestCase):
         self.assertTrue(_same(a.values["mean"], b.values["mean"]))
 
 
+class PixelLayoutTests(unittest.TestCase):
+    """A cached layout must change nothing; the cache must only return it for exactly the same inputs."""
+
+    def test_reusing_a_layout_gives_bit_identical_results(self) -> None:
+        rs = build_roi_set(_rois(), INNER, OUTER)
+        image = _image()
+        for mode in REFERENCE_EXCLUSION_MODES:
+            for ignore in (None, _ignore()):
+                for name, affine in (("identity", IDENTITY), ("chromatic", CHROMATIC)):
+                    with self.subTest(mode=mode, ignore=ignore is not None, affine=name):
+                        layout = build_layout(rs, affine, image.shape, mode)
+                        a = reduce_frame(rs, image, ignore, affine, REDUCTION_METHODS, exclusion_mode=mode)
+                        b = reduce_frame(rs, image, ignore, affine, REDUCTION_METHODS, exclusion_mode=mode, layout=layout)
+                        for method in REDUCTION_METHODS:
+                            self.assertTrue(_same(a.values[method], b.values[method]), method)
+                        self.assertTrue(_same(a.std, b.std) and _same(a.n_valid, b.n_valid) and _same(a.n_nominal, b.n_nominal))
+
+    def test_cache_hits_only_for_the_same_inputs(self) -> None:
+        cache = LayoutCache(max_entries=8)
+        rois = _rois()
+        rs = build_roi_set(rois, INNER, OUTER)
+        first = cache.get(rs, CHROMATIC, (HEIGHT, WIDTH))
+        self.assertIs(cache.get(build_roi_set(rois, INNER, OUTER), CHROMATIC.copy(), (HEIGHT, WIDTH)), first)  # equal geometry, new objects
+        self.assertIsNot(cache.get(rs, IDENTITY, (HEIGHT, WIDTH)), first)
+        self.assertIsNot(cache.get(rs, CHROMATIC, (HEIGHT, WIDTH), "none"), first)
+        moved = [replace(rois[0], center_x=rois[0].center_x + 0.01)] + rois[1:]
+        self.assertNotEqual(build_roi_set(moved, INNER, OUTER).key, rs.key)
+        self.assertNotEqual(build_roi_set(rois, INNER, OUTER + 1.0).key, rs.key)  # the shared ring default is part of the key
+        mask_changed = rois[:8] + [replace(rois[8], sample_mask=RoiMask(26, 61, np.ones((8, 8), dtype=bool)))]
+        self.assertNotEqual(build_roi_set(mask_changed, INNER, OUTER).key, rs.key)  # a free-form mask's pixels are part of it
+        self.assertEqual((cache.hits, cache.misses), (1, 3))
+
+    def test_cache_keeps_at_most_max_entries(self) -> None:
+        cache = LayoutCache(max_entries=2)
+        rs = build_roi_set(_rois(), INNER, OUTER)
+        shifted = [np.array([[1.0, 0.0, dx], [0.0, 1.0, 0.0]]) for dx in (0.1, 0.2, 0.3)]
+        for affine in shifted:
+            cache.get(rs, affine, (HEIGHT, WIDTH))
+        cache.get(rs, shifted[0], (HEIGHT, WIDTH))  # evicted, so built again
+        self.assertEqual(cache.misses, 4)
+
+    def test_a_layout_for_other_inputs_is_refused(self) -> None:
+        rs = build_roi_set(_rois(), INNER, OUTER)
+        layout = build_layout(rs, IDENTITY, (HEIGHT, WIDTH), "none")
+        with self.assertRaises(ValueError):
+            reduce_frame(rs, _image(), None, IDENTITY, layout=layout)  # mode differs from the layout's
+        with self.assertRaises(ValueError):
+            reduce_frame(rs, _image()[:-1], None, IDENTITY, exclusion_mode="none", layout=layout)  # shape differs
+
+
 class SegmentStdTests(unittest.TestCase):
     def test_blocks_of_different_sizes_including_empty_and_single(self) -> None:
         rng = np.random.default_rng(3)
@@ -231,6 +296,20 @@ class SegmentStdTests(unittest.TestCase):
                 self.assertAlmostEqual(got[i], float(np.std(block, ddof=1)), places=9)
             else:
                 self.assertTrue(np.isnan(got[i]))
+
+    def test_mean_is_a_float64_mean_and_nan_only_for_empty_blocks(self) -> None:
+        rng = np.random.default_rng(5)
+        counts = np.array([5, 0, 1, 900, 0, 2])
+        offsets = np.concatenate(([0], np.cumsum(counts)))
+        values = rng.normal(40000.0, 900.0, int(counts.sum())).astype(np.float32)
+        mean, std = segment_mean_std(values, offsets, counts)
+        for i, n in enumerate(counts):
+            block = values[offsets[i]:offsets[i + 1]].astype(np.float64)
+            if n:
+                self.assertAlmostEqual(mean[i] / float(np.mean(block)), 1.0, places=13)
+            else:
+                self.assertTrue(np.isnan(mean[i]) and np.isnan(std[i]))
+        self.assertTrue(_same(std, segment_std(values, offsets, counts)))
 
     def test_all_blocks_too_small(self) -> None:
         got = segment_std(np.zeros(0, dtype=np.float32), np.zeros(4, dtype=np.int64), np.zeros(3, dtype=np.int64))
@@ -265,6 +344,74 @@ class CachedRoiExclusionTests(unittest.TestCase):
         background = BackgroundSettings(flatten_background_enabled=True, flatten_background_binning=2)
         with self.assertRaises(ValueError):
             apply_preprocessing(self._frame(), GeometrySettings(), background, roi_exclusion=np.zeros((5, 5), dtype=bool))
+
+
+class BackgroundCacheAndPixelsTests(unittest.TestCase):
+    """The weights cache and the at-pixels divide must give exactly what the plain full-frame path gives."""
+
+    def _frame(self):
+        rng = np.random.default_rng(13)
+        y, x = np.mgrid[0:HEIGHT, 0:WIDTH]
+        return (4000.0 + 6.0 * x - 4.0 * y + rng.normal(0.0, 30.0, (HEIGHT, WIDTH))).astype(np.float32)
+
+    def test_weights_cache_gives_identical_estimates(self) -> None:
+        image = self._frame()
+        valid = ~roi_exclusion_mask((HEIGHT, WIDTH), _rois()[:8])
+        no_support = valid.copy()
+        no_support[:, 60:] = False  # a large invalid region: part of the estimate needs the median fallback
+        for name, mask in (("ROIs excluded", valid), ("needs the fallback", no_support)):
+            for binning, sigma in ((1, 6.0), (2, 12.0), (4, 12.0)):
+                with self.subTest(mask=name, binning=binning):
+                    cache = BackgroundWeightsCache()
+                    plain = bg_estimate._background_and_baseline(image, mask, sigma, binning)
+                    first = bg_estimate._background_and_baseline(image, mask, sigma, binning, weights_cache=cache)
+                    again = bg_estimate._background_and_baseline(image * 1.01, mask.copy(), sigma, binning, weights_cache=cache)
+                    self.assertTrue(np.array_equal(plain[0], first[0], equal_nan=True) and plain[1] == first[1])
+                    reference = bg_estimate._background_and_baseline(image * 1.01, mask, sigma, binning)
+                    self.assertTrue(np.array_equal(reference[0], again[0], equal_nan=True) and reference[1] == again[1])
+                    self.assertEqual((cache.misses, cache.hits), (1, 1))  # same mask content, new array: reused
+
+    def test_weights_cache_misses_when_one_pixel_differs(self) -> None:
+        cache = BackgroundWeightsCache()
+        valid = np.ones((HEIGHT, WIDTH), dtype=bool)
+        cache.part(valid, 12.0, 2)
+        changed = valid.copy()
+        changed[40, 40] = False
+        cache.part(changed, 12.0, 2)
+        cache.part(valid, 12.0, 4)  # other binning
+        self.assertEqual((cache.misses, cache.hits), (3, 0))
+
+    def test_preprocessing_at_pixels_equals_the_full_frame(self) -> None:
+        rois = _rois()[:8]
+        frame = self._frame()
+        index = np.flatnonzero(np.random.default_rng(2).random(HEIGHT * WIDTH) < 0.3)
+        ignore = _ignore()
+        for flatten in (True, False):
+            for rotation in (0.0, 1.4):
+                with self.subTest(flatten=flatten, rotation=rotation):
+                    geometry = GeometrySettings(rotation_angle_deg=rotation)
+                    background = BackgroundSettings(flatten_background_enabled=flatten, flatten_background_sigma_px=12.0,
+                                                    flatten_background_binning=2, flatten_background_exclude_mask=True)
+                    full = apply_preprocessing(frame, geometry, background, rois=rois, external_mask=ignore,
+                                               mask_settings=_detection_settings())
+                    shape = full.shape[:2]
+                    idx = index[index < shape[0] * shape[1]]
+                    cache = BackgroundWeightsCache()
+                    for _ in range(2):  # second pass uses the cache
+                        part = apply_preprocessing_at(frame, idx, geometry, background, mask_settings=_detection_settings(),
+                                                      external_mask=ignore if ignore.shape == shape else None,
+                                                      roi_exclusion=roi_exclusion_mask(shape, rois), weights_cache=cache)
+                        if ignore.shape != shape:
+                            full_here = apply_preprocessing(frame, geometry, background, rois=rois, mask_settings=_detection_settings())
+                        else:
+                            full_here = full
+                        self.assertTrue(np.array_equal(part, full_here.reshape(-1)[idx], equal_nan=True))
+
+
+def _detection_settings():
+    from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+
+    return AreaRoiDetectionSettings(ignore_marked_pixels=True)
 
 
 if __name__ == "__main__":
