@@ -714,6 +714,28 @@ class SliderRibbonTest(unittest.TestCase):
         self.assertEqual((show.settings().skip_ignored, show.settings().skip_dark), (True, True))
         self.assertEqual(frame_after_500_of_cube_0(), (1, 500.0))
 
+    def test_play_rotates_fast_and_the_stopped_frame_is_redrawn_exactly(self) -> None:
+        """Fast while moving, exact at rest (2026-10-20): frames requested while Play runs are rotated bilinearly;
+        when Play stops, the frame it stopped on is requested again with the exact (Lanczos4) rotation."""
+        self.panel._geometry.set_image_tools_enabled(True)
+        self.panel._geometry.set_rotation(3.0)
+        _pump()
+        requests = []
+        submit = self.panel._renderer.submit
+        self.panel._renderer.submit = lambda request: (requests.append(request), submit(request))[1]
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
+        show = self.panel._slideshow
+        show.play()
+        show._advance()
+        _pump()
+        self.assertTrue(requests and all(r.fast_rotation for r in requests), [r.fast_rotation for r in requests])
+        requests.clear()
+        show.stop()
+        _pump()
+        self.assertTrue(requests, "no redraw after Play stopped")
+        self.assertFalse(requests[-1].fast_rotation)
+
     def test_play_button_toggles_and_shows_pause(self) -> None:
         ribbon = self.panel._slider_ribbon
         self.selection.set_cube(0)

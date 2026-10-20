@@ -71,7 +71,9 @@ class TestFillPixelsArePinned(unittest.TestCase):
                 nan = np.isnan(rotated)
                 self.assertEqual(int(nan.sum()), expected_count)
                 self.assertTrue(np.all(np.isfinite(rotated[~nan])))
-                self.assertGreater(float(np.nanmin(rotated)), 0.0)  # nothing was filled with 0
+                # Nothing was filled with 0. (Not `min > 0`: since 2026-10-20 the rotation is Lanczos4, whose
+                # ringing on this white-noise image dips below 0 - real interpolation, not a fill.)
+                self.assertFalse(np.any(rotated[~nan] == 0.0))
 
     def test_integer_input_becomes_float_only_when_rotating(self) -> None:
         raw = (np.arange(300 * 400).reshape(300, 400) % 60000 + 1).astype(np.uint16)

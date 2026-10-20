@@ -8,9 +8,8 @@ No Qt application, no files.
 
 1. `TestOpenCvGeometryMatchesScipy`: the OpenCV rotate/flip/crop must agree
    with the scipy reference (`_apply_spatial_transform`) in shape and in
-   which pixels are NaN, and in value to within the measured OpenCV
-   interpolation step (worst case 1.95 counts on a 0-4000 white-noise frame
-   at 1300x900, 2026-10-11; shot noise of such a frame is ~60 counts).
+   which pixels are NaN. Values: Lanczos4 since 2026-10-20, pinned against a
+   quintic spline and by how much pixel noise it keeps (`_assert_lanczos_quality`).
 2. `TestResolvedMaskCache`: `resolve_external_mask` hands back the same
    read-only object for the same inputs and recomputes when any input changes.
 3. `TestPrefetchOrder` / `TestRendererPrefetch`: read-ahead order, and that
@@ -27,6 +26,7 @@ import time
 import unittest
 
 import numpy as np
+from scipy import ndimage
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
@@ -73,7 +73,35 @@ class TestOpenCvGeometryMatchesScipy(unittest.TestCase):
                     actual = T.apply_spatial_preprocessing(frame, settings, skip_crop=skip_crop)
                     self.assertEqual(actual.shape, reference.shape)
                     np.testing.assert_array_equal(np.isnan(actual), np.isnan(reference))
-                    self.assertLess(float(np.nanmax(np.abs(actual - reference))), 3.0)
+                    self._assert_lanczos_quality(frame, settings, skip_crop, actual)
+
+    def test_fast_rotation_is_the_bilinear_one_with_the_same_nan_pixels(self) -> None:
+        """`fast=True` (slideshow preview): the bilinear warp of before 2026-10-20, within OpenCV's 1/32 px step of
+        scipy's bilinear (worst case 1.95 counts on this frame, measured 2026-10-11), same NaN pixels."""
+        frame = _frame()
+        for name, settings in _CASES.items():
+            with self.subTest(case=name):
+                reference = T._apply_spatial_transform(frame, settings, order=1, mode="constant", cval=np.nan)
+                fast = T.apply_spatial_preprocessing(frame, settings, fast=True)
+                np.testing.assert_array_equal(np.isnan(fast), np.isnan(reference))
+                self.assertLess(float(np.nanmax(np.abs(fast - reference))), 3.0)
+
+    def _assert_lanczos_quality(self, frame, settings, skip_crop, actual) -> None:
+        """Lanczos4 since 2026-10-20 (`_cv2_affine`): close to a quintic spline and keeps the pixel noise. Measured on
+        this white-noise frame: RMS 44-46 counts from the quintic spline (bilinear: ~400) and 90-92 % of the noise kept
+        (bilinear: 63-67 %); the bounds below fail for bilinear."""
+        effective = settings if not skip_crop else GeometrySettings(
+            rotation_angle_deg=settings.rotation_angle_deg, flip_horizontal=settings.flip_horizontal,
+            flip_vertical=settings.flip_vertical,
+        )
+        matrix, offset, shape = T._combined_export_transform(frame.shape, effective)
+        quintic = ndimage.affine_transform(frame.astype(np.float64), matrix, offset, output_shape=shape, order=5,
+                                           mode="nearest")
+        inner = np.zeros(shape, dtype=bool)
+        inner[6:-6, 6:-6] = True
+        inner &= np.isfinite(actual)
+        self.assertLess(float(np.sqrt(np.mean((actual - quintic)[inner] ** 2))), 80.0)
+        self.assertGreater(float(np.std(actual[inner]) / np.std(frame)), 0.85)
 
     def test_output_shape_matches_the_real_transform_at_many_angles(self) -> None:
         for angle in np.linspace(-180.0, 180.0, 37) + 0.37:

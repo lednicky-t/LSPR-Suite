@@ -33,7 +33,7 @@ try:
     from lspr_imaging_app.panels.histogram import HistogramPanel
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.ui_state import UiStateStore
-    from lspr_imaging_app.panels.workflow.dataset_export import DatasetExportSection
+    from lspr_imaging_app.panels.image.export_tab import ExportTab
     from lspr_imaging_app.storage.app_settings import AppSettings, load_app_settings, save_app_settings
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -110,12 +110,14 @@ class WindowRestoreTests(unittest.TestCase):
                 }
             )
         )
-        export = window.findChildren(DatasetExportSection)[0]
+        export = window.findChildren(ExportTab)[0]
         self.assertEqual(export._chunk_spin.value(), 128)
         self.assertEqual(export._shard_combo.currentData(), "per_spectral_cube")
-        self.assertFalse(export._compression_check.isChecked())
-        self.assertTrue(export._skip_excluded_check.isChecked())
+        self.assertFalse(export._compression_button.isChecked())
+        self.assertTrue(export._skip_excluded_button.isChecked())
         image = _panel(window, "Image", ImagePanel)
+        self.assertIs(export, image._export_tab)  # one Export front door: the Image panel's ribbon tab
+        self.assertTrue(image._tool_ribbon.set_category("Export"))
         self.assertIs(image._mask_scope.scope(), MaskScope.INDIVIDUAL)
         self.assertIs(image._mask_tab.edit_tool.tool(), MaskEditTool.MORPHOLOGY)
         self.assertTrue(image._cursor_overlay._enabled)
@@ -130,7 +132,7 @@ class WindowRestoreTests(unittest.TestCase):
         image = _panel(window, "Image", ImagePanel)
         self.assertIs(image._mask_scope.scope(), MaskScope.PERSISTENT)
         self.assertIs(image._mask_tab.edit_tool.tool(), MaskEditTool.HISTOGRAM_SELECTION)
-        self.assertEqual(window.findChildren(DatasetExportSection)[0]._chunk_spin.value(), 64)
+        self.assertEqual(window.findChildren(ExportTab)[0]._chunk_spin.value(), 64)
 
     def test_changes_are_saved_after_a_pause(self) -> None:
         saved: list[AppSettings] = []
@@ -138,7 +140,7 @@ class WindowRestoreTests(unittest.TestCase):
         image = _panel(window, "Image", ImagePanel)
         image._mask_scope.set_scope(MaskScope.INDIVIDUAL)
         image._cursor_overlay.toggle()
-        window.findChildren(DatasetExportSection)[0]._chunk_spin.setValue(256)
+        window.findChildren(ExportTab)[0]._chunk_spin.setValue(256)
         _wait_until(lambda: any("mask/scope" in s.ui_state for s in saved))
         state = saved[-1].ui_state
         self.assertEqual(state["mask/scope"], "individual")
