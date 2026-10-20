@@ -85,6 +85,20 @@ class GridAlignmentTests(unittest.TestCase):
                     for d in range(-tol, tol + 1):  # the whole tolerance window is optimal
                         self.assertEqual(brute[(off + d) % c], min(brute))
 
+    def test_saturated_group_ties_are_broken_by_single_rois(self):
+        # 2026-10-20 bug: a column of ROIs wider than one chunk ties at 2 chunks per column for every offset; the
+        # tie must go to the fewest chunks per ROI, not put a grid line through every column.
+        boxes = lattice_boxes(10, 6, pitch=80.0, size=69, tilt_deg=1.4)
+        columns = cp.lattice_groups((boxes[:, :2] + boxes[:, 2:]) / 2.0, axis="columns", tolerance_px=40.0)
+        layout = cp.align_grid(boxes, 80, 900, pattern="group", groups=columns)
+        lo, hi = boxes[:, 0], boxes[:, 2]
+        group_cost = [sum(brute_axis(lo, hi, columns, 80, o)) for o in range(80)]
+        single_cost = [sum(brute_axis(lo, hi, [[i] for i in range(len(boxes))], 80, o)) for o in range(80)]
+        best_single_among_best_group = min(s for g, s in zip(group_cost, single_cost) if g == min(group_cost))
+        self.assertEqual(group_cost[layout.offset_x], min(group_cost))
+        self.assertEqual(single_cost[layout.offset_x], best_single_among_best_group)
+        self.assertLess(cp.score_layout(boxes, layout)["single"].chunks, 2.0)
+
     def test_pitch_sized_chunk_gives_one_chunk_per_roi(self):
         boxes = lattice_boxes(8, 11, pitch=40.0, size=30)
         layout = cp.align_grid(boxes, 40, 40)
@@ -218,6 +232,16 @@ class ReadBoxTests(unittest.TestCase):
         roi = AreaRoi(area_roi_id=1, center_x=-50.0, center_y=40.0, sample_diameter_px=10.0)
         box = cp.roi_read_boxes([roi], (100, 120), default_inner_diameter_px=0.0, default_outer_diameter_px=0.0)[0]
         self.assertLessEqual(box[2], box[0])
+
+    def test_map_boxes_shift_rotation_and_clip(self):
+        boxes = np.array([[10, 20, 30, 40], [5, 5, 5, 9]])  # second one empty
+        shifted = cp.map_boxes(boxes, np.array([[1.0, 0.0, -4.0], [0.0, 1.0, 3.0]]), (100, 100))
+        self.assertEqual(shifted.tolist(), [[6, 23, 26, 43], [0, 0, 0, 0]])
+        c, s = np.cos(np.radians(90)), np.sin(np.radians(90))  # 90 deg about the origin, then shift into view
+        rotated = cp.map_boxes(boxes[:1], np.array([[c, -s, 50.0], [s, c, 0.0]]), (100, 100))
+        self.assertEqual(rotated.tolist(), [[10, 10, 30, 30]])  # x' = 50 - y, y' = x: 20x20 stays 20x20
+        clipped = cp.map_boxes(boxes[:1], np.array([[1.0, 0.0, -20.0], [0.0, 1.0, 0.0]]), (100, 100))
+        self.assertEqual(clipped.tolist(), [[0, 20, 10, 40]])
 
     def test_lattice_groups_rows(self):
         centres = np.array([[10, 10], [50, 11], [10, 52], [51, 50], [90, 9]], dtype=float)

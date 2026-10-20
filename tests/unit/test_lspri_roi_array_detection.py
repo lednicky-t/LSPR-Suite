@@ -174,6 +174,69 @@ class FindArrayTest(unittest.TestCase):
             find_array(image, cancelled=lambda: True)
 
 
+class SpotSizeScanTest(unittest.TestCase):
+    """No diameter given: the size comes from a scan over 6-120 px scored by lattice fit (2026-10-20). The single
+    scale-space guess it replaced put a real 34 px array at 54-68 px or 12 px and then found no spot at all."""
+
+    def _assert_whole_array(self, image, truth, rows=4, cols=6):
+        diagnostics: dict = {}
+        fit = find_array(image, diagnostics=diagnostics)
+        self.assertIsNotNone(fit, diagnostics.get("reason"))
+        self.assertEqual((fit.rows, fit.cols), (rows, cols))
+        self.assertEqual(fit.found_count, rows * cols)
+        self.assertLess(_match(fit, truth, None), 1.5)
+        return fit, diagnostics
+
+    def test_small_medium_and_large_spots_are_all_found(self) -> None:
+        for diameter in (10.0, 24.0, 50.0):
+            with self.subTest(diameter=diameter):
+                pitch = 2.6 * diameter
+                image, truth = _array_image(diameter=diameter, pitch_x=pitch, pitch_y=pitch, origin=(1.5 * pitch, 1.3 * pitch),
+                                            shape=(int(5.6 * pitch), int(7.8 * pitch)))
+                fit, diagnostics = self._assert_whole_array(image, truth)
+                # The search size lands near the true size (the disk test tolerates about +-25 %).
+                self.assertLess(abs(diagnostics["rough_diameter_px"] / diameter - 1.0), 0.35, diagnostics["size_scan"])
+
+    def test_spots_with_a_dark_halo_are_found_at_their_own_size(self) -> None:
+        # A wide, weak dark halo round every spot (as near a plasmon resonance) pulls a blob-scale guess outwards.
+        image, truth = _array_image(diameter=24.0, pitch_x=70.0, pitch_y=70.0, origin=(70.0, 60.0), shape=(340, 500))
+        yy, xx = np.mgrid[0 : image.shape[0], 0 : image.shape[1]]
+        halo = np.zeros(image.shape, dtype=np.float32)
+        for cx, cy in truth:
+            halo = np.maximum(halo, np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2.0 * 18.0**2)))
+        image = image * (1.0 - 0.25 * halo)
+        _fit, diagnostics = self._assert_whole_array(image, truth)
+        self.assertLess(abs(diagnostics["rough_diameter_px"] / 24.0 - 1.0), 0.35, diagnostics["size_scan"])
+
+    def test_debris_does_not_win_the_size_scan(self) -> None:
+        image, truth = _array_image(diameter=24.0, pitch_x=64.0, pitch_y=64.0, origin=(64.0, 58.0), shape=(320, 470))
+        rng = np.random.default_rng(5)
+        yy, xx = np.mgrid[0 : image.shape[0], 0 : image.shape[1]]
+        for _ in range(40):  # small dark specks scattered between the spots
+            cx, cy = rng.uniform(0, image.shape[1]), rng.uniform(0, image.shape[0])
+            image[np.hypot(xx - cx, yy - cy) <= 3.0] *= 0.5
+        self._assert_whole_array(image, truth)
+
+    def test_no_array_is_refused_with_a_reason(self) -> None:
+        # Pure noise: either no size gives a lattice ("any spot size ... set their diameter"), or a few chance dots
+        # fit one and the occupancy check refuses it ("too sparse to trust"). Never a fake array.
+        image = np.random.default_rng(0).normal(1000.0, 10.0, (300, 400)).astype(np.float32)
+        diagnostics: dict = {}
+        self.assertIsNone(find_array(image, diagnostics=diagnostics))
+        self.assertTrue(diagnostics.get("reason"))
+
+    def test_flat_image_says_no_size_gives_an_array(self) -> None:
+        diagnostics: dict = {}
+        self.assertIsNone(find_array(np.full((300, 400), 1000.0, dtype=np.float32), diagnostics=diagnostics))
+        self.assertIn("any spot size", diagnostics["reason"])
+
+    def test_a_given_diameter_skips_the_scan(self) -> None:
+        image, _truth = _array_image()
+        diagnostics: dict = {}
+        self.assertIsNotNone(find_array(image, prior=ArrayPrior(diameter_px=24.0), diagnostics=diagnostics))
+        self.assertNotIn("size_scan", diagnostics)
+
+
 class LatticeNodesTest(unittest.TestCase):
     def test_row_major_order(self) -> None:
         nodes = lattice_nodes(2, 3, (10.0, 20.0), (5.0, 0.0), (0.0, 7.0))

@@ -259,6 +259,39 @@ class ArrayActionsTest(unittest.TestCase):
         (array,) = self.toolbox.array_groups()
         self.assertAlmostEqual(array.rotation_deg, 3.0, delta=0.4)
 
+    def test_auto_rotate_levels_even_a_small_tilt_without_asking_or_placing_rois(self) -> None:
+        self.image, self.truth = _image(tilt=0.6, origin=(80.0, 50.0), shape=(340, 500))  # below the 1 deg question
+        self.run_and_wait(self.actions.auto_rotate)
+        self.assertEqual(self.asked, [])
+        self.assertEqual(self.toolbox.rois(), ())
+        self.assertAlmostEqual(self.geometry.settings().rotation_angle_deg, 0.6, delta=0.15)
+        self.assertTrue(self.statuses[-1].startswith("Auto rotate: levelled"), self.statuses[-1])
+        # A second pass measures the levelled image: the residual tilt is small, so the rotation barely moves.
+        first = self.geometry.settings().rotation_angle_deg
+        self.run_and_wait(self.actions.auto_rotate)
+        self.assertAlmostEqual(self.geometry.settings().rotation_angle_deg, first, delta=0.15)
+
+    def test_auto_rotate_refusal_is_titled_and_does_not_hijack_the_next_detect(self) -> None:
+        self.image, self.truth = _image()
+        self.reference = None
+        self.actions.auto_rotate()
+        self.assertTrue(self.statuses[-1].startswith("Auto rotate:"))
+        self.reference = (0, REFERENCE_WL)
+        self.run_and_wait(self.controls._run.click)  # an ordinary Detect still places the array
+        self.assertEqual(len(self.toolbox.rois()), 24)
+
+    def test_auto_rotate_button_in_the_rotation_group_asks_for_it(self) -> None:
+        from lspr_imaging_app.image_tools import ActiveToolModule
+        from lspr_imaging_app.panels.image.transforms_settings import TransformsSection
+
+        section = TransformsSection(self.geometry, ActiveToolModule())
+        self.addCleanup(section.deleteLater)
+        clicks: list[bool] = []
+        section.auto_rotate_requested.connect(lambda: clicks.append(True))
+        section._auto_rotate_button.click()
+        self.assertEqual(clicks, [True])
+        self.assertFalse(section._auto_rotate_button.icon().isNull())
+
     def test_no_array_in_the_image_is_reported_not_stored(self) -> None:
         self.image = np.full((200, 200), 500.0, dtype=np.float32)
         self.run_and_wait(self.controls._run.click)
