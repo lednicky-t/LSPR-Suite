@@ -112,7 +112,7 @@ class WindowRestoreTests(unittest.TestCase):
         )
         export = window.findChildren(ExportTab)[0]
         self.assertEqual(export._chunk_spin.value(), 128)
-        self.assertEqual(export._shard_combo.currentData(), "per_spectral_cube")
+        self.assertEqual(export._shard_button.mode(), "per_spectral_cube")
         self.assertFalse(export._compression_button.isChecked())
         self.assertTrue(export._skip_excluded_button.isChecked())
         image = _panel(window, "Image", ImagePanel)
