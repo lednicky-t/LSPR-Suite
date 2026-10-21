@@ -16,6 +16,10 @@ No Qt application, no files.
    the reader reads planes only after the quiet period and drops a
    replaced list (one reader thread here; several, and the render thread
    not waiting behind them: `test_lspri_rewrite_renderer_readers.py`).
+4. `TestRendererFlattenCaches` (2026-10-21, Play at 12-15 instead of 20-25 frames/s): the renderer reuses the
+   ROI exclusion mask and the valid-mask weights between frames. Pins that the image is identical to the uncached
+   `apply_preprocessing` result, that the ROI mask is rebuilt exactly when an ROI or the image shape changes,
+   and that nothing is cached with flattening off.
 """
 
 from __future__ import annotations
@@ -24,6 +28,8 @@ import sys
 import threading
 import time
 import unittest
+from dataclasses import replace
+from unittest import mock
 
 import numpy as np
 from scipy import ndimage
@@ -39,10 +45,13 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.image_tools.chromatic.warp import warp_boolean_mask_affine
     from lspr_imaging_app.image_tools.geometry import transform as T
+    from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import CropDefinition, GeometrySettings
-    from lspr_imaging_app.image_tools.preprocess import resolve_external_mask
+    from lspr_imaging_app.image_tools.preprocess import apply_preprocessing, resolve_external_mask
+    from lspr_imaging_app.panels.image import render as render_module
     from lspr_imaging_app.panels.image.prefetch import prefetch_order
-    from lspr_imaging_app.panels.image.render import ImageRenderer
+    from lspr_imaging_app.panels.image.render import ImageRenderer, RenderRequest
+    from lspr_imaging_app.roi.model import AreaRoi
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -256,6 +265,93 @@ class TestRendererPrefetch(unittest.TestCase):
         time.sleep(0.4)
         with self.lock:
             self.assertEqual(self.loaded, [])
+
+
+class TestRendererFlattenCaches(unittest.TestCase):
+    """`ImageRenderer._frame_caches`: the ROI exclusion mask and the valid-mask weights are worked out once, not per frame."""
+
+    def setUp(self) -> None:
+        self.raw = _frame()
+        self.renderer = ImageRenderer(lambda cube, wavelength: self.raw)
+        self.addCleanup(self.renderer.stop)
+        self.rois = tuple(
+            AreaRoi(area_roi_id=i, center_x=60.0 + 70.0 * i, center_y=90.0 + 40.0 * (i % 3), sample_diameter_px=16.0)
+            for i in range(5)
+        )
+        self.background = BackgroundSettings(
+            flatten_background_enabled=True, flatten_background_sigma_px=24.0, flatten_background_binning=4,
+            flatten_background_exclude_area_rois=True,
+        )
+
+    def _request(self, **changes) -> "RenderRequest":
+        fields = dict(
+            cube_index=0, wavelength_nm=610.0, geometry=_CASES["rot3 crop"], background=self.background,
+            authored_mask=None, mask_warp_affine=None, rois=self.rois, detection=None, serial=1,
+            fast_rotation=True,
+        )
+        fields.update(changes)
+        return RenderRequest(**fields)
+
+    def _uncached(self, request: "RenderRequest") -> np.ndarray:
+        """What the renderer computed before the caches: `apply_preprocessing` with only the ROIs."""
+        return apply_preprocessing(
+            self.raw, request.geometry, request.background, rois=list(request.rois) or None,
+            fast_rotation=request.fast_rotation,
+        )
+
+    def test_the_image_is_identical_to_the_uncached_pipeline_on_every_call(self) -> None:
+        request = self._request()
+        expected = self._uncached(request)
+        self.assertTrue(np.isnan(expected).any(), "the test needs rotation-created NaN pixels to mean something")
+        for call in range(3):  # the first call fills the caches, the next two read them
+            result = self.renderer._render(request)
+            self.assertIsNone(result.error)
+            np.testing.assert_array_equal(result.image, expected, err_msg=f"call {call}")
+
+    def test_the_roi_mask_is_built_once_and_rebuilt_when_an_roi_or_the_shape_changes(self) -> None:
+        build = render_module.roi_exclusion_mask
+        with mock.patch.object(render_module, "roi_exclusion_mask", side_effect=build) as counted:
+            for _ in range(3):
+                self.renderer._render(self._request())
+            self.assertEqual(counted.call_count, 1)
+
+            moved = (replace(self.rois[0], center_x=self.rois[0].center_x + 9.0), *self.rois[1:])
+            result = self.renderer._render(self._request(rois=moved))
+            self.assertEqual(counted.call_count, 2)
+            np.testing.assert_array_equal(result.image, self._uncached(self._request(rois=moved)))
+
+            resized = self._request(geometry=replace(_CASES["rot3 crop"], crop=replace(_CROP, width=200)))
+            result = self.renderer._render(resized)
+            self.assertEqual(counted.call_count, 3)
+            np.testing.assert_array_equal(result.image, self._uncached(resized))
+
+    def test_a_different_ignore_mask_never_reuses_the_weights_of_another(self) -> None:
+        from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+
+        background = replace(self.background, flatten_background_exclude_mask=True)
+        detection = AreaRoiDetectionSettings(ignore_marked_pixels=True)
+        for top in (20, 120, 20):  # the last one returns to the first mask: a cache hit that must still be right
+            authored = np.zeros(_SHAPE, dtype=bool)
+            authored[top:top + 40, 150:230] = True
+            request = self._request(background=background, detection=detection, authored_mask=authored)
+            expected = apply_preprocessing(
+                self.raw, request.geometry, background, rois=list(self.rois), mask_settings=detection,
+                external_mask=resolve_external_mask(authored, request.geometry, None), fast_rotation=True,
+            )
+            np.testing.assert_array_equal(self.renderer._render(request).image, expected, err_msg=f"top={top}")
+
+    def test_the_shared_roi_mask_is_read_only_and_survives_a_render_unchanged(self) -> None:
+        self.renderer._render(self._request())
+        key, mask = self.renderer._roi_exclusion_cache
+        self.assertFalse(mask.flags.writeable)
+        before = mask.copy()
+        self.renderer._render(self._request())
+        np.testing.assert_array_equal(mask, before)
+
+    def test_nothing_is_cached_with_flattening_off(self) -> None:
+        request = self._request(background=replace(self.background, flatten_background_enabled=False))
+        self.assertEqual(self.renderer._frame_caches(request, _SHAPE), {})
+        self.assertIsNone(self.renderer._roi_exclusion_cache)
 
 
 if __name__ == "__main__":
