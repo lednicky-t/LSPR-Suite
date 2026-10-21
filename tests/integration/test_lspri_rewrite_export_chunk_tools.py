@@ -1,5 +1,5 @@
-"""Export tab chunk tools (2026-10-20; the Workflow Export section until it moved to the Image panel ribbon): chunk W x H, warnings, grid position aligned to the ROIs (lossless pad /
-lossy trim), the Find best popup, the grid preview and what Export passes to the module.
+"""Export tab chunk tools (2026-10-20; the Workflow Export section until it moved to the Image panel ribbon): chunk W x H, warnings, grid position aligned to the ROIs (pads the edge),
+the chunk-style menu, the grid preview and what Export passes to the module.
 
 Real `DatasetModule` (a tiny TIFF dataset), `RoiToolbox`, `GeometryModule`, `ChromaticModule`; a real in-process
 `QApplication`, never `.exec()`. The file dialog and the export itself are replaced (no files written by the export).
@@ -37,7 +37,7 @@ try:
     from lspr_imaging_app.image_tools import ChromaticModule, GeometryModule
     from lspr_imaging_app.image_tools.geometry.model import CropDefinition, GeometrySettings
     from lspr_imaging_app.image_tools.geometry.transform import raw_to_processed_affine_xy, spatial_output_shape
-    from lspr_imaging_app.panels.image.export_tab import GRID_CORNER, GRID_LOSSLESS, GRID_LOSSY, ExportTab
+    from lspr_imaging_app.panels.image.export_tab import ExportTab
     from lspr_imaging_app.panels.image.export_roi_layout import gather_export_roi_layout
     from lspr_imaging_app.roi import RoiToolbox
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -96,9 +96,6 @@ class ExportChunkToolsTests(unittest.TestCase):
         self.section._chunk_spin.setValue(w)
         self.section._chunk_h_spin.setValue(h)
 
-    def set_mode(self, mode: str) -> None:
-        self.section._grid_combo.setCurrentIndex(self.section._grid_combo.findData(mode))
-
     def test_live_warnings(self) -> None:
         self.set_size(79, 79)
         self.assertIn("not a multiple of 8", self.section._warning_text)
@@ -106,15 +103,15 @@ class ExportChunkToolsTests(unittest.TestCase):
         self.set_size(80, 200)
         self.assertEqual(self.section._warning_text, "")
 
-    def test_corner_mode_counts_whole_image(self) -> None:
+    def test_without_rois_the_grid_starts_at_the_corner_and_counts_the_whole_image(self) -> None:
+        self.toolbox.delete_rois(tuple(roi.area_roi_id for roi in self.toolbox.rois()))
         self.set_size(64, 64)
-        self.set_mode(GRID_CORNER)
+        self.assertTrue(_pump(lambda: "-> 20 chunks/plane" in self.section._estimate_text, timeout=3.0))  # debounced
         self.assertIn("-> 20 chunks/plane", self.section._estimate_text)  # ceil(300/64) x ceil(200/64)
         self.assertIsNone(self.section._current_frame())
 
-    def test_aligned_modes_put_each_roi_in_one_chunk(self) -> None:
+    def test_aligned_mode_puts_each_roi_in_one_chunk(self) -> None:
         self.set_size(40, 40)
-        self.set_mode(GRID_LOSSLESS)
         layout, roi_layout = self.section.current_layout()
         self.assertEqual(cp.score_layout(roi_layout.boxes, layout)["single"].chunks, 1.0)
         frame = self.section._current_frame()
@@ -122,15 +119,9 @@ class ExportChunkToolsTests(unittest.TestCase):
         self.assertLessEqual(frame.origin_x, 0)
         self.assertEqual(frame.discarded_px, 0)
         self.assertIn("pads", self.section._layout_text)
-        self.set_mode(GRID_LOSSY)
-        frame = self.section._current_frame()
-        self.assertFalse(frame.lossless)
-        self.assertGreater(frame.discarded_px, 0)
-        self.assertIn("not exported", self.section._layout_text)
 
     def test_preview_follows_the_aligned_grid(self) -> None:
         self.set_size(40, 40)
-        self.set_mode(GRID_LOSSLESS)
         self.section._chunk_grid_button.setChecked(True)
         layout, _ = self.section.current_layout()
         preview = self.dataset.chunk_grid_preview()
@@ -140,34 +131,42 @@ class ExportChunkToolsTests(unittest.TestCase):
 
     def test_roi_move_realigns(self) -> None:
         self.set_size(40, 40)
-        self.set_mode(GRID_LOSSLESS)
         before, _ = self.section.current_layout()
         for roi in self.toolbox.rois():
             self.toolbox.move_roi(roi.area_roi_id, roi.center_x + 13.0, roi.center_y)
         after, _ = self.section.current_layout()
         self.assertEqual((after.offset_x - before.offset_x) % 40, 13)
 
-    def test_find_best_applies_a_suggestion(self) -> None:
+    def pick_style(self, key: str) -> None:
+        self.section._find_best_button._actions[key].trigger()
+
+    def test_chunk_style_menu_lists_the_three_styles(self) -> None:
+        self.assertEqual(list(self.section._find_best_button._actions), ["per_roi", "columns", "rows"])
+
+    def test_chunk_style_columns_applies_at_once(self) -> None:
         self.set_size(64, 64)
-        self.section._find_best_button.click()
-        dialog = self.section._dialog
-        self.assertIsNotNone(dialog)
-        self.assertTrue(_pump(lambda: dialog._table.rowCount() > 0), dialog._status.text())
-        self.assertEqual(dialog._table.item(0, 0).text(), "★")  # recommended first
-        first = dialog._rows[0][0]
-        self.assertEqual(first.key, "columns")
-        self.assertRegex(dialog._table.item(0, 6).text(), r"^\d+(\.\d)? (kB|MB|GB)$")  # lossless size
-        self.assertIn("% px)", dialog._table.item(0, 7).text())  # lossy size and how much it drops
-        dialog._lossy_radio.setChecked(True)
-        dialog._apply_button.click()
-        self.assertEqual((self.section._chunk_spin.value(), self.section._chunk_h_spin.value()),
-                         (first.layout.chunk_w, first.layout.chunk_h))
-        self.assertEqual(self.section._grid_combo.currentData(), GRID_LOSSY)
-        self.assertEqual(self.section.current_layout()[0], first.layout)
+        self.pick_style("columns")
+        layout, roi_layout = self.section.current_layout()
+        self.assertEqual((layout.chunk_w, layout.chunk_h), (40, H))  # one pitch wide, the whole height
+        self.assertEqual(cp.score_layout(roi_layout.boxes, layout)["single"].chunks, 1.0)
+
+    def test_chunk_style_rows_and_one_roi(self) -> None:
+        self.pick_style("rows")
+        self.assertEqual((self.section._chunk_spin.value(), self.section._chunk_h_spin.value()), (W, 40))
+        self.pick_style("per_roi")
+        self.assertEqual((self.section._chunk_spin.value(), self.section._chunk_h_spin.value()), (40, 40))
+
+    def test_chunk_style_without_rois_reports_and_changes_nothing(self) -> None:
+        reports = []
+        self.section._status = reports.append
+        self.toolbox.delete_rois(tuple(roi.area_roi_id for roi in self.toolbox.rois()))
+        self.set_size(64, 64)
+        self.pick_style("columns")
+        self.assertEqual((self.section._chunk_spin.value(), self.section._chunk_h_spin.value()), (64, 64))
+        self.assertTrue(any("place ROIs first" in r for r in reports))
 
     def test_export_passes_chunk_shape_and_frame(self) -> None:
         self.set_size(40, 48)
-        self.set_mode(GRID_LOSSLESS)
         calls = []
         with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=self._tmp.name), \
                 mock.patch.object(self.dataset, "export_to_ome_zarr", side_effect=lambda d, **kw: calls.append((d, kw))):
@@ -178,7 +177,7 @@ class ExportChunkToolsTests(unittest.TestCase):
         self.assertEqual(kwargs["chunk_shape"], (48, 40))
         self.assertEqual(kwargs["frame"], (frame.origin_x, frame.origin_y, frame.width, frame.height))
         self.assertIn("_c40x48", destination.name)
-        self.set_mode(GRID_CORNER)
+        self.toolbox.delete_rois(tuple(roi.area_roi_id for roi in self.toolbox.rois()))  # no ROIs: no frame
         calls.clear()
         self.section._set_exporting(False)  # the mocked export never finishes, so re-enable the button
         with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=self._tmp.name), \
@@ -215,13 +214,13 @@ class ExportChunkToolsTests(unittest.TestCase):
         self.assertTrue(all(0.0 <= fraction <= 1.0 for _id, _label, fraction, _msg in progress))
         self.assertEqual(finished[0][:2], ("zarr_export", "completed"), finished[0])
 
-    def test_rotate_crop_toggle_switches_the_export_space(self) -> None:
+    def test_rotate_crop_is_always_applied_while_the_image_tools_are_on(self) -> None:
         self.geometry.set_rotation(10.0)
         self.set_size(40, 40)
         self.section._chunk_grid_button.setChecked(True)
         rotated_shape = tuple(spatial_output_shape((H, W), self.geometry.settings()))
-        # On (the default): the export stores the processed image, and the grid is drawn straight on it.
-        self.assertTrue(self.section._apply_tools_button.isChecked())
+        # The export stores the processed image, and the grid is drawn straight on it (no on/off icon any more).
+        self.assertFalse(hasattr(self.section, "_apply_tools_button"))
         self.assertEqual(self.section._export_shape(), rotated_shape)
         self.assertTrue(self.dataset.chunk_grid_preview().processed)
         calls = []
@@ -229,12 +228,14 @@ class ExportChunkToolsTests(unittest.TestCase):
                 mock.patch.object(self.dataset, "export_to_ome_zarr", side_effect=lambda d, **kw: calls.append((d, kw))):
             self.section._export_button.click()
         self.assertEqual(calls[0][1]["preprocessing"].rotation_angle_deg, 10.0)
-        self.assertIn(f"_{rotated_shape[1]}x{rotated_shape[0]}_", calls[0][0].name)
-        # Off: raw pixels, the grid in raw pixels.
+        frame = self.section._current_frame()  # the stored window: the rotated image plus the grid padding
+        self.assertGreaterEqual(frame.width, rotated_shape[1])
+        self.assertIn(f"_{frame.width}x{frame.height}_", calls[0][0].name)
+        # Only with the Image tools switched off: raw pixels, the grid in raw pixels.
         self.section._set_exporting(False)
-        self.section._apply_tools_button.click()
+        self.geometry.set_image_tools_enabled(False)
         self.assertEqual(self.section._export_shape(), (H, W))
-        self.assertFalse(self.dataset.chunk_grid_preview().processed)
+        self.assertTrue(_pump(lambda: not self.dataset.chunk_grid_preview().processed, timeout=3.0))  # debounced
         calls.clear()
         with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=self._tmp.name), \
                 mock.patch.object(self.dataset, "export_to_ome_zarr", side_effect=lambda d, **kw: calls.append((d, kw))):
@@ -251,11 +252,9 @@ class ExportChunkToolsTests(unittest.TestCase):
         old = ExportTab(self.dataset, None, ui_state=UiStateStore({"export/chunk_size": 128}))
         self.addCleanup(old.deleteLater)
         self.assertEqual((old._chunk_spin.value(), old._chunk_h_spin.value()), (128, 128))
-        new = ExportTab(self.dataset, None, ui_state=UiStateStore({"export/chunk_size": 80, "export/chunk_h": 600,
-                                                                              "export/grid_position": GRID_LOSSY}))
+        new = ExportTab(self.dataset, None, ui_state=UiStateStore({"export/chunk_size": 80, "export/chunk_h": 600}))
         self.addCleanup(new.deleteLater)
         self.assertEqual((new._chunk_spin.value(), new._chunk_h_spin.value()), (80, 600))
-        self.assertEqual(new._grid_combo.currentData(), GRID_LOSSY)
 
     def test_layout_maps_through_the_image_tools(self) -> None:
         raw = gather_export_roi_layout(self.toolbox, self.geometry, self.chromatic, (H, W))

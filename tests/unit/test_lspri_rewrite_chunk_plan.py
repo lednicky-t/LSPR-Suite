@@ -174,6 +174,16 @@ class SuggestionTests(unittest.TestCase):
                 self.assertGreaterEqual(s.layout.chunk_w, 30)
                 self.assertGreaterEqual(s.layout.chunk_h, 30)
 
+    def test_only_builds_one_unscored_entry_identical_in_layout(self):
+        boxes = lattice_boxes(8, 11, pitch=40.0, size=30)
+        full = {s.key: s for s in cp.suggest_layouts(boxes, self.SHAPE)}
+        for key, expected in full.items():
+            with self.subTest(key):
+                (one,) = cp.suggest_layouts(boxes, self.SHAPE, only=key)
+                self.assertEqual(one.layout, expected.layout)
+                self.assertEqual(one.scores, {})
+        self.assertEqual(cp.suggest_layouts(boxes, self.SHAPE, only="no_such_key"), [])
+
     def test_roi_table_groups_are_scored_when_given(self):
         boxes = lattice_boxes(4, 4, pitch=40.0, size=30)
         out = cp.suggest_layouts(boxes, self.SHAPE, groups=[list(range(16))])
