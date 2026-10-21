@@ -248,6 +248,155 @@ class ReadBoxTests(unittest.TestCase):
         self.assertEqual(cp.lattice_groups(centres, axis="rows", tolerance_px=20.0), [[0, 1, 4], [2, 3]])
 
 
+class AffineReachTests(unittest.TestCase):
+    """`affine_reach` + `grow_boxes`: the cheap stand-in for unioning a read box over every fitted affine."""
+
+    @staticmethod
+    def rois(n: int = 24):
+        return [
+            AreaRoi(area_roi_id=i + 1, center_x=50.0 + 79.6 * (i % 6), center_y=50.0 + 79.6 * (i // 6),
+                    sample_diameter_px=33.7, reference_inner_diameter_px=49.5, reference_outer_diameter_px=59.9)
+            for i in range(n)
+        ]
+
+    def test_no_affines_means_no_growth(self):
+        self.assertEqual(cp.affine_reach(np.zeros((3, 2)), None), (0.0, 1.0))
+        boxes = np.array([[10, 10, 20, 20]], dtype=np.int64)
+        self.assertEqual(cp.grow_boxes(boxes, np.array([[15.0, 15.0]]), 0.0, 1.0).tolist(), boxes.tolist())
+
+    def test_reach_is_the_worst_shift_and_the_largest_stretch(self):
+        affines = [
+            np.array([[1.0, 0.0, 3.0], [0.0, 1.0, -1.0]]),  # 3 px of shift
+            np.array([[1.02, 0.0, 0.0], [0.0, 1.0, 0.0]]),  # 2 % stretch (and a shift that grows with x)
+        ]
+        centers = np.array([[100.0, 100.0], [200.0, 100.0]])
+        shift, stretch = cp.affine_reach(centers, affines)
+        self.assertAlmostEqual(stretch, 1.02, places=6)
+        self.assertAlmostEqual(shift, 4.0, places=6)  # the stretch moves x=200 by 4 px, more than the 3 px shift
+
+    def test_grown_boxes_contain_the_exact_per_affine_union(self):
+        """The property that lets the cheap version replace the exact one: it is never smaller. A box a pixel too
+        big costs a chunk or a slightly wider crop margin; one a pixel too small cuts into a measurement."""
+        rng = np.random.default_rng(7)
+        rois = self.rois()
+        centers = np.array([(r.center_x, r.center_y) for r in rois], dtype=float)
+        huge = (1 << 30, 1 << 30)
+        for trial in range(12):
+            affines = []
+            for _ in range(rng.integers(1, 9)):
+                m = np.eye(2, 3)
+                m[:, :2] += rng.normal(0.0, 3e-3, (2, 2))  # a fitted chromatic affine: near-identity
+                m[:, 2] = rng.normal(0.0, 2.5, 2)
+                affines.append(m)
+            with self.subTest(trial=trial):
+                exact = cp.roi_read_boxes(rois, huge, default_inner_diameter_px=49.5,
+                                          default_outer_diameter_px=59.9, affines=affines)
+                base = cp.roi_read_boxes(rois, huge, default_inner_diameter_px=49.5, default_outer_diameter_px=59.9)
+                grown = cp.grow_boxes(base, centers, *cp.affine_reach(centers, affines))
+                self.assertTrue((grown[:, 0] <= exact[:, 0]).all(), "left edge must not cut into the union")
+                self.assertTrue((grown[:, 1] <= exact[:, 1]).all())
+                self.assertTrue((grown[:, 2] >= exact[:, 2]).all())
+                self.assertTrue((grown[:, 3] >= exact[:, 3]).all())
+
+    def test_empty_boxes_and_a_length_mismatch_are_left_alone(self):
+        boxes = np.array([[0, 0, 0, 0], [10, 10, 20, 20]], dtype=np.int64)
+        grown = cp.grow_boxes(boxes, np.array([[0.0, 0.0], [15.0, 15.0]]), 2.0, 1.0)
+        self.assertEqual(grown[0].tolist(), [0, 0, 0, 0])  # a ROI with no box keeps none
+        self.assertEqual(grown[1].tolist(), [8, 8, 22, 22])
+        self.assertEqual(cp.grow_boxes(boxes, np.array([[15.0, 15.0]]), 2.0, 1.0).tolist(), boxes.tolist())
+
+
+class LatticeCropTests(unittest.TestCase):
+    """`lattice_crop`: the rectangle the Image tools' Auto crop keeps (half a lattice constant of border)."""
+
+    @staticmethod
+    def centres(rows: int, cols: int, pitch: float, x0: float = 100.0, y0: float = 80.0, tilt_deg: float = 0.0) -> np.ndarray:
+        t = np.deg2rad(tilt_deg)
+        return np.array(
+            [[x0 + pitch * (c * np.cos(t) - r * np.sin(t)), y0 + pitch * (c * np.sin(t) + r * np.cos(t))]
+             for r in range(rows) for c in range(cols)],
+            dtype=float,
+        )
+
+    @staticmethod
+    def boxes(centres: np.ndarray, reach: float) -> np.ndarray:
+        return np.column_stack((centres[:, 0] - reach, centres[:, 1] - reach,
+                                centres[:, 0] + reach, centres[:, 1] + reach)).astype(np.int64)
+
+    def test_margin_is_half_the_pitch_and_the_size_is_a_whole_lattice(self):
+        centres = self.centres(3, 5, 80.0)
+        crop = cp.lattice_crop(centres, (600, 900), boxes=self.boxes(centres, 20.0), pitch=(80.0, 80.0))
+        self.assertEqual((crop.x, crop.y), (60, 40))  # 100 - 40, 80 - 40
+        self.assertEqual((crop.width, crop.height), (5 * 80, 3 * 80))  # cols x pitch, rows x pitch
+        self.assertEqual((crop.cols, crop.rows), (5, 3))
+        self.assertEqual((crop.margin_x, crop.margin_y), (40, 40))
+        self.assertFalse(crop.widened or crop.clamped)
+        self.assertAlmostEqual(crop.kept_fraction, (400 * 240) / (900 * 600))
+
+    def test_the_kept_rectangle_aligns_a_pitch_sized_chunk_grid_from_its_own_corner(self):
+        """Why half a pitch: inside the crop, chunks of one pitch need no grid offset and hold one ROI each."""
+        centres = self.centres(3, 5, 80.0)
+        crop = cp.lattice_crop(centres, (600, 900), boxes=self.boxes(centres, 20.0), pitch=(80.0, 80.0))
+        local = centres - np.array([crop.x, crop.y], dtype=float)  # same pixels, counted from the crop's corner
+        boxes = np.array([[cx - 20, cy - 20, cx + 20, cy + 20] for cx, cy in local], dtype=np.int64)
+        layout = cp.align_grid(boxes, 80, 80)
+        self.assertEqual((layout.offset_x, layout.offset_y), (0, 0))
+        self.assertEqual(cp.score_layout(boxes, layout)["single"].chunks, 1.0)
+        frame = cp.export_frame(layout, boxes, (crop.height, crop.width), lossless=True)
+        self.assertEqual((frame.padded_px, frame.discarded_px), (0, 0))  # nothing padded, nothing trimmed
+        self.assertEqual(frame.chunks_per_plane, 15)  # one chunk per ROI, no more
+
+    def test_a_read_box_reaching_further_than_half_the_pitch_widens_the_margin(self):
+        """The measured case: a 79 px pitch with a read box reaching ~43 px (reference ring plus the chromatic
+        shift). Cropping at half the pitch would cut into the edge ROIs, so the margin grows instead."""
+        centres = self.centres(2, 4, 79.0)
+        crop = cp.lattice_crop(centres, (600, 900), boxes=self.boxes(centres, 43.0), pitch=(79.0, 79.0))
+        self.assertTrue(crop.widened)
+        self.assertEqual((crop.margin_x, crop.margin_y), (43, 43))  # the box's reach, not 39.5
+        self.assertEqual(crop.x, 100 - 43)
+
+    def test_the_reach_is_per_axis_and_only_from_real_boxes(self):
+        """A wide, flat read box (a free-form mask, say) widens the crop sideways only; an empty box is ignored."""
+        centres = self.centres(2, 3, 60.0)
+        boxes = self.boxes(centres, 20.0)
+        boxes[0] = (centres[0, 0] - 50, centres[0, 1] - 10, centres[0, 0] + 50, centres[0, 1] + 10)
+        boxes[-1] = (0, 0, 0, 0)  # a ROI off the image: no box, so no say in the margin
+        crop = cp.lattice_crop(centres, (600, 900), boxes=boxes, pitch=(60.0, 60.0))
+        self.assertEqual((crop.margin_x, crop.margin_y), (50, 30))  # x from the wide box, y from half the pitch
+
+    def test_a_box_count_that_does_not_match_the_centres_is_ignored(self):
+        centres = self.centres(2, 3, 60.0)
+        crop = cp.lattice_crop(centres, (600, 900), boxes=self.boxes(centres, 99.0)[:2], pitch=(60.0, 60.0))
+        self.assertEqual((crop.margin_x, crop.margin_y), (30, 30))
+        self.assertFalse(crop.widened)
+
+    def test_the_image_edge_clamps_the_margin_and_is_reported(self):
+        crop = cp.lattice_crop(self.centres(2, 3, 80.0, x0=10.0, y0=10.0), (200, 400), pitch=(80.0, 80.0))
+        self.assertEqual((crop.x, crop.y), (0, 0))
+        self.assertTrue(crop.clamped)
+        self.assertEqual(crop.width, 170 + 40)  # last centre 170, full margin on the right only
+
+    def test_without_a_given_pitch_it_is_estimated_and_a_rowless_layout_gives_none(self):
+        crop = cp.lattice_crop(self.centres(3, 4, 60.0), (500, 500))
+        self.assertAlmostEqual(crop.pitch_x, 60.0)
+        self.assertEqual((crop.width, crop.height), (240, 180))
+        self.assertIsNone(cp.lattice_crop(np.array([[10.0, 10.0], [70.0, 10.0], [130.0, 10.0], [190.0, 10.0]]), (500, 500)))
+        self.assertIsNone(cp.lattice_crop(np.zeros((0, 2)), (500, 500)))
+        self.assertIsNone(cp.lattice_crop(self.centres(2, 2, 60.0), (500, 500), pitch=(0.0, 60.0)))
+
+    def test_lattice_tilt_is_measured_from_the_centres(self):
+        for tilt in (0.0, 0.3, -1.4, 3.0):
+            with self.subTest(tilt=tilt):
+                centres = self.centres(4, 6, 70.0, tilt_deg=tilt)
+                self.assertAlmostEqual(cp.lattice_tilt_deg(centres), tilt, delta=0.02)
+                # Same answer from the pitch the caller already knows, and from a single row of ROIs.
+                self.assertAlmostEqual(cp.lattice_tilt_deg(centres, pitch=(70.0, 70.0)), tilt, delta=0.02)
+        single_column = self.centres(4, 1, 70.0, tilt_deg=2.0)
+        self.assertAlmostEqual(cp.lattice_tilt_deg(single_column, pitch=(70.0, 70.0)), 2.0, delta=0.02)
+        self.assertIsNone(cp.lattice_tilt_deg(self.centres(1, 1, 70.0), pitch=(70.0, 70.0)))
+        self.assertIsNone(cp.lattice_tilt_deg(self.centres(4, 6, 70.0)[:3]))  # too few for a pitch
+
+
 class CompressionTests(unittest.TestCase):
     def test_ratio_follows_the_multiple_of_8_rule_on_16_bit_data(self):
         rng = np.random.default_rng(0)

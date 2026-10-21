@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -82,6 +83,7 @@ class ArrayActionsTest(unittest.TestCase):
             chromatic=ChromaticModule(),
             load_plane=lambda cube, wavelength: self.image_for().copy(),
             has_dataset=lambda: True,
+            raw_plane_shape=lambda: self.image_for().shape,
             resolve_reference=lambda: self.reference,
             analysis_running=lambda: self.analysis_running,
             ask=self._ask,
@@ -291,6 +293,171 @@ class ArrayActionsTest(unittest.TestCase):
         section._auto_rotate_button.click()
         self.assertEqual(clicks, [True])
         self.assertFalse(section._auto_rotate_button.icon().isNull())
+
+    def test_auto_crop_keeps_half_a_pitch_around_the_rois_and_nothing_else(self) -> None:
+        # 4 x 6 spots, 70 px pitch, centres from (70, 60): half a pitch (35 px) of border on every side.
+        self.run_and_wait(self.controls._run.click)  # the ROIs are a dependency, placed by Detect
+        self.assertEqual(len(self.toolbox.rois()), 24)
+        before = [(r.center_x, r.center_y) for r in self.toolbox.rois()]
+        self.actions.auto_crop()  # synchronous: no image is read, no thread
+        crop = self.geometry.settings().crop
+        self.assertTrue(crop.enabled)
+        self.assertEqual((crop.x, crop.y), (70 - 35, 60 - 35))
+        self.assertEqual((crop.width, crop.height), (6 * 70, 4 * 70))
+        self.assertEqual(self.geometry.settings().rotation_angle_deg, 0.0)  # Auto crop never rotates any more
+        self.assertIn("6 x 4 ROIs at pitch", self.statuses[-1])
+        # One undo step, and the ROIs moved with the crop (RoiGeometrySync is not wired here, so they do not).
+        self.assertEqual(undo_manager.undo_label, "Crop")
+        undo_manager.undo()
+        self.assertFalse(self.geometry.settings().crop.enabled)
+        self.assertEqual([(r.center_x, r.center_y) for r in self.toolbox.rois()], before)
+
+    def test_auto_crop_run_twice_reproduces_the_same_rectangle(self) -> None:
+        """A second run measures the full canvas, not the already-cropped image, so the crop is replaced rather
+        than cut into again - otherwise repeated clicks would eat the image. Shown by moving the ROIs the way
+        the app's `RoiGeometrySync` does on a crop edit (it is not wired into this test)."""
+        self.run_and_wait(self.controls._run.click)
+        self.actions.auto_crop()
+        first = replace(self.geometry.settings().crop)
+        dx, dy = float(first.x), float(first.y)
+        self.toolbox.remap_all(lambda x, y: (x - dx, y - dy), lambda mask: mask)
+        self.actions.auto_crop()
+        second = self.geometry.settings().crop
+        self.assertEqual((second.x, second.y, second.width, second.height),
+                         (first.x, first.y, first.width, first.height))
+
+    def test_auto_crop_keeps_the_edge_rois_inside_when_the_ring_reaches_past_half_the_pitch(self) -> None:
+        """A 40 px pitch with 26 px disks: the ring's outer radius is 0.86 x the diameter = 22 px, past the 20 px
+        half-pitch, so the margin grows rather than cutting measurement pixels off the outermost spots."""
+        self.image, self.truth = _image(rows=3, cols=4, pitch=40.0, diameter=26.0, origin=(90.0, 80.0), shape=(280, 360))
+        self.run_and_wait(self.controls._run.click)
+        self.actions.auto_crop()
+        crop = self.geometry.settings().crop
+        self.assertTrue(crop.enabled)
+        self.assertLess(crop.x, 90 - 20)  # wider than half the pitch
+        self.assertGreater(crop.x + crop.width, 90 + 3 * 40 + 20)
+        self.assertIn("margin is wider than half the pitch", self.statuses[-1])
+
+    def test_auto_crop_without_rois_says_so_and_leaves_the_geometry_alone(self) -> None:
+        self.actions.auto_crop()
+        self.assertTrue(self.statuses[-1].startswith("Auto crop: place the ROIs first"), self.statuses[-1])
+        self.assertFalse(self.geometry.settings().crop.enabled)
+        self.assertFalse(undo_manager.can_undo)
+
+    def test_auto_rotate_ticks_the_level_step_before_any_roi_exists(self) -> None:
+        """2026-10-21 report: "the leveling array is still present even though I run it" - Auto rotate comes first
+        in the maintainer's order of work, when there is no ROI lattice to measure the tilt on."""
+        self.image, self.truth = _image(tilt=0.6, origin=(80.0, 50.0), shape=(340, 500))
+        self.assertIsNone(self.actions.auto_crop_readiness().levelled)
+        self.run_and_wait(self.actions.auto_rotate)
+        levelled = self.actions.auto_crop_readiness()
+        self.assertTrue(levelled.levelled)  # earned by Auto rotate's own measurement, with no ROIs at all
+        self.assertFalse(levelled.rois)
+        self.assertIn("levelled by Auto rotate", levelled.level_note)
+        # It stands only while the rotation is the one Auto rotate set: a later turn of the dial voids it.
+        self.geometry.set_rotation(self.geometry.settings().rotation_angle_deg + 1.0)
+        self.assertIsNone(self.actions.auto_crop_readiness().levelled)
+
+    def test_an_already_level_array_also_ticks_the_level_step(self) -> None:
+        self.run_and_wait(self.actions.auto_rotate)  # a level image: "already level", no rotation change
+        self.assertIn("already level", self.statuses[-1])
+        self.assertTrue(self.actions.auto_crop_readiness().levelled)
+
+    def test_the_measured_lattice_overrules_what_auto_rotate_remembered(self) -> None:
+        """Once the ROIs are there the tick is a measurement again, so a rotation made in between cannot leave a
+        stale tick - and the ROI lattice has the last word."""
+        self.image, self.truth = _image(tilt=3.0, origin=(80.0, 50.0), shape=(340, 500))
+        self.answers = [False]  # decline the "rotate and detect again" offer: the stored array stays tilted
+        self.run_and_wait(self.controls._run.click)
+        self.actions._levelled_at = self.geometry.settings().rotation_angle_deg  # as if Auto rotate had run
+        readiness = self.actions.auto_crop_readiness()
+        self.assertFalse(readiness.levelled)
+        self.assertIn("tilt +3", readiness.level_note)
+
+    def test_auto_crop_readiness_measures_each_dependency(self) -> None:
+        empty = self.actions.auto_crop_readiness()
+        self.assertEqual((empty.levelled, empty.rois, empty.chromatic, empty.ready), (None, False, False, False))
+        self.run_and_wait(self.controls._run.click)
+        level = self.actions.auto_crop_readiness()
+        self.assertTrue(level.levelled)  # a level array: the tick is earned, not assumed
+        self.assertAlmostEqual(level.tilt_deg, 0.0, delta=0.05)
+        self.assertEqual((level.rois, level.chromatic, level.ready), (True, False, False))
+        # A tilted array that the user chose not to level: measured from the ROI centres, so the tick is withheld.
+        self.toolbox.delete_rois(tuple(r.area_roi_id for r in self.toolbox.rois()))
+        self.image, self.truth = _image(tilt=3.0, origin=(80.0, 50.0), shape=(340, 500))
+        self.answers = [False]
+        self.run_and_wait(self.controls._run.click)
+        tilted = self.actions.auto_crop_readiness()
+        self.assertFalse(tilted.levelled)
+        self.assertAlmostEqual(tilted.tilt_deg, 3.0, delta=0.2)
+
+    def test_readiness_never_walks_the_fitted_chromatic_models(self) -> None:
+        """2026-10-21 regression: the readiness check unioned every ROI's read box over every fitted chromatic
+        affine. In the maintainer's 314-cube session (8478 fitted models) that cost ~300 ms **per sample of a ROI
+        drag** - measured 1.3 s at 8478 models, 277 ms at 3000. It only ever needed the ROI centres."""
+        self.run_and_wait(self.controls._run.click)
+        chromatic = self.actions._chromatic
+        walked: list[int] = []
+        original = chromatic.models
+        chromatic.models = lambda: (walked.append(1), original())[1]
+        self.addCleanup(lambda: setattr(chromatic, "models", original))
+        self.assertTrue(self.actions.auto_crop_readiness().rois)
+        self.toolbox.translate_rois(tuple(r.area_roi_id for r in self.toolbox.rois()), 1.0, 0.0)
+        _pump(timeout=0.4)  # let the debounced readiness check run
+        self.assertEqual(walked, [], "the readiness check must not build the fitted-model list")
+
+    def test_a_burst_of_roi_edits_recomputes_the_checklist_once(self) -> None:
+        """A drag emits `geometry_changed` per mouse step; the checklist is only a button colour and a tooltip."""
+        self.run_and_wait(self.controls._run.click)
+        ids = tuple(r.area_roi_id for r in self.toolbox.rois())
+        emitted: list[object] = []
+        self.actions.auto_crop_readiness_changed.connect(emitted.append)
+        for _ in range(20):
+            self.toolbox.translate_rois(ids, 1.0, 0.0)
+        self.assertEqual(emitted, [])  # nothing yet: it waits for the drag to go quiet
+        _pump(timeout=0.5)
+        self.assertEqual(len(emitted), 1)
+
+    def test_auto_crop_button_crops_when_ready_and_guides_when_not(self) -> None:
+        from lspr_imaging_app.image_tools import ActiveToolModule
+        from lspr_imaging_app.panels.image.transforms_settings import TransformsSection
+
+        section = TransformsSection(self.geometry, ActiveToolModule())
+        self.addCleanup(section.deleteLater)
+        crops: list[bool] = []
+        rotates: list[bool] = []
+        navigations: list[str] = []
+        section.auto_crop_requested.connect(lambda: crops.append(True))
+        section.auto_rotate_requested.connect(lambda: rotates.append(True))
+        section.navigate_requested.connect(navigations.append)
+
+        # Nothing done yet: amber, all three steps offered, and a click guides instead of cropping.
+        section.set_auto_crop_state(levelled=None, rois=False, chromatic=False,
+                                    level_note="run Auto rotate, or place the ROIs to measure it")
+        self.assertEqual(len(section._auto_crop_menu.actions()), 3)
+        self.assertIn("✗ Level the array", section._auto_crop_button.toolTip())
+        self.assertIn("run Auto rotate, or place the ROIs", section._auto_crop_button.toolTip())
+        section._auto_crop_button.click()
+        self.addCleanup(section._auto_crop_menu.close)
+        self.assertEqual(crops, [])
+        rows = section._auto_crop_menu.actions()
+        rows[0].trigger()
+        self.assertEqual(rotates, [True])  # "Level the array" runs Auto rotate here
+        rows[1].trigger()
+        rows[2].trigger()
+        self.assertEqual(navigations, ["rois", "chromatic"])  # the other two are a trip to another tab
+
+        # Only the chromatic correction left: one row, and the tilt is named.
+        section.set_auto_crop_state(levelled=True, rois=True, chromatic=False, level_note="tilt +0.03°")
+        self.assertEqual(len(section._auto_crop_menu.actions()), 1)
+        self.assertIn("✓ Level the array - tilt +0.03", section._auto_crop_button.toolTip())
+
+        # All three met: green, no menu rows, and the click crops.
+        section.set_auto_crop_state(levelled=True, rois=True, chromatic=True, level_note="tilt +0.03°")
+        self.assertEqual(section._auto_crop_menu.actions(), [])
+        self.assertIn("Click to crop.", section._auto_crop_button.toolTip())
+        section._auto_crop_button.click()
+        self.assertEqual(crops, [True])
 
     def test_no_array_in_the_image_is_reported_not_stored(self) -> None:
         self.image = np.full((200, 200), 500.0, dtype=np.float32)

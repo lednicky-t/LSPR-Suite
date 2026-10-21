@@ -61,9 +61,12 @@ try:
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.roi.model import RoiMask
     from lspr_imaging_app.selection import SelectionModule
+    from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.storage.session import (
         SESSION_SCHEMA_NAME,
+        SessionWriter,
         load_session,
+        prepare_session,
         save_session,
         session_path,
     )
@@ -383,6 +386,87 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             load_session(future)
+
+    # -- the first save after a load ------------------------------------
+
+    def test_a_load_reports_which_version_each_mask_came_from(self) -> None:
+        self._save()
+        state = load_session(self.root)
+        self.assertEqual(len(state.mask_versions), len(state.mask_changes))
+        for change in state.mask_changes:
+            self.assertIn(change, state.mask_versions)
+
+    def test_a_seeded_writer_reuses_the_loaded_masks_instead_of_reading_them_back(self) -> None:
+        """2026-10-21: the first save after opening a session read every mask PNG back to work out which version
+        it already was - 411 masks cost 11 s on the maintainer's machine, blocking nothing but holding the GIL
+        the whole time. The versions were in the JSON the load had just read."""
+        self._save()
+        state = load_session(self.root)
+        writer = SessionWriter()
+        writer.seed(self.root, self.naming, state.mask_versions)
+        writer.write(self.root, prepare_session(state, self.naming))
+        stats = writer.last_stats
+        self.assertEqual((stats.verified, stats.written), (0, 0), "nothing should be read back or rewritten")
+        self.assertEqual(stats.reused, stats.masks)
+
+        # Without the seed, the same save reads every mask back - the behaviour the fix replaces.
+        cold = SessionWriter()
+        cold.write(self.root, prepare_session(state, self.naming))
+        self.assertEqual(cold.last_stats.verified, cold.last_stats.masks)
+
+    def test_a_seeded_writer_still_notices_an_edited_mask_and_a_deleted_file(self) -> None:
+        """The seed is a memory of what is on disk, not a licence to skip checking: an edited mask still gets a
+        new version, and a file that has gone missing is written again."""
+        self._save()
+        state = load_session(self.root)
+        writer = SessionWriter()
+        writer.seed(self.root, self.naming, state.mask_versions)
+
+        edited = list(state.mask_changes)
+        plane = edited[0].mask.copy()
+        plane[1:4, 1:4] = ~plane[1:4, 1:4]
+        edited[0] = MaskChange(frame=edited[0].frame, scope=edited[0].scope, mask=plane)
+        writer.write(self.root, prepare_session(replace(state, mask_changes=tuple(edited)), self.naming))
+        self.assertEqual(writer.last_stats.written, 1)
+        self.assertEqual(writer.last_stats.reused, writer.last_stats.masks - 1)
+
+        writer.seed(self.root, self.naming, state.mask_versions)
+        missing = sorted((self.root / "session" / "masks").glob("*.png"))[0]
+        missing.unlink()
+        writer.write(self.root, prepare_session(state, self.naming))
+        self.assertEqual(writer.last_stats.written, 1, "a mask whose file is gone must be written again")
+        # Whatever version the JSON now names for that change really exists on disk.
+        payload = json.loads(session_path(self.root).read_text(encoding="utf-8"))
+        for entry in payload["mask"]["changes"]:
+            tag = "persi" if entry["scope"] == "persistent" else "indiv"
+            frame = self.naming.frame_tag(entry["cube_index"], entry["wavelength_nm"])
+            self.assertTrue((self.root / "session" / "masks" / f"mask_{frame}_{tag}_v{entry['version']}.png").is_file())
+
+    def test_many_masks_keep_their_order_and_a_hole_is_skipped(self) -> None:
+        """The mask PNGs are decoded on a thread pool (2026-10-21: 411 of them cost 4 s of frozen window on the
+        GUI thread, now ~0.7 s). The changes must still come back in the file's order, and a missing file in the
+        middle must still be the only one dropped."""
+        for cube in range(2):
+            for wavelength in (500.0, 550.0, 600.0, 650.0, 700.0):
+                plane = np.zeros((8, 10), dtype=bool)
+                plane[cube, int(wavelength) % 10] = True  # a different mask for every frame
+                self.mask.set_mask_change((cube, wavelength), "individual", plane)
+        self._save()
+
+        state = load_session(self.root)
+        expected = [change.frame for change in self.mask.mask_changes()]
+        self.assertEqual([change.frame for change in state.mask_changes], expected)
+        self.assertGreater(len(expected), 8)
+
+        doomed = state.mask_changes[len(state.mask_changes) // 2]
+        tag = "indiv" if doomed.scope == "individual" else "persi"
+        frame = self.naming.frame_tag(doomed.frame[0], doomed.frame[1])
+        removed = next((self.root / "session" / "masks").glob(f"mask_{frame}_{tag}_v*.png"))
+        removed.unlink()
+
+        after = load_session(self.root)
+        self.assertEqual([c.frame for c in after.mask_changes], [f for f in expected if f != doomed.frame])
+        self.assertEqual(len(after.mask_versions), len(after.mask_changes))
 
     def test_a_missing_mask_png_drops_that_change_and_keeps_the_rest(self) -> None:
         payload = json.loads(self._save().read_text(encoding="utf-8"))

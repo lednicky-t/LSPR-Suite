@@ -284,6 +284,65 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(len(sample_x), 2 * _CIRCLE_POINTS + 1)
         self.assertEqual(len(reference_x), 4 * _CIRCLE_POINTS + 3)
 
+    def _count_renders(self) -> list:
+        """Every render request the panel submits from here on (the real submit still runs)."""
+        submitted: list = []
+        real = self.panel._renderer.submit
+        self.panel._renderer.submit = lambda request: (submitted.append(request), real(request))[1]
+        self.addCleanup(lambda: setattr(self.panel._renderer, "submit", real))
+        return submitted
+
+    def test_a_roi_move_redraws_the_overlay_and_renders_nothing(self) -> None:
+        """2026-10-21: a ROI edit used to re-render the whole frame (50-180 ms of preprocessing in the
+        maintainer's session) although a ROI cannot change a pixel unless it feeds the background estimate."""
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        _pump()
+        self.assertFalse(self.panel._rois_change_pixels())  # flattening off: the ROIs feed nothing
+        submitted = self._count_renders()
+        drawn: list = []
+        real_draw = self.panel._draw_roi_overlay
+        self.panel._draw_roi_overlay = lambda **kw: (drawn.append(kw), real_draw(**kw))[1]
+        self.addCleanup(lambda: setattr(self.panel, "_draw_roi_overlay", real_draw))
+
+        self.roi_toolbox.move_roi(roi_id, 45.0, 32.0)
+        _pump()
+        self.assertEqual(submitted, [], "a ROI move must not re-render the frame")
+        self.assertTrue(drawn, "the ROI overlay must still be redrawn")
+        # The overlay really followed the ROI: its circle is centred on the new position.
+        sample_x, _sample_y = self.panel._roi_overlay.sample_circles.outline_xy()
+        self.assertAlmostEqual(float(np.nanmean(sample_x)), 45.0, delta=0.5)
+
+    def test_a_roi_move_still_renders_when_the_background_estimate_excludes_the_rois(self) -> None:
+        """The one case where a ROI really does change the pixels: it is left out of the background estimate."""
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.background.restore_settings(replace(
+            self.background.settings(), flatten_background_enabled=True, flatten_background_exclude_area_rois=True,
+        ))
+        _pump()
+        self.assertTrue(self.panel._rois_change_pixels())
+        submitted = self._count_renders()
+        self.roi_toolbox.move_roi(roi_id, 45.0, 32.0)
+        _pump()
+        self.assertEqual(len(submitted), 1, "the background estimate depends on this ROI, so the pixels change")
+
+    def test_changing_which_rois_are_selected_never_renders(self) -> None:
+        """The exclusion uses every ROI, never the selection, so a selection change cannot change a pixel - even
+        with the background estimate switched on."""
+        self._load()
+        roi_id = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
+        self.background.restore_settings(replace(
+            self.background.settings(), flatten_background_enabled=True, flatten_background_exclude_area_rois=True,
+        ))
+        _pump()
+        submitted = self._count_renders()
+        self.selection.set_roi_selection({roi_id})
+        _pump()
+        self.selection.set_roi_selection(set())
+        _pump()
+        self.assertEqual(submitted, [])
+
     def test_selection_adds_a_highlight_border_without_removing_the_roi_from_its_curve(self) -> None:
         self._load()
         roi_a = self.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=10.0)
