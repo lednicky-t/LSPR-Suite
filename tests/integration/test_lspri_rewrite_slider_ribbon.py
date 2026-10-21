@@ -316,6 +316,8 @@ class SliderRibbonTest(unittest.TestCase):
         self.assertAlmostEqual(show.interval_seconds(), 0.5)
         show.set_settings(SlideshowSettings(speed=10))
         self.assertAlmostEqual(show.interval_seconds(), 0.05)
+        show.set_settings(SlideshowSettings(speed=20))
+        self.assertAlmostEqual(show.interval_seconds(), 0.025)
 
     def test_play_steps_through_frames_and_stops_at_the_end(self) -> None:
         show = self.panel._slideshow
@@ -736,6 +738,40 @@ class SliderRibbonTest(unittest.TestCase):
         self.assertTrue(requests, "no redraw after Play stopped")
         self.assertFalse(requests[-1].fast_rotation)
 
+    def test_play_without_rotation_still_redraws_the_stopped_frame_exactly(self) -> None:
+        """The fast grey picture (2026-10-21) is used for any frame with no-data pixels, so the stopped frame is
+        requested again with the exact one even when no rotation is set."""
+        requests = []
+        submit = self.panel._renderer.submit
+        self.panel._renderer.submit = lambda request: (requests.append(request), submit(request))[1]
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
+        show = self.panel._slideshow
+        show.play()
+        show._advance()
+        _pump()
+        self.assertTrue(requests and all(r.fast_rotation for r in requests))
+        requests.clear()
+        show.stop()
+        _pump()
+        self.assertTrue(requests, "no redraw after Play stopped")
+        self.assertFalse(requests[-1].fast_rotation)
+
+    def test_a_speed_change_while_playing_moves_the_target_fps_of_the_stats(self) -> None:
+        """The status bar's "of N fps" was set when Play started and stayed there after a speed click."""
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
+        show = self.panel._slideshow
+        stats = self.panel._playback_stats
+        show.play()
+        self.assertTrue(stats.active)
+        before = stats._target_interval_s
+        self.assertAlmostEqual(before, show.interval_seconds())
+        self.panel._slider_ribbon._speed_button.click()  # next speed
+        self.assertAlmostEqual(stats._target_interval_s, show.interval_seconds())
+        self.assertLess(stats._target_interval_s, before)
+        show.stop()
+
     def test_play_button_toggles_and_shows_pause(self) -> None:
         ribbon = self.panel._slider_ribbon
         self.selection.set_cube(0)
@@ -773,10 +809,10 @@ class SliderRibbonTest(unittest.TestCase):
         ribbon = self.panel._slider_ribbon
         button = ribbon._speed_button
         shown = [button.text()]
-        for _ in range(5):
+        for _ in range(6):
             button.click()
             shown.append(button.text())
-        self.assertEqual(shown, ["1x", "2x", "5x", "10x", "1x", "2x"])  # from the fastest back to 1x
+        self.assertEqual(shown, ["1x", "2x", "5x", "10x", "20x", "1x", "2x"])  # from the fastest back to 1x
         self.assertEqual(self.panel._slideshow.settings().speed, 2)
 
         def wheel(delta: int) -> None:
@@ -794,7 +830,7 @@ class SliderRibbonTest(unittest.TestCase):
         self.assertEqual(button.text(), "10x")
         wheel(120)
         wheel(120)
-        self.assertEqual(button.text(), "10x")  # stops at the highest, it does not wrap
+        self.assertEqual(button.text(), "20x")  # stops at the highest, it does not wrap
         wheel(-120 * 10)
         self.assertEqual(button.text(), "1x")  # stops at the lowest
         wheel(-120)

@@ -19,7 +19,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.panels.image.display_picture import LEVEL_SAMPLES, prepare_frame_display
+    from lspr_imaging_app.panels.image.display_picture import LEVEL_SAMPLES, MAX_FAST_GREY_DIFFERENCE, prepare_frame_display
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -194,3 +194,43 @@ class FixedRangeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FastPictureTest(unittest.TestCase):
+    """`fast=True` (the picture while Play runs, 2026-10-21): one rounding pass, at most one grey level from the exact one."""
+
+    def _pair(self, frame, fixed=None):
+        return prepare_frame_display(frame, fixed), prepare_frame_display(frame, fixed, fast=True)
+
+    def test_everything_but_the_grey_values_is_identical(self) -> None:
+        for fixed in (None, (1500.0, 2600.0)):
+            exact, fast = self._pair(_with_corner_nan(_frame((400, 520))), fixed)
+            self.assertEqual(fast.data_range, exact.data_range)
+            self.assertEqual(fast.auto_levels, exact.auto_levels)
+            np.testing.assert_array_equal(fast.levels, exact.levels)
+            np.testing.assert_array_equal(fast.picture[..., 3], exact.picture[..., 3])  # alpha: NaN = transparent
+
+    def test_grey_is_within_one_level_and_nearly_all_pixels_are_equal(self) -> None:
+        frame = _with_corner_nan(_frame((800, 1276), seed=9))
+        frame[100, 100:140] = np.linspace(-5e4, 5e4, 40)  # far outside the levels: saturates both ways
+        for fixed in (None, (1500.0, 2600.0)):
+            exact, fast = self._pair(frame, fixed)
+            difference = np.abs(exact.picture.astype(np.int16) - fast.picture.astype(np.int16))
+            self.assertLessEqual(int(difference.max()), MAX_FAST_GREY_DIFFERENCE)
+            self.assertLess(float((difference[..., 0] > 0).mean()), 1e-3)  # measured 2e-5 on this kind of frame
+
+    def test_nan_pixels_stay_black_and_transparent(self) -> None:
+        frame = _with_corner_nan(_frame())
+        picture = prepare_frame_display(frame, (1500.0, 2600.0), fast=True).picture
+        corner = picture[:12, :20]
+        self.assertTrue(np.all(corner == 0), "NaN pixels must be (0, 0, 0, 0)")
+
+    def test_the_default_is_still_the_exact_truncating_picture(self) -> None:
+        frame = _with_corner_nan(_frame())
+        np.testing.assert_array_equal(
+            prepare_frame_display(frame, (1500.0, 2600.0)).picture,
+            prepare_frame_display(frame, (1500.0, 2600.0), fast=False).picture,
+        )
+
+    def test_a_frame_without_nan_still_gets_no_picture(self) -> None:
+        self.assertIsNone(prepare_frame_display(_frame(), fast=True).picture)

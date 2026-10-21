@@ -333,6 +333,48 @@ class PlaybackStatsTest(unittest.TestCase):
         for name, value in expected.items():
             self.assertAlmostEqual(fields[name], value, delta=0.2, msg=name)
 
+    def test_the_picture_time_is_its_own_stage_and_not_part_of_the_queue(self) -> None:
+        """Until 2026-10-21 the grey picture built on the render thread was not subtracted and showed up as queue time."""
+        stats = PlaybackStats()
+        stats.start(0.9, target_interval_s=0.1)
+        stats.note_step(1.000, handlers_s=0.0)
+        stats.note_redraw(1, start=1.0, end=1.001)
+        stats.note_rendered(1, arrived=1.101, done=1.105, load_s=0.002, prep_s=0.006, picture_s=0.040, listeners_s=0.0)
+        fields = stats.total_fields()
+        # 100 ms from the request leaving to the result arriving, minus load 2, prep 6 and picture 40.
+        self.assertEqual((fields["pic_ms"], fields["queue_ms"]), (40.0, 52.0))
+
+    @staticmethod
+    def _one_frame(stats: PlaybackStats, serial: int, done: float):
+        """One frame whose trip ends at *done*; returns the status line if a one-second window closed."""
+        stats.note_step(done - 0.05, 0.0)
+        stats.note_redraw(serial, done - 0.05, done - 0.05)
+        return stats.note_rendered(serial, done - 0.01, done, load_s=0.0, prep_s=0.0, listeners_s=0.0)
+
+    def test_the_target_follows_a_speed_change_while_playing(self) -> None:
+        """The "of N fps" in the status bar was fixed when Play started and ignored a later speed change."""
+        stats = PlaybackStats()
+        stats.start(0.0, target_interval_s=0.1)  # 10 fps asked for
+        self.assertIn("of 10.0 fps", self._one_frame(stats, 1, 1.0))  # the first window closes
+        stats.set_target(1.0, target_interval_s=0.05)  # speed doubled: 20 fps asked for
+        self.assertIn("of 20.0 fps", self._one_frame(stats, 2, 2.0))  # the next window is wholly at the new speed
+
+    def test_a_window_in_which_the_speed_changed_shows_the_time_weighted_target(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.0, target_interval_s=0.1)
+        stats.set_target(0.5, target_interval_s=0.05)  # half a second at 10 fps (5 frames), half at 20 (10 frames)
+        self.assertIn("of 15.0 fps", self._one_frame(stats, 1, 1.0))
+
+    def test_the_final_summary_uses_the_time_weighted_target_of_the_whole_run(self) -> None:
+        stats = PlaybackStats()
+        stats.start(0.0, target_interval_s=0.1)
+        stats.note_step(0.5, 0.0)
+        stats.note_redraw(1, 0.5, 0.5)
+        stats.note_rendered(1, 0.6, 0.61, load_s=0.0, prep_s=0.0, listeners_s=0.0)
+        stats.set_target(1.0, target_interval_s=0.05)
+        stats.stop()
+        self.assertIn("of 15.0 fps", stats.summary(2.0))  # 1 s at 10 fps, 1 s at 20 fps
+
     def test_detail_stages_are_reported_per_shown_frame_biggest_first(self) -> None:
         stats = PlaybackStats()
         stats.note_detail("ignored_while_inactive", 1.0)
