@@ -67,6 +67,14 @@ def _pump(seconds: float = 0.5) -> None:
         time.sleep(0.01)
 
 
+def _pump_until(condition, timeout: float = 15.0) -> None:
+    """Pump events until `condition()` holds. A fixed pause is not enough on a slow CI runner."""
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        _APP.processEvents()
+        time.sleep(0.01)
+
+
 def _write_dataset(root: Path) -> ImageDataset:
     frame = np.full(_SHAPE, 150.0, dtype=np.float32)
     frame[10:20, 10:20] = 3000.0  # bright block, left half
@@ -100,6 +108,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         self.image_panel.resize(900, 600)
         self.image_panel.show()
         self.dataset.load_dataset(self.dataset_model)
+        _pump_until(lambda: self.image_panel._area_tool._image_shape is not None)  # first picture drawn
         _pump()
 
     def tearDown(self) -> None:

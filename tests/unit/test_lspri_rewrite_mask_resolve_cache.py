@@ -147,7 +147,10 @@ class RenderThreadMaskUseTests(unittest.TestCase):
 
     def test_render_resolves_the_mask_only_when_it_is_read(self) -> None:
         plane = np.full((40, 50), 1000.0, dtype=np.float32)
-        loader = SimpleNamespace(_load_plane_after_read_ahead=lambda cube, wavelength: plane)  # what `_render_inner` calls
+        loader = SimpleNamespace(  # what `_render_inner` calls on `self`
+            _load_plane_after_read_ahead=lambda cube, wavelength: plane,
+            _frame_caches=lambda request, raw_shape: {},  # the Play caches are not what this test is about
+        )
         for flatten, exclude, expected_calls in ((False, True, 0), (True, False, 0), (True, True, 1)):
             with self.subTest(flatten=flatten, exclude=exclude):
                 request = self._request(flatten_background_enabled=flatten, flatten_background_exclude_mask=exclude)
