@@ -33,7 +33,7 @@ try:
     from lspr_imaging_app.image_tools.chromatic.warp import warp_boolean_mask_affine
     from lspr_imaging_app.image_tools.mask.module import MaskModule
     from lspr_imaging_app.image_tools.mask.transient_detection import KIND_GLOBAL, KIND_PARTICLE, ContourMask, TransientEvent
-    from lspr_imaging_app.image_tools.mask.transient_events_state import EventRecord
+    from lspr_imaging_app.image_tools.mask.mask_pointers_state import MaskPointer
     from lspr_imaging_app.image_tools.mask.transient_masks import BaseMask
     from lspr_imaging_app.image_tools.mask_auto_task import TASK_ID, AutoMaskSummary, MaskAutoTask
     from lspr_imaging_app.panels.mask_edit_common import plan_mask_edit_base
@@ -53,13 +53,13 @@ def _disk(radius: int = 5) -> np.ndarray:
     return (x**2 + y**2) <= radius**2
 
 
-def _record(event_id: int, frame, x0: int = 60, y0: int = 70, kind: str = KIND_PARTICLE, dismissed: bool = False) -> EventRecord:
+def _record(event_id: int, frame, x0: int = 60, y0: int = 70, kind: str = KIND_PARTICLE, dismissed: bool = False) -> MaskPointer:
     mask = _disk()
     event = TransientEvent(
         frame=frame, kind=kind, area_px=int(mask.sum()), centroid_xy=(x0 + 5.0, y0 + 5.0), bbox_xyxy=(x0, y0, x0 + 11, y0 + 11),
         depth=0.8, z=100.0, contour=ContourMask(x0=x0, y0=y0, mask=mask) if kind == KIND_PARTICLE else None,
     )
-    return EventRecord(id=event_id, event=event, dismissed=dismissed)
+    return MaskPointer(id=event_id, event=event, dismissed=dismissed)
 
 
 def _pump(until, seconds: float = 20.0) -> None:

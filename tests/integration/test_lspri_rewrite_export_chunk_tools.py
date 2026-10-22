@@ -185,6 +185,62 @@ class ExportChunkToolsTests(unittest.TestCase):
             self.section._export_button.click()
         self.assertIsNone(calls[0][1]["frame"])
 
+    # -- the session goes with the export (2026-10-22, storage/session_carry.py) --------------------------------
+
+    class _CarryRecorder:
+        def __init__(self, busy: bool = False) -> None:
+            self.prepared, self.discarded, self._busy = [], 0, busy
+
+        def prepare(self, transform) -> None:
+            if self._busy:
+                raise RuntimeError("The previous session carry is still running.")
+            self.prepared.append(transform)
+
+        def discard(self) -> None:
+            self.discarded += 1
+
+    def _click_export(self, **mock_kwargs) -> list:
+        calls = []
+        mock_kwargs.setdefault("side_effect", lambda d, **kw: calls.append((d, kw)))
+        with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=self._tmp.name), \
+                mock.patch.object(self.dataset, "export_to_ome_zarr", **mock_kwargs):
+            self.section._export_button.click()
+        return calls
+
+    def test_export_asks_the_session_carry_with_the_exports_own_transform(self) -> None:
+        self.geometry.set_rotation(1.4)
+        recorder = self.section._session_carry = self._CarryRecorder()
+        calls = self._click_export()
+        self.assertEqual(len(recorder.prepared), 1)
+        transform = recorder.prepared[0]
+        self.assertEqual(transform.raw_shape, (H, W))
+        self.assertEqual(transform.geometry.rotation_angle_deg, 1.4)
+        self.assertEqual(transform.frame, calls[0][1]["frame"])  # the very frame the export is given
+        self.assertTrue(self.section._carry_button.isChecked())  # on by default
+
+    def test_session_switched_off_prepares_nothing(self) -> None:
+        recorder = self.section._session_carry = self._CarryRecorder()
+        self.section._carry_button.setChecked(False)
+        calls = self._click_export()
+        self.assertEqual((len(calls), recorder.prepared), (1, []))
+
+    def test_a_refused_export_drops_the_prepared_session(self) -> None:
+        recorder = self.section._session_carry = self._CarryRecorder()
+        self._click_export(side_effect=RuntimeError("An export is already running."))
+        self.assertEqual((len(recorder.prepared), recorder.discarded), (1, 1))
+
+    def test_a_carry_still_writing_does_not_stop_the_export(self) -> None:
+        recorder = self.section._session_carry = self._CarryRecorder(busy=True)
+        reports = []
+        self.section._status = reports.append
+        calls = self._click_export()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(recorder.discarded, 0)
+        self.assertTrue(any("Session not carried" in r for r in reports))
+
+    def test_the_session_button_is_off_the_table_without_a_carry_task(self) -> None:
+        self.assertFalse(self.section._carry_button.isEnabled())  # this tab was built without one
+
     def test_export_button_turns_into_cancel_while_running(self) -> None:
         with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=self._tmp.name), \
                 mock.patch.object(self.dataset, "export_to_ome_zarr"):
@@ -213,6 +269,39 @@ class ExportChunkToolsTests(unittest.TestCase):
         self.assertTrue(progress)
         self.assertTrue(all(0.0 <= fraction <= 1.0 for _id, _label, fraction, _msg in progress))
         self.assertEqual(finished[0][:2], ("zarr_export", "completed"), finished[0])
+
+    def test_the_export_reports_what_it_did_before_it_reports_finished(self) -> None:
+        events, finished = [], []
+        self.dataset.export_stats_ready.connect(lambda stats: events.append(("stats", stats)))
+        self.dataset.export_finished.connect(lambda path: events.append(("finished", path)))
+        self.dataset.task_finished.connect(lambda *args: finished.append(args))
+        self.dataset.export_to_ome_zarr(Path(self._tmp.name) / "stats.zarr", chunk_size_px=64)
+        self.assertTrue(_pump(lambda: len(events) == 2 and bool(finished)))
+        self.assertEqual([name for name, _ in events], ["stats", "finished"])  # the numbers first
+        stats = events[0][1]
+        self.assertEqual(stats.planes, 4)  # 2 cubes x 2 wavelengths
+        self.assertEqual(stats.stored_plane_bytes, H * W * 2)  # uint16
+        self.assertGreater(stats.bytes_written, 0)
+        self.assertGreater(stats.seconds, 0.0)
+        self.assertGreaterEqual(stats.workers, 1)
+        self.assertEqual(stats.uncompressed_bytes, 4 * H * W * 2)
+        self.assertIn("Export took", stats.describe())
+        self.assertIn("images/s", finished[0][2])  # the status bar's message carries the time and the rate
+
+    def test_a_skipped_plane_is_not_counted_as_written(self) -> None:
+        from lspr_imaging_app.domain.exclusions import ImageExclusionRule
+
+        stats, done = [], []
+        self.dataset.export_stats_ready.connect(stats.append)
+        self.dataset.export_finished.connect(done.append)
+        first_cube = self.dataset.spectral_cubes()[0]
+        self.dataset.export_to_ome_zarr(
+            Path(self._tmp.name) / "skip.zarr", chunk_size_px=64, skip_excluded=True,
+            excluded_rules=[ImageExclusionRule(spectral_cube_index=first_cube, wavelength_nm=None)],  # a whole cube: 2 of the 4 planes
+        )
+        self.assertTrue(_pump(lambda: bool(done)))
+        self.assertEqual(stats[0].planes, 2)
+        self.assertEqual(stats[0].uncompressed_bytes, 2 * H * W * 2)
 
     def test_rotate_crop_is_always_applied_while_the_image_tools_are_on(self) -> None:
         self.geometry.set_rotation(10.0)

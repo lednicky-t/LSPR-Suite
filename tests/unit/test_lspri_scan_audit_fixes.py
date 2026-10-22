@@ -41,7 +41,7 @@ try:
     from lspr_imaging_app.image_tools.mask.export import existing_clashes
     from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.image_tools.mask.module import MaskModule
-    from lspr_imaging_app.image_tools.mask.transient_events_state import EventRecord, TransientEventsState
+    from lspr_imaging_app.image_tools.mask.mask_pointers_state import MaskPointer, MaskPointersState
     from lspr_imaging_app.image_tools.mask.transient_masks import BaseDecoder, BaseMask, frame_mask, materialize_base
     from lspr_imaging_app.storage.session import SessionState, SessionWriter, prepare_session
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -271,18 +271,18 @@ class SessionWriterEventsTests(unittest.TestCase):
             frame=(3, 500.0), kind=td.KIND_PARTICLE, area_px=20, centroid_xy=(5.0, 4.0), bbox_xyxy=(3, 2, 8, 6),
             depth=0.8, z=100.0, contour=td.ContourMask(x0=3, y0=2, mask=mask[2:6, 3:8].copy()),
         )
-        state = SessionState(transient_events=TransientEventsState(records=(EventRecord(id=1, event=event),)))
+        state = SessionState(mask_pointers=MaskPointersState(records=(MaskPointer(id=1, event=event),)))
         prepared = prepare_session(state, FrameNamingScheme(cube_digits=3, wavelength_decimals=0))
-        self.assertIsNone(prepared.payload["transient_events"], "nothing is encoded on the calling (GUI) thread")
-        self.assertEqual(prepared.transient_events, state.transient_events)
+        self.assertIsNone(prepared.payload["mask_pointers"], "nothing is encoded on the calling (GUI) thread")
+        self.assertEqual(prepared.mask_pointers, state.mask_pointers)
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             path = SessionWriter().write(Path(tmp), prepared)
             saved = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(len(saved["transient_events"]["events"]), 1)
-        self.assertEqual(saved["transient_events"]["events"][0]["cube"], 3)
+        self.assertEqual(len(saved["mask_pointers"]["events"]), 1)
+        self.assertEqual(saved["mask_pointers"]["events"][0]["cube"], 3)
         keys = list(saved)
-        self.assertLess(keys.index("frames"), keys.index("transient_events"))
-        self.assertLess(keys.index("transient_events"), keys.index("selection"))
+        self.assertLess(keys.index("frames"), keys.index("mask_pointers"))
+        self.assertLess(keys.index("mask_pointers"), keys.index("selection"))
 
 
 # -- B1: the pieces Auto mask needs from a worker ----------------------------------------------------------------------------

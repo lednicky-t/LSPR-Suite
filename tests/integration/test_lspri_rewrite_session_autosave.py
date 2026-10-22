@@ -51,7 +51,7 @@ try:
         MaskModule,
     )
     from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, TransientEvent
-    from lspr_imaging_app.image_tools.mask.transient_events import TransientEventsModule
+    from lspr_imaging_app.image_tools.mask.mask_pointers import MaskPointersModule
     from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import SelectionModule
@@ -441,7 +441,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.roi_toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.analysis_settings = AnalysisSettingsModule()
-        self.events = TransientEventsModule()
+        self.events = MaskPointersModule()
         self.coordinator = SessionCoordinator()
         self.autosave = _build_session_autosave(
             self.dataset, self.geometry, self.mask, self.chromatic,
@@ -548,9 +548,9 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.autosave.flush()
         first = self.coordinator.active_session_id()
         self.coordinator.create_new()
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
         self.coordinator.switch_to(first)
-        self.assertTrue(self.events.has_events())
+        self.assertTrue(self.events.has_pointers())
 
     def test_an_unreadable_session_disables_saving_rather_than_overwriting_it(self) -> None:
         """The destructive case. A session file this build cannot parse

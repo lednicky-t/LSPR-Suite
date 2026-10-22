@@ -267,7 +267,7 @@ class MaskRowsTest(unittest.TestCase):
         from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, TransientEvent
         from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
 
-        events = self.panel._transient_events
+        events = self.panel._mask_pointers
         found = [
             TransientEvent(frame=frame, kind=KIND_PARTICLE, area_px=90, centroid_xy=(10.0, 8.0), bbox_xyxy=(5, 4, 15, 12), depth=0.8, z=120.0)
             for frame in frames
@@ -339,12 +339,12 @@ class MaskRowsTest(unittest.TestCase):
 
     def test_a_dismissed_pointer_is_not_a_place_to_go(self) -> None:
         records = self.add_pointers((3, 500.0), (3, 600.0), (6, 550.0))
-        self.panel._transient_events.dismiss([r.id for r in records if r.event.frame[1] == 600.0 or r.event.frame[0] == 6])
+        self.panel._mask_pointers.dismiss([r.id for r in records if r.event.frame[1] == 600.0 or r.event.frame[0] == 6])
         _pump(0.3)
         self.go_to(3, 500.0)
         self.wheel(self.wavelength_strip, 120)
         self.assertEqual(self.frame(), (3, 500.0))  # the 600 nm pointer and the cube 6 one are dismissed (faint): nowhere to go
-        self.panel._transient_events.dismiss([r.id for r in records])
+        self.panel._mask_pointers.dismiss([r.id for r in records])
         _pump(0.3)
         self.assertFalse(self.wavelength_strip.has_marks_to_hop_to())
 
@@ -372,7 +372,7 @@ class MaskRowsTest(unittest.TestCase):
 
     def test_a_dismissed_pointer_is_not_a_cube_to_hop_to(self) -> None:
         records = self.add_pointers((3, 550.0), (6, 550.0))
-        self.panel._transient_events.dismiss([r.id for r in records if r.event.frame[0] == 3])
+        self.panel._mask_pointers.dismiss([r.id for r in records if r.event.frame[0] == 3])
         _pump(0.3)
         self.assertEqual(self.rows.marked_cubes(), (6,))
         self.go_to(0)

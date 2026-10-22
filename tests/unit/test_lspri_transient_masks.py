@@ -29,7 +29,7 @@ try:
         ContourMask,
         TransientEvent,
     )
-    from lspr_imaging_app.image_tools.mask.transient_events_state import EventRecord
+    from lspr_imaging_app.image_tools.mask.mask_pointers_state import MaskPointer
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -42,13 +42,13 @@ def _disk(radius: int = 5) -> np.ndarray:
     return (x**2 + y**2) <= radius**2
 
 
-def _record(event_id, frame, x0=50, y0=60, kind=KIND_PARTICLE, dismissed=False, contour=True, inferred=False) -> EventRecord:
+def _record(event_id, frame, x0=50, y0=60, kind=KIND_PARTICLE, dismissed=False, contour=True, inferred=False) -> MaskPointer:
     mask = _disk()
     event = TransientEvent(
         frame=frame, kind=kind, area_px=int(mask.sum()), centroid_xy=(x0 + 5.0, y0 + 5.0), bbox_xyxy=(x0, y0, x0 + 11, y0 + 11),
         depth=0.8, z=100.0, contour=ContourMask(x0=x0, y0=y0, mask=mask) if contour else None, inferred=inferred,
     )
-    return EventRecord(id=event_id, event=event, dismissed=dismissed)
+    return MaskPointer(id=event_id, event=event, dismissed=dismissed)
 
 
 class SelectionTests(unittest.TestCase):

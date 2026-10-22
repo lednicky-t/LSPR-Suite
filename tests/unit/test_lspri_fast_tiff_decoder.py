@@ -1,8 +1,9 @@
-"""Tests for the render thread's fast TIFF decoder (`dataset/io.py`: `use_fast_tiff_decoder`, `_read_tiff_fast`).
+"""Tests for the fast TIFF decoder (`dataset/io.py`: `use_fast_tiff_decoder`, `_read_tiff_fast`).
 
-It must give exactly the pixels tifffile gives, be strictly opt-in per thread, fall back for anything that is
-not a plain 2-D image, and verify itself against tifffile (a multi-page file is the case libtiff and tifffile
-read differently). Real files in a temp folder, no Qt.
+It must give exactly the pixels tifffile gives, be on for every thread by default (2026-10-22; it was opt-in per thread until
+then) while a thread can still opt out, fall back for anything that is not a plain 2-D image, and verify itself against tifffile
+(a multi-page file is the case libtiff and tifffile read differently). Both readers use it: the float32 one the app computes
+with and the native-dtype one the export uses. Real files in a temp folder, no Qt.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 def _reset_fast_path_state() -> None:
     dataset_io._fast_tiff_verified = 0
     dataset_io._fast_tiff_disabled = False
-    dataset_io.use_fast_tiff_decoder(False)
+    dataset_io.use_fast_tiff_decoder(True)  # the default of every thread
 
 
 @unittest.skipIf(dataset_io._imagecodecs is None, "imagecodecs with libtiff is not available")
@@ -83,34 +84,51 @@ class FastTiffDecoderTest(unittest.TestCase):
                 self.assertEqual(fast.dtype, np.float32)
                 np.testing.assert_array_equal(fast, reference)  # NaN positions included (assert_array_equal treats NaN == NaN)
 
-    def test_it_is_used_only_on_threads_that_opt_in(self) -> None:
+    def test_every_thread_uses_it_unless_that_thread_opts_out(self) -> None:
         path = self._write("a.tiff", self.int16, compression="lzw")
         calls = []
         original = dataset_io._read_tiff_fast
         dataset_io._read_tiff_fast = lambda p: (calls.append(threading.current_thread().name), original(p))[1]
         try:
-            dataset_io._load_image_array_uncached(path)  # this thread has not opted in
-            self.assertEqual(calls, [])
-            seen = []
-
-            def worker() -> None:
-                dataset_io.use_fast_tiff_decoder(True)
+            def fresh_thread() -> None:  # a thread that never heard of the switch: an analysis worker, the GUI thread
                 dataset_io._load_image_array_uncached(path)
-                seen.append(True)
 
-            thread = threading.Thread(target=worker, name="opted-in")
+            thread = threading.Thread(target=fresh_thread, name="fresh")
             thread.start()
             thread.join()
-            self.assertEqual(calls, ["opted-in"])
-            dataset_io._load_image_array_uncached(path)  # and this thread still has not
-            self.assertEqual(calls, ["opted-in"])
+            self.assertEqual(calls, ["fresh"])
+
+            def opted_out() -> None:
+                dataset_io.use_fast_tiff_decoder(False)
+                dataset_io._load_image_array_uncached(path)
+
+            thread = threading.Thread(target=opted_out, name="opted-out")
+            thread.start()
+            thread.join()
+            self.assertEqual(calls, ["fresh"])  # the opted-out thread read with tifffile
+            dataset_io._load_image_array_uncached(path)  # and the opt-out was that thread's own
+            self.assertEqual(calls, ["fresh", threading.current_thread().name])
         finally:
             dataset_io._read_tiff_fast = original
 
+    def test_the_native_dtype_reader_uses_it_too_and_keeps_the_dtype(self) -> None:
+        path = self._write("a.tiff", self.int16, compression="lzw", rowsperstrip=3)
+        calls = []
+        original = dataset_io._read_tiff_fast
+        dataset_io._read_tiff_fast = lambda p: (calls.append(p), original(p))[1]
+        try:
+            fast = dataset_io._load_image_array_native(path)
+        finally:
+            dataset_io._read_tiff_fast = original
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(fast.dtype, np.uint16)  # on-disk dtype, no float32 upcast
+        np.testing.assert_array_equal(fast, self.int16)
+        dataset_io.use_fast_tiff_decoder(False)
+        np.testing.assert_array_equal(dataset_io._load_image_array_native(path), self.int16)  # tifffile gives the same
+
     def test_an_environment_style_switch_turns_it_off(self) -> None:
         path = self._write("a.tiff", self.int16, compression="lzw")
-        dataset_io.use_fast_tiff_decoder(True)
-        self.assertTrue(dataset_io.fast_tiff_decoder_active())
+        self.assertTrue(dataset_io.fast_tiff_decoder_active())  # on without anyone asking for it
         dataset_io._fast_tiff_disabled = True  # what LSPR_TIFF_DECODER=tifffile sets at import
         self.assertFalse(dataset_io.fast_tiff_decoder_active())
         np.testing.assert_array_equal(dataset_io._load_image_array_uncached(path), self.int16.astype(np.float32))

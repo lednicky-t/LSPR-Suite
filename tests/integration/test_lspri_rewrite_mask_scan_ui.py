@@ -99,7 +99,7 @@ class MaskScanUiTest(unittest.TestCase):
         )
         self.panel.resize(1000, 780)
         self.panel.show()
-        self.events = self.panel._transient_events
+        self.events = self.panel._mask_pointers
         self.scan = self.panel._transient_scan
         self.controls = self.panel._mask_tab.scan_controls
         self.rows = self.panel._mask_rows
@@ -206,13 +206,13 @@ class MaskScanUiTest(unittest.TestCase):
         """A particle that arrived and stays (maintainer, 2026-10-18): its pointers say 'at rest', and Auto mask masks every frame."""
         from dataclasses import replace
 
-        from lspr_imaging_app.image_tools.mask.transient_events_state import EventRecord, TransientEventsState
+        from lspr_imaging_app.image_tools.mask.mask_pointers_state import MaskPointer, MaskPointersState
 
         self.run_scan()
         resting = tuple(
-            EventRecord(r.id, replace(r.event, passage_id=7, step_px=1.0), r.dismissed) for r in self.events.records()
+            MaskPointer(r.id, replace(r.event, passage_id=7, step_px=1.0), r.dismissed) for r in self.events.records()
         )
-        self.events.restore_state(TransientEventsState(self.events.info(), resting))
+        self.events.restore_state(MaskPointersState(self.events.info(), resting))
         _pump(0.3)
         self.go_to(3)
         cube_tip = self.rows.cube_strip.event_marks()[0].tip
@@ -298,7 +298,7 @@ class MaskScanUiTest(unittest.TestCase):
         self.run_scan()
         self.controls._clear_button.click()
         _pump(0.3)
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
         self.assertEqual(self.rows.cube_strip.event_marks(), ())
         self.assertIn("3 pointers cleared", self.messages[-1])
         self.assertFalse(self.controls._clear_button.isEnabled())
@@ -474,14 +474,14 @@ class MaskScanUiTest(unittest.TestCase):
         from dataclasses import replace
 
         from lspr_imaging_app.image_tools.mask.transient_detection import KIND_ARTEFACT, KIND_GLOBAL
-        from lspr_imaging_app.image_tools.mask.transient_events_state import EventRecord, TransientEventsState
+        from lspr_imaging_app.image_tools.mask.mask_pointers_state import MaskPointer, MaskPointersState
 
         records = self.events.records()
         changed = tuple(
-            EventRecord(r.id, replace(r.event, kind=KIND_GLOBAL if i == 0 else KIND_ARTEFACT if i == 1 else r.event.kind), r.dismissed)
+            MaskPointer(r.id, replace(r.event, kind=KIND_GLOBAL if i == 0 else KIND_ARTEFACT if i == 1 else r.event.kind), r.dismissed)
             for i, r in enumerate(records)
         )
-        self.events.restore_state(TransientEventsState(self.events.info(), changed))
+        self.events.restore_state(MaskPointersState(self.events.info(), changed))
         self.panel._mask_tab.auto_controls._apply_button.click()
         self.wait_for_auto_mask()
         self.assertEqual(len(self.mask.individual_cubes()[3]), 1)
@@ -532,7 +532,7 @@ class MaskScanUiTest(unittest.TestCase):
                 QtWidgets.QApplication.processEvents()
                 time.sleep(0.01)
         self.assertEqual(self.finished, ["cancelled"])
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
 
     def test_loading_another_dataset_stops_a_running_scan_too(self) -> None:
         self.load()
@@ -554,7 +554,7 @@ class MaskScanUiTest(unittest.TestCase):
                 QtWidgets.QApplication.processEvents()
                 time.sleep(0.01)
         self.assertEqual(self.finished, ["cancelled"])
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
 
     def test_clearing_the_dataset_stops_a_running_auto_mask_and_writes_no_mask(self) -> None:
         from lspr_imaging_app.image_tools import mask_auto_task

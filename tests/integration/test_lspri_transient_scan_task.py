@@ -1,4 +1,4 @@
-"""`TransientScanTask`: the scan on a worker thread, with progress, Cancel and its result in `TransientEventsModule` (2026-10-17).
+"""`TransientScanTask`: the scan on a worker thread, with progress, Cancel and its result in `MaskPointersModule` (2026-10-17).
 
 A real `QApplication` (the result comes back from the thread through a queued signal) but no widgets and no real dataset: the frames
 are synthetic, a dark blob crossing the field in one cube. Design: apps/LSPRi/eva/docs/auto_transient_scan_and_mask_plan_2026-10-16.md.
@@ -25,8 +25,8 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app.image_tools.mask.transient_detection import DetectionParams
-    from lspr_imaging_app.image_tools.mask.transient_events import TransientEventsModule
-    from lspr_imaging_app.image_tools.mask.transient_events_state import TransientEventsState
+    from lspr_imaging_app.image_tools.mask.mask_pointers import MaskPointersModule
+    from lspr_imaging_app.image_tools.mask.mask_pointers_state import MaskPointersState
     from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, scan_transients
     from lspr_imaging_app.image_tools.mask_scan_task import TASK_ID, ScanSummary, TransientScanTask
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -62,7 +62,7 @@ def _pump(until, seconds: float = 20.0) -> None:
 
 class TransientScanTaskTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.events = TransientEventsModule()
+        self.events = MaskPointersModule()
         self.task = TransientScanTask(self.events)
         self.index = {c: list(WAVELENGTHS) for c in range(CUBES)}
         self.params = ScanParams(detection=DetectionParams(bin_factor=2, max_particle_area_px=2000), stride=1, workers=2)
@@ -128,7 +128,7 @@ class TransientScanTaskTest(unittest.TestCase):
         _APP.processEvents()
         self.assertEqual([f[1] for f in self.finished], ["cancelled"])
         self.assertEqual(self.cancelled, [True])
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
 
     def test_an_unreadable_frame_is_counted_in_the_result(self) -> None:
         def flaky(cube: int, wavelength: float) -> np.ndarray:
@@ -147,7 +147,7 @@ class TransientScanTaskTest(unittest.TestCase):
         self.assertEqual([f[1] for f in self.finished], ["failed"])
         self.assertEqual(self.failed, ["Unexpected error: boom"])
         self.assertFalse(self.task.is_running())
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
 
     def test_an_empty_dataset_fails_with_a_sentence(self) -> None:
         self.task.start({}, _load, self.params)
@@ -195,7 +195,7 @@ class TransientScanTaskTest(unittest.TestCase):
         self.assertEqual([f[1] for f in self.finished], ["cancelled"])
         self.assertIn("dataset or the session changed", self.finished[0][2])
         self.assertEqual(self.cancelled, [True])
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
         self.assertFalse(self.task.is_running())
 
     def test_a_result_that_arrives_after_the_change_is_dropped_even_when_the_scan_ran_to_the_end(self) -> None:
@@ -216,26 +216,26 @@ class TransientScanTaskTest(unittest.TestCase):
             _pump(lambda: bool(self.finished))
             _APP.processEvents()
         self.assertEqual([f[1] for f in self.finished], ["cancelled"])
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
         self.assertEqual(self.completed, [])
 
     def test_restoring_a_session_stops_a_running_scan(self) -> None:
         load, started, gate = self._slow_loader()
         self.task.start(self.index, load, self.params)
         _pump(started.is_set, 5.0)
-        self.events.restore_state(TransientEventsState())  # a session switch / dataset load restores every module
+        self.events.restore_state(MaskPointersState())  # a session switch / dataset load restores every module
         gate.set()
         _pump(lambda: bool(self.finished))
         _APP.processEvents()
         self.assertEqual([f[1] for f in self.finished], ["cancelled"])
-        self.assertFalse(self.events.has_events())
+        self.assertFalse(self.events.has_pointers())
 
     def test_a_scan_started_after_a_change_works_normally(self) -> None:
         self.task.invalidate()
-        self.events.restore_state(TransientEventsState())
+        self.events.restore_state(MaskPointersState())
         self._run()
         self.assertEqual([f[1] for f in self.finished], ["completed"])
-        self.assertTrue(self.events.has_events())
+        self.assertTrue(self.events.has_pointers())
 
     def test_one_cube_cannot_be_scanned_and_the_sentence_says_why(self) -> None:
         """A3: with nothing to compare with the scan would end in a clean-looking '0 particles'."""

@@ -1,4 +1,4 @@
-"""The list of events a Mask-tab scan found: `TransientEventsModule`, its saved shape and the session file (2026-10-17).
+"""The list of events a Mask-tab scan found: `MaskPointersModule`, its saved shape and the session file (2026-10-17).
 
 Pure module logic, no widgets. What is worth pinning: an event is only a pointer (cosmetic, nothing recomputes), a dismissal
 survives a new scan at the same place, a scan of a cube range only replaces the events inside the range, and the list survives a
@@ -27,7 +27,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app.analysis.provenance import FrameNamingScheme
-    from lspr_imaging_app.image_tools.mask import transient_events_state as saved
+    from lspr_imaging_app.image_tools.mask import mask_pointers_state as saved
     from lspr_imaging_app.image_tools.mask.transient_detection import (
         KIND_ARTEFACT,
         KIND_GLOBAL,
@@ -35,7 +35,7 @@ try:
         ContourMask,
         TransientEvent,
     )
-    from lspr_imaging_app.image_tools.mask.transient_events import TransientEventsModule
+    from lspr_imaging_app.image_tools.mask.mask_pointers import MaskPointersModule
     from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
     from lspr_imaging_app.storage.session import SessionState, load_session, save_session, session_path
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -63,12 +63,12 @@ def _result(events, cube_range=None) -> ScanResult:
 class SavedShapeTests(unittest.TestCase):
     def test_a_list_survives_the_payload_with_its_contours(self) -> None:
         records = (
-            saved.EventRecord(1, _event(3, 620.0, passage=1, inferred=True)),
-            saved.EventRecord(2, _event(3, 630.0, kind=KIND_ARTEFACT), dismissed=True),
-            saved.EventRecord(3, _event(5, 500.0, kind=KIND_GLOBAL, area=9000, contour=False)),
+            saved.MaskPointer(1, _event(3, 620.0, passage=1, inferred=True)),
+            saved.MaskPointer(2, _event(3, 630.0, kind=KIND_ARTEFACT), dismissed=True),
+            saved.MaskPointer(3, _event(5, 500.0, kind=KIND_GLOBAL, area=9000, contour=False)),
         )
         info = saved.ScanInfo(created_utc="2026-10-17T10:00:00+00:00", settings={"stride": 3, "cube_range": None}, frames_in_range=100, frames_screened=40, seconds=2.5, unreadable_frames=1)
-        back = saved.from_payload(json.loads(json.dumps(saved.to_payload(saved.TransientEventsState(info, records)))))
+        back = saved.from_payload(json.loads(json.dumps(saved.to_payload(saved.MaskPointersState(info, records)))))
         self.assertEqual(back.info, info)
         self.assertEqual([r.id for r in back.records], [1, 2, 3])
         first = back.records[0].event
@@ -79,20 +79,20 @@ class SavedShapeTests(unittest.TestCase):
         self.assertTrue(back.records[1].dismissed)
 
     def test_only_particles_keep_a_contour_in_the_file(self) -> None:
-        records = (saved.EventRecord(1, _event(3, 620.0)), saved.EventRecord(2, _event(3, 630.0, kind=KIND_ARTEFACT)))
-        back = saved.from_payload(saved.to_payload(saved.TransientEventsState(None, records)))
+        records = (saved.MaskPointer(1, _event(3, 620.0)), saved.MaskPointer(2, _event(3, 630.0, kind=KIND_ARTEFACT)))
+        back = saved.from_payload(saved.to_payload(saved.MaskPointersState(None, records)))
         self.assertIsNotNone(back.records[0].event.contour)
         self.assertIsNone(back.records[1].event.contour)
 
     def test_a_missing_or_foreign_block_is_an_empty_list(self) -> None:
         for payload in (None, "nonsense", 5, {}):
-            self.assertEqual(saved.from_payload(payload), saved.TransientEventsState())
+            self.assertEqual(saved.from_payload(payload), saved.MaskPointersState())
 
     def test_an_unreadable_event_is_skipped_and_a_bad_contour_is_dropped(self) -> None:
-        payload = saved.to_payload(saved.TransientEventsState(None, (saved.EventRecord(1, _event(3, 620.0)), saved.EventRecord(2, _event(4, 500.0)))))
+        payload = saved.to_payload(saved.MaskPointersState(None, (saved.MaskPointer(1, _event(3, 620.0)), saved.MaskPointer(2, _event(4, 500.0)))))
         del payload["events"][0]["cube"]
         payload["events"][1]["contour"] = {"x0": 1, "y0": 1, "shape": [3, 3], "data": "!!!not base64!!!"}
-        with self.assertLogs("lspr_imaging_app.image_tools.mask.transient_events_state", level="WARNING"):
+        with self.assertLogs("lspr_imaging_app.image_tools.mask.mask_pointers_state", level="WARNING"):
             back = saved.from_payload(payload)
         self.assertEqual([r.id for r in back.records], [2])
         self.assertIsNone(back.records[0].event.contour)
@@ -100,9 +100,9 @@ class SavedShapeTests(unittest.TestCase):
 
 class ModuleTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.module = TransientEventsModule()
+        self.module = MaskPointersModule()
         self.reasons: list[str] = []
-        self.module.events_changed.connect(lambda change: self.reasons.append(change.reason))
+        self.module.pointers_changed.connect(lambda change: self.reasons.append(change.reason))
         self.module.set_scan_result(
             _result([_event(3, 620.0, x=100, passage=1), _event(3, 630.0, x=290, passage=1), _event(7, 500.0, x=50, kind=KIND_GLOBAL, contour=False)])
         )
@@ -118,8 +118,8 @@ class ModuleTests(unittest.TestCase):
         self.assertTrue(info.created_utc)
 
     def test_the_queries_the_rows_use(self) -> None:
-        self.assertEqual(self.module.event_cubes(), {3: (2, 0), 7: (1, 0)})
-        self.assertEqual(self.module.active_event_cubes(), (3, 7))
+        self.assertEqual(self.module.pointer_cubes(), {3: (2, 0), 7: (1, 0)})
+        self.assertEqual(self.module.active_pointer_cubes(), (3, 7))
         self.assertEqual([r.id for r in self.module.records_in_cube(3)], [1, 2])
         self.assertEqual([r.id for r in self.module.records_in_frame((3, 630.0))], [2])
         self.assertEqual(self.module.records_in_cube(99), ())
@@ -128,8 +128,8 @@ class ModuleTests(unittest.TestCase):
     def test_dismissing_marks_and_restoring_unmarks_and_both_say_so(self) -> None:
         self.assertEqual(self.module.dismiss([1, 2]), 2)
         self.assertEqual(self.reasons, ["dismissed"])
-        self.assertEqual(self.module.active_event_cubes(), (7,))
-        self.assertEqual(self.module.event_cubes()[3], (0, 2))
+        self.assertEqual(self.module.active_pointer_cubes(), (7,))
+        self.assertEqual(self.module.pointer_cubes()[3], (0, 2))
         self.assertEqual(self.module.dismiss([1]), 0)  # already dismissed: nothing changes, nothing is emitted
         self.assertEqual(self.reasons, ["dismissed"])
         self.assertEqual(self.module.restore([2]), 1)
@@ -159,10 +159,10 @@ class ModuleTests(unittest.TestCase):
 
     def test_restoring_a_saved_state_replaces_the_list(self) -> None:
         state = self.module.state()
-        other = TransientEventsModule()
+        other = MaskPointersModule()
         other.restore_state(state)
         self.assertEqual(other.state(), state)
-        self.assertEqual(other.event_cubes(), self.module.event_cubes())
+        self.assertEqual(other.pointer_cubes(), self.module.pointer_cubes())
 
 
 class SessionFileTests(unittest.TestCase):
@@ -174,33 +174,33 @@ class SessionFileTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _state(self) -> saved.TransientEventsState:
-        module = TransientEventsModule()
+    def _state(self) -> saved.MaskPointersState:
+        module = MaskPointersModule()
         module.set_scan_result(_result([_event(3, 620.0, passage=1), _event(3, 630.0, passage=1)]))
         module.dismiss([2])
         return module.state()
 
     def test_the_events_go_into_the_session_file_and_come_back(self) -> None:
         state = self._state()
-        save_session(self.root, SessionState(transient_events=state), self.naming)
+        save_session(self.root, SessionState(mask_pointers=state), self.naming)
         payload = json.loads(session_path(self.root).read_text(encoding="utf-8"))
         self.assertEqual(payload["schema_version"], "1.4")
-        self.assertEqual(len(payload["transient_events"]["events"]), 2)
+        self.assertEqual(len(payload["mask_pointers"]["events"]), 2)
         loaded = load_session(self.root)
-        self.assertEqual(loaded.transient_events.info, state.info)
-        self.assertEqual([(r.id, r.dismissed, r.event.frame) for r in loaded.transient_events.records], [(1, False, (3, 620.0)), (2, True, (3, 630.0))])
-        np.testing.assert_array_equal(loaded.transient_events.records[0].event.contour.mask, state.records[0].event.contour.mask)
+        self.assertEqual(loaded.mask_pointers.info, state.info)
+        self.assertEqual([(r.id, r.dismissed, r.event.frame) for r in loaded.mask_pointers.records], [(1, False, (3, 620.0)), (2, True, (3, 630.0))])
+        np.testing.assert_array_equal(loaded.mask_pointers.records[0].event.contour.mask, state.records[0].event.contour.mask)
 
     def test_a_schema_1_3_file_without_the_block_opens_with_no_events(self) -> None:
-        path = save_session(self.root, SessionState(transient_events=self._state()), self.naming)
+        path = save_session(self.root, SessionState(mask_pointers=self._state()), self.naming)
         payload = json.loads(path.read_text(encoding="utf-8"))
         payload["schema_version"] = "1.3"
-        payload.pop("transient_events")
+        payload.pop("mask_pointers")
         path.write_text(json.dumps(payload), encoding="utf-8")
-        self.assertEqual(load_session(self.root).transient_events, saved.TransientEventsState())
+        self.assertEqual(load_session(self.root).mask_pointers, saved.MaskPointersState())
 
     def test_resaving_the_same_events_is_byte_identical(self) -> None:
-        state = replace(SessionState(), transient_events=self._state())
+        state = replace(SessionState(), mask_pointers=self._state())
         first = save_session(self.root, state, self.naming).read_bytes()
         self.assertEqual(save_session(self.root, state, self.naming).read_bytes(), first)
 
