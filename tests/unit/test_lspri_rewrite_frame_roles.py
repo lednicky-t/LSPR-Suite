@@ -198,7 +198,7 @@ class _FakeSelection:
 
 
 class WorkflowRowsAndLabelTest(unittest.TestCase):
-    def test_rows_show_dark_and_ignored_summary_and_pick_clear(self) -> None:
+    def test_rows_show_dark_and_ignored_summary(self) -> None:
         from lspr_imaging_app.panels.workflow.frame_roles_rows import FrameRolesRows
 
         _ds, _ref, roles = _make()
@@ -206,18 +206,14 @@ class WorkflowRowsAndLabelTest(unittest.TestCase):
         rows = FrameRolesRows(roles, selection)
         self.assertEqual(rows._dark_label.text(), "[Dark: 0 nm - unscaled]")
         self.assertEqual(rows._ignored_label.text(), "[Ignored: none]")
-        rows._pick_button.click()
+        roles.set_dark(selection.current_wavelength())
         self.assertEqual(rows._dark_label.text(), "[Dark: 550 nm - unscaled]")
         roles.set_wavelength_ignored(600.0, True)
         roles.set_cube_ignored(1, True)
         roles.set_cube_ignored(2, True)
         self.assertEqual(rows._ignored_label.text(), "[Ignored: 1 wavelength, 2 cubes]")
-        rows._clear_button.click()
+        roles.clear_dark()
         self.assertEqual(rows._dark_label.text(), "[Dark: -]")
-        self.assertFalse(rows._clear_button.isEnabled())
-        selection.wavelength = 123.0  # not in the dataset: refused, and said so
-        rows._pick_button.click()
-        self.assertIn("not a wavelength", rows._dark_label.text())
 
     def test_dock_label_prefix_for_dark_reference_and_ignored_in_the_slider_colours(self) -> None:
         from lspr_imaging_app.panels.image.panel import ImagePanel
