@@ -23,6 +23,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
+    from lspr_core.perf import PerfPreferences, PerfRuntime, get_runtime, set_runtime
     from lspr_imaging_app.app_rewrite import build_main_window
     from lspr_imaging_app.panels.dock_container import PanelContainer
     from lspr_imaging_app.panels.histogram import HistogramPanel
@@ -85,6 +86,64 @@ class DialogTests(unittest.TestCase):
         self.assertFalse(noted.cache_environment_label.isHidden())
         self.assertIn("LSPR_OVERLAY_CACHE_MB", noted.cache_environment_label.text())
 
+    def test_the_parallel_work_choices_are_shown_and_returned_unchanged(self) -> None:
+        current = Preferences(perf=PerfPreferences(mode="manual", manual_workers=3, reserved_cores=2, low_priority=False))
+        dialog = PreferencesDialog(current, core_count=8)
+        self.assertEqual(dialog.perf_mode_combo.currentData(), "manual")
+        self.assertEqual((dialog.perf_workers_spin.value(), dialog.perf_reserved_spin.value()), (3, 2))
+        self.assertFalse(dialog.perf_low_priority_check.isChecked())
+        self.assertEqual(dialog.values(), current)
+
+    def test_a_fixed_number_enables_the_number_and_automatic_enables_the_reserve(self) -> None:
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES, core_count=8)
+        self.assertEqual(dialog.perf_mode_combo.currentData(), "standard", "Standard is the default; tuning is opt-in")
+        self.assertFalse(dialog.perf_workers_spin.isEnabled())
+        self.assertTrue(dialog.perf_reserved_spin.isEnabled())
+        dialog.perf_mode_combo.setCurrentIndex(dialog.perf_mode_combo.findData("auto"))
+        self.assertFalse(dialog.perf_workers_spin.isEnabled())
+        self.assertTrue(dialog.perf_reserved_spin.isEnabled())
+        self.assertEqual(dialog.values().perf, PerfPreferences(mode="auto"))
+        dialog.perf_mode_combo.setCurrentIndex(dialog.perf_mode_combo.findData("manual"))
+        self.assertTrue(dialog.perf_workers_spin.isEnabled())
+        self.assertFalse(dialog.perf_reserved_spin.isEnabled())
+        dialog.perf_workers_spin.setValue(4)
+        self.assertEqual(dialog.values().perf, PerfPreferences(mode="manual", manual_workers=4))
+
+    def test_the_number_is_not_a_choice_until_fixed_is_selected(self) -> None:
+        """The spin box always shows a number (a suggestion), but automatic mode must not turn it into a saved choice."""
+        fresh = PreferencesDialog(DEFAULT_PREFERENCES, core_count=8)
+        self.assertEqual(fresh.values().perf.manual_workers, 0)
+        remembered = PreferencesDialog(Preferences(perf=PerfPreferences(mode="standard", manual_workers=4)), core_count=8)
+        self.assertEqual(remembered.perf_workers_spin.value(), 4)
+        self.assertEqual(remembered.values().perf.manual_workers, 4, "the earlier fixed number is kept while automatic is on")
+
+    def test_the_three_modes_are_listed_standard_first(self) -> None:
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES)
+        self.assertEqual([dialog.perf_mode_combo.itemData(i) for i in range(dialog.perf_mode_combo.count())], ["standard", "auto", "manual"])
+
+    def test_forget_saved_counts_is_only_offered_when_something_is_saved_and_is_a_request_until_ok(self) -> None:
+        none_saved = PreferencesDialog(DEFAULT_PREFERENCES, perf_saved_count=0)
+        self.assertFalse(none_saved.perf_forget_button.isEnabled())
+        some = PreferencesDialog(DEFAULT_PREFERENCES, perf_saved_count=2)
+        self.assertTrue(some.perf_forget_button.isEnabled())
+        self.assertFalse(some.forget_saved_requested)
+        some.perf_forget_button.click()
+        self.assertTrue(some.forget_saved_requested)
+        self.assertFalse(some.perf_forget_button.isEnabled())
+        self.assertEqual(some.values(), DEFAULT_PREFERENCES, "forgetting is not a preference value")
+
+    def test_the_limits_follow_the_core_count(self) -> None:
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES, core_count=4)
+        self.assertEqual((dialog.perf_workers_spin.minimum(), dialog.perf_workers_spin.maximum()), (1, 8))
+        self.assertEqual((dialog.perf_reserved_spin.minimum(), dialog.perf_reserved_spin.maximum()), (0, 3))
+
+    def test_the_machine_status_is_shown_only_when_given(self) -> None:
+        plain = PreferencesDialog(DEFAULT_PREFERENCES)
+        self.assertTrue(plain.perf_status_label.isHidden())
+        shown = PreferencesDialog(DEFAULT_PREFERENCES, perf_status="This computer: 4 cores.")
+        self.assertFalse(shown.perf_status_label.isHidden())
+        self.assertEqual(shown.perf_status_label.text(), "This computer: 4 cores.")
+
     def test_ok_accepts_and_cancel_rejects(self) -> None:
         dialog = PreferencesDialog(DEFAULT_PREFERENCES)
         results: list[str] = []
@@ -97,6 +156,8 @@ class DialogTests(unittest.TestCase):
 
 class WindowTests(unittest.TestCase):
     def setUp(self) -> None:
+        previous_runtime = set_runtime(PerfRuntime())  # a window applies its saved choices to the runtime: keep that out of other tests
+        self.addCleanup(set_runtime, previous_runtime)
         self.saved: list[AppSettings] = []
         # The callback gets the live settings object, so keep copies of what it holds at each call.
         self.window = build_main_window(AppSettings(), lambda settings: self.saved.append(AppSettings(**vars(settings))))
@@ -162,6 +223,42 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.panel.overlay_cache_mb, 0)
         self.assertFalse(self.panel._roi_overlay.layers.enabled)
         self.assertEqual(self._open().values().overlay_cache_mb, 0, "reopening shows what was applied")
+
+    def test_ok_applies_the_parallel_work_choices_to_the_runtime_for_the_next_job(self) -> None:
+        dialog = self._open()
+        dialog.perf_mode_combo.setCurrentIndex(dialog.perf_mode_combo.findData("manual"))
+        dialog.perf_workers_spin.setValue(3)
+        dialog.perf_low_priority_check.setChecked(False)
+        dialog.button_box.button(Button.Ok).click()
+        self.assertEqual(get_runtime().preferences, PerfPreferences(mode="manual", manual_workers=3, low_priority=False))
+        self.assertEqual(self._open().values().perf, get_runtime().preferences, "reopening shows what was applied")
+
+    def test_ok_after_forget_deletes_the_saved_counts_and_cancel_does_not(self) -> None:
+        from lspr_core.perf import ProfileStore
+        import tempfile
+        from pathlib import Path
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = ProfileStore(Path(tmp.name) / "perf.json")
+        runtime = get_runtime()
+        runtime.store = store
+        store.record(runtime.probe().fingerprint(), "export.ome_zarr", "", workers=4, rate=30.0)
+        cancelled = self._open()
+        self.assertTrue(cancelled.perf_forget_button.isEnabled())
+        cancelled.perf_forget_button.click()
+        cancelled.button_box.button(Button.Cancel).click()
+        self.assertEqual(len(runtime.learned_all()), 1, "Cancel forgets nothing")
+        accepted = self._open()
+        accepted.perf_forget_button.click()
+        accepted.button_box.button(Button.Ok).click()
+        self.assertEqual(runtime.learned_all(), [])
+
+    def test_cancel_leaves_the_parallel_work_choices_alone(self) -> None:
+        dialog = self._open()
+        dialog.perf_mode_combo.setCurrentIndex(dialog.perf_mode_combo.findData("manual"))
+        dialog.button_box.button(Button.Cancel).click()
+        self.assertEqual(get_runtime().preferences, PerfPreferences())
 
     def test_ok_saves_the_reopen_choice(self) -> None:
         dialog = self._open()

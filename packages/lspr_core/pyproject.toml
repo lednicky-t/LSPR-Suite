@@ -12,6 +12,9 @@ dynamic = ["version"]
 # floor = currently tested version, ceiling = next breaking-change boundary.
 dependencies = [
     "pydantic>=2,<3",
+    # lspr_core.perf: core counts, free memory, battery, process priority. Soft-imported there (without it the
+    # numbers fall back to os.cpu_count()), but declared per the pinning policy.
+    "psutil>=7.2,<8",
 ]
 
 [tool.setuptools]

@@ -55,7 +55,7 @@ Four apps, three as git submodules, one (suite launcher) living directly in this
 
 | Package | Path | Purpose |
 |---------|------|---------|
-| `lspr-core` | `packages/lspr_core` | Domain models, schema identity, plan steps, units |
+| `lspr-core` | `packages/lspr_core` | Domain models, schema identity, plan steps, units; `lspr_core.perf` (machine probe, worker-count tuning) |
 | `lspr-io` | `packages/lspr_io` | HDF5/session helpers, schema stamping, version readers |
 | `lspr-ui` | `packages/lspr_ui` | Qt theme tokens, icon helpers, app bootstrap |
 | `lspr-acq-shell` | `packages/lspr_acq_shell` | Shared live-acquisition shell, extracted from `apps/sLSPR/acq` |
@@ -130,6 +130,7 @@ Don't make code clever if it becomes hard for scientists or future agents to und
 
 - **Raw data is sacred.** Never overwrite raw measurement data. Derived results go in separate groups or files.
 - **Keep long work off the GUI thread.** Acquisition, loading, fitting, and image processing run off the main thread (acquisition workers: `gui/workers.py`). In LSPRi, anything touching the dataset or zarr layer uses `threading.Thread`, never `QThreadPool` (one HDF5-only write exception; see `apps/LSPRi/eva/CLAUDE.md`).
+- **Parallel work is performance-aware (2026-10-22).** Anything that fans out over cores (export, scan, batch analysis, bulk reads) gets its worker count from `lspr_core.perf` (`get_runtime().begin("domain.task", ...)`), never from a hard-coded number or a bare `os.cpu_count()`, so the apps tune themselves to faster or slower machines. Rules: (1) **tuning changes scheduling, never results**: output must be identical at any worker count and completion order, pinned by a test; (2) tune on measured throughput (units per second), not on a proxy such as an I/O-wait fraction; (3) the default is **Standard** (every core but one, no searching; measured on the dev laptop, searching gained nothing and cost a few percent), **Tune automatically** is opt-in in Preferences and saves the count it finds for the machine (Standard then uses it), plus a Fixed number, cores kept free and low priority, all remembered like any control; (4) log the chosen count and mode (`perf.run`) so other machines teach us something; (5) test a new job's tuning on a simulated machine, not on hardware; (6) never tune what is saved (chunk shape, compression, rounding). Recipe, what is wired, what is deliberately not: `docs/performance_tuning.md`.
 - **Keep science out of GUI code.** Analysis functions must work without a running Qt application.
 - **Numeric changes need a before/after comparison** on realistic data, flagged with the quantified impact even if negligible. See `.claude/rules/numerics.md`.
 - **HDF5 files** follow `docs/schemas/hdf_standard.md`. See `.claude/rules/hdf5.md` when touching storage code.

@@ -112,6 +112,20 @@ class ScanRunnerTests(unittest.TestCase):
     def test_worker_processes_equal_the_plain_path(self) -> None:
         self._check(list(scan_cubes(self._jobs(), self.settings, processes=2)))
 
+    def test_automatic_worker_count_equals_the_plain_path(self) -> None:
+        """processes=None (the default): lspr_core.perf picks the pool size and how many tasks are in flight. One cube per task
+        gives three tasks, so the in-flight limit is exercised. Same numbers as the plain path whatever it chose."""
+        self._check(list(scan_cubes(self._jobs(), self.settings, cubes_per_task=1)))
+
+    def test_automatic_worker_count_respects_a_small_machine(self) -> None:
+        from lspr_core.perf import PerfRuntime, SystemProfile, get_runtime, set_runtime
+
+        two_cores = SystemProfile(2, 2, 8 * 1024**3, 6 * 1024**3, None, "test")
+        previous = set_runtime(PerfRuntime(probe=lambda: two_cores))
+        self.addCleanup(set_runtime, previous)
+        self._check(list(scan_cubes(self._jobs(), self.settings, cubes_per_task=1)))
+        self.assertEqual(get_runtime().begin("analysis.scan", max_useful=3).maximum, 2)
+
     def test_cancel_raises_and_keeps_finished_cubes(self) -> None:
         got = []
         with self.assertRaises(Cancelled):

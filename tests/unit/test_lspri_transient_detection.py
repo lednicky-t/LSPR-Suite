@@ -353,6 +353,40 @@ class ScanTests(unittest.TestCase):
         for found, expected in zip(xs, (40, 120, 200, 280)):
             self.assertAlmostEqual(found, expected, delta=2.0)
 
+    def test_the_automatic_worker_count_finds_the_same_events_and_stays_within_its_limit(self) -> None:
+        """workers=None: lspr_core.perf sets how many frames are read at once (here a 4-thread machine: at most 3, one core is kept
+        free). The events are those of a fixed count; a count never changes what is found (docs/performance_tuning.md)."""
+        import threading
+
+        from lspr_core.perf import PerfRuntime, SystemProfile, set_runtime
+
+        four_threads = SystemProfile(4, 2, 8 * 1024**3, 6 * 1024**3, None, "test")
+        previous = set_runtime(PerfRuntime(probe=lambda: four_threads))
+        self.addCleanup(set_runtime, previous)
+        lock = threading.Lock()
+        running = peak = 0
+        read_plane = self.load_plane
+
+        def counted(cube: int, wavelength: float) -> np.ndarray:
+            nonlocal running, peak
+            with lock:
+                running += 1
+                peak = max(peak, running)
+            try:
+                return read_plane(cube, wavelength)
+            finally:
+                with lock:
+                    running -= 1
+
+        fixed = scan_transients(self.index, self.load_plane, self._params(stride=1))
+        automatic = scan_transients(
+            self.index, counted, ScanParams(detection=_params(max_particle_area_px=2000), stride=1)
+        )
+        self.assertEqual([(e.frame, e.kind) for e in automatic.events], [(e.frame, e.kind) for e in fixed.events])
+        self.assertEqual(automatic.frames_screened, fixed.frames_screened)
+        self.assertLessEqual(peak, 3)
+        self.assertGreaterEqual(peak, 1)
+
     def test_a_stride_reads_less_and_the_neighbours_of_a_hit_are_still_found(self) -> None:
         full = scan_transients(self.index, self.load_plane, self._params(stride=1))
         self.calls = 0
