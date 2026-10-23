@@ -28,16 +28,3 @@ def lower_process_priority() -> bool:
     except Exception:  # noqa: BLE001 - a priority hint must not be able to stop a worker from starting
         logger.debug("Could not lower the process priority", exc_info=True)
         return False
-
-
-def current_process_priority_is_lowered() -> bool | None:
-    """Whether this process runs below normal priority (None: cannot be read). For tests and the log."""
-    try:
-        import psutil
-
-        nice = psutil.Process().nice()
-        if sys.platform == "win32":
-            return nice == psutil.BELOW_NORMAL_PRIORITY_CLASS
-        return nice > 0
-    except Exception:  # noqa: BLE001
-        return None

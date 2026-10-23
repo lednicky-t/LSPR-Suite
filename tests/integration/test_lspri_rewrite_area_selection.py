@@ -274,12 +274,17 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         overlay.toggle()
         self.assertTrue(self.image_panel._cursor_readout.isHidden())
 
+    def _open_tab(self, name: str) -> None:
+        """Click the ribbon tab by its name: the tab order has changed before and will again."""
+        ribbon = self.image_panel._tool_ribbon
+        ribbon._tab_buttons[ribbon._category_names.index(name)].click()
+
     def test_ribbon_announces_category_changes(self) -> None:
         seen: list[str] = []
         self.image_panel.ribbon_category_changed.connect(seen.append)
-        self.image_panel._tool_ribbon._tab_buttons[1].click()
-        self.assertEqual(seen, ["Image tools"])
-        self.assertEqual(self.image_panel.active_ribbon_category(), "Image tools")
+        self._open_tab("Mask")
+        self.assertEqual(seen, ["Mask"])
+        self.assertEqual(self.image_panel.active_ribbon_category(), "Mask")
 
     # -- histogram -----------------------------------------------------------------
 
@@ -293,15 +298,16 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     def test_histogram_ignores_the_selection_unless_its_ribbon_tab_is_open(self) -> None:
         self._counts_mode()
-        self.image_panel._tool_ribbon._tab_buttons[1].click()
+        self._open_tab("Mask")
         self.area.set_rectangle(0, 0, 40, 64)
         _pump()
-        self.assertEqual(self.image_panel.active_ribbon_category(), "Image tools")
+        self.assertEqual(self.image_panel.active_ribbon_category(), "Mask")
         self.assertAlmostEqual(self._all_total(), float(_SHAPE[0] * _SHAPE[1]))
 
     def test_histogram_narrows_to_the_selection_when_its_tab_is_open(self) -> None:
         self._counts_mode()
-        self.assertEqual(self.image_panel.active_ribbon_category(), "View")  # the first tab, open at start
+        self._open_tab("View")
+        self.assertEqual(self.image_panel.active_ribbon_category(), "View")
         self.area.set_rectangle(0, 0, 40, 64)
         _pump()
         self.assertAlmostEqual(self._all_total(), 40.0 * 64.0)
@@ -314,7 +320,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     def test_selection_does_not_move_the_highlight_range(self) -> None:
         before = self.highlight_range.current_range()
-        self.image_panel._tool_ribbon._tab_buttons[0].click()
+        self._open_tab("View")
         self.area.set_rectangle(0, 0, 8, 8)  # only flat 150 px inside
         _pump()
         self.assertEqual(self.highlight_range.current_range(), before)

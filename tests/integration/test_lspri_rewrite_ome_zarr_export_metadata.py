@@ -175,6 +175,28 @@ class OmeZarrExportTests(unittest.TestCase):
         # The extra array must not confuse our own reader.
         self.assertEqual(len(load_ome_zarr_dataset(destination).records), 4 * len(WAVELENGTHS_NM))
 
+    def test_per_image_times_survive_export_and_reload(self) -> None:
+        # Regression: the export saved the live metadata, whose image_timings the app has already moved into the compact
+        # form, so an exported dataset reloaded with no experiment times (the app then fell back to frame numbers).
+        from lspr_imaging_app.dataset.model import compact_dataset_image_timings
+
+        dataset = self._timed_dataset([10_000, 12_000, 14_000, 40_000])
+        compact_dataset_image_timings(dataset)  # what loading the dataset in the app does
+        destination = export_ome_zarr_dataset(
+            dataset, self.root / "timed_roundtrip", chunk_size_px=32, compression_enabled=True,
+            shard_mode="per_image", adaptive_workers_enabled=False,
+        )
+        reloaded = compact_dataset_image_timings(load_ome_zarr_dataset(destination))
+        original = compact_dataset_image_timings(dataset)
+        self.assertEqual(len(reloaded), 4 * len(WAVELENGTHS_NM))
+        self.assertEqual(reloaded.per_frame_ms, original.per_frame_ms)
+        # The sidecar is what the app reads first on the next open, so it needs the times too.
+        from lspr_imaging_app.dataset.io import acquisition_metadata_sidecar_path
+        from lspr_imaging_app.storage.workspace import load_acquisition_metadata_sidecar
+
+        sidecar = load_acquisition_metadata_sidecar(acquisition_metadata_sidecar_path(destination))
+        self.assertEqual(len(sidecar.image_timings), 4 * len(WAVELENGTHS_NM))
+
     def test_untimed_dataset_has_no_time_array(self) -> None:
         import zarr
 

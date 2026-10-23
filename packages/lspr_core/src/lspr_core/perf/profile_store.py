@@ -55,11 +55,19 @@ class ProfileStore:
             return {}
         return {k: v for k, v in payload["entries"].items() if isinstance(v, dict)}
 
-    def lookup(self, fingerprint: str, task_key: str, destination_kind: str = "") -> LearnedSetting | None:
-        with self._lock:
-            entry = self._load().get(_entry_key(fingerprint, task_key, destination_kind))
-        if entry is None:
-            return None
+    def _write(self, entries: dict[str, dict]) -> None:
+        """Atomic replace of the whole file; the caller holds the lock and handles errors."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
+        try:
+            temporary.write_text(json.dumps({"schema": SCHEMA_VERSION, "entries": entries}, indent=1), encoding="utf-8")
+            os.replace(temporary, self.path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)  # a failed write must not leave its temp file behind
+            raise
+
+    @staticmethod
+    def _parse(entry: dict) -> LearnedSetting | None:
         workers, rate, runs, updated = entry.get("workers"), entry.get("rate"), entry.get("runs"), entry.get("updated_utc")
         if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
             return None
@@ -70,17 +78,22 @@ class ProfileStore:
             updated_utc=str(updated or ""),
         )
 
+    def lookup(self, fingerprint: str, task_key: str, destination_kind: str = "") -> LearnedSetting | None:
+        with self._lock:
+            entry = self._load().get(_entry_key(fingerprint, task_key, destination_kind))
+        return None if entry is None else self._parse(entry)
+
     def entries(self, fingerprint: str) -> list[tuple[str, str, LearnedSetting]]:
         """Everything saved for this machine kind: ``(task, destination kind, setting)``, sorted by task (for the Preferences status line)."""
         with self._lock:
             stored = self._load()
         found: list[tuple[str, str, LearnedSetting]] = []
-        for key in stored:
+        for key, entry in stored.items():
             machine, _, rest = key.partition("|")
             task, _, kind = rest.partition("|")
             if machine != fingerprint:
                 continue
-            learned = self.lookup(fingerprint, task, kind)
+            learned = self._parse(entry)
             if learned is not None:
                 found.append((task, kind, learned))
         return sorted(found, key=lambda item: (item[0], item[1]))
@@ -95,10 +108,7 @@ class ProfileStore:
                     return 0
                 for key in doomed:
                     del stored[key]
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
-                temporary.write_text(json.dumps({"schema": SCHEMA_VERSION, "entries": stored}, indent=1), encoding="utf-8")
-                os.replace(temporary, self.path)
+                self._write(stored)
                 return len(doomed)
         except Exception:  # noqa: BLE001
             logger.warning("The performance profile %s could not be cleared.", self.path, exc_info=True)
@@ -120,9 +130,6 @@ class ProfileStore:
                 if len(entries) > MAX_ENTRIES:
                     for stale in sorted(entries, key=lambda k: str(entries[k].get("updated_utc", "")))[: len(entries) - MAX_ENTRIES]:
                         del entries[stale]
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
-                temporary.write_text(json.dumps({"schema": SCHEMA_VERSION, "entries": entries}, indent=1), encoding="utf-8")
-                os.replace(temporary, self.path)
+                self._write(entries)
         except Exception:  # noqa: BLE001 - see the docstring
             logger.warning("The performance profile %s could not be saved.", self.path, exc_info=True)

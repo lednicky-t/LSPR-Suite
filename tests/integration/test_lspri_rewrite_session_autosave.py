@@ -56,9 +56,12 @@ try:
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import SelectionModule
     from lspr_imaging_app.storage import session_index
-    from lspr_imaging_app.storage.session import PreparedSession, SessionState, session_path
+    from lspr_imaging_app.image_tools.mask.model import MaskChange
+    from lspr_imaging_app.storage import session_load_task as session_load_module
+    from lspr_imaging_app.storage.session import PreparedSession, SessionState, load_session, save_session, session_path
     from lspr_imaging_app.storage.session_autosave import SessionAutosave
     from lspr_imaging_app.storage.session_coordinator import SessionCoordinator
+    from lspr_imaging_app.storage.session_load_task import SessionLoadTask
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -443,6 +446,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.analysis_settings = AnalysisSettingsModule()
         self.events = MaskPointersModule()
         self.coordinator = SessionCoordinator()
+        self.session_load = SessionLoadTask()  # reads the session off the GUI thread: `_settle` waits for it
         self.autosave = _build_session_autosave(
             self.dataset, self.geometry, self.mask, self.chromatic,
             self.background, self.roi_toolbox, self.selection, self.analysis_settings, None, self.events,
@@ -452,9 +456,19 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
             self.coordinator, self.autosave, _FakeAnalysisEngine(),
             self.geometry, self.mask, self.chromatic, self.background,
             self.roi_toolbox, self.selection, self.analysis_settings, None, self.events,
+            session_load=self.session_load,
         )
         self.dataset.dataset_loaded.connect(lambda ds: self.coordinator.bind_dataset(ds.home))
         self.dataset.dataset_cleared.connect(self.coordinator.unbind)
+
+    def _settle(self, timeout_s: float = 30.0) -> None:
+        """Let a session load that is in flight finish and be applied (the result arrives as a queued signal on this thread)."""
+        deadline = time.monotonic() + timeout_s
+        while self.session_load.is_running() and time.monotonic() < deadline:
+            _APP.processEvents()
+            time.sleep(0.005)
+        _APP.processEvents()
+        self.assertFalse(self.session_load.is_running(), "the session load did not finish")
 
     def _active_session_path(self) -> Path:
         active_id = session_index.load_session_index(self.root).active_session_id
@@ -469,6 +483,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
 
         self._build()
         self.dataset.load_dataset(self.dataset_model)
+        self._settle()
         restored = self.roi_toolbox.rois()
         self.assertEqual(len(restored), 1)
         self.assertEqual((restored[0].center_x, restored[0].center_y), (8.0, 6.0))
@@ -483,6 +498,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
 
         self._build()
         self.dataset.load_dataset(self.dataset_model)
+        self._settle()
         self.autosave.flush()
         self.assertEqual(self._active_session_path().stat().st_mtime_ns, written_at)
 
@@ -500,6 +516,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
 
         self.autosave._write = slow_write
         self.coordinator.switch_to(self.coordinator.active_session_id())  # no explicit flush
+        self._settle()
         self.assertEqual(len(self.roi_toolbox.rois()), 1)
 
     def test_a_second_session_is_independent_of_the_first(self) -> None:
@@ -514,6 +531,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.assertEqual(self.roi_toolbox.rois(), ())
 
         self.coordinator.switch_to(first_session_id)
+        self._settle()
         restored = self.roi_toolbox.rois()
         self.assertEqual(len(restored), 1)
         self.assertEqual((restored[0].center_x, restored[0].center_y), (8.0, 6.0))
@@ -538,6 +556,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
 
         self._build()
         self.dataset.load_dataset(self.dataset_model)
+        self._settle()
         records = self.events.records()
         self.assertEqual([(r.id, r.event.frame, r.dismissed) for r in records], [(1, (0, 500.0), True)])
         self.assertEqual(self.events.info().settings["stride"], 3)
@@ -550,6 +569,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.coordinator.create_new()
         self.assertFalse(self.events.has_pointers())
         self.coordinator.switch_to(first)
+        self._settle()
         self.assertTrue(self.events.has_pointers())
 
     def test_an_unreadable_session_disables_saving_rather_than_overwriting_it(self) -> None:
@@ -564,12 +584,140 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         path.write_text(json.dumps({"schema_name": "something_else"}), encoding="utf-8")
         original = path.read_text(encoding="utf-8")
 
-        with self.assertLogs("lspr_imaging_app.app_rewrite", level="ERROR"):
+        failures: list[str] = []
+        self.session_load.failed.connect(failures.append)
+        with self.assertLogs("lspr_imaging_app.storage.session_load_task", level="ERROR"):
             self.dataset.load_dataset(self.dataset_model)
+            self._settle()
+        self.assertEqual(len(failures), 1)  # the user is told (it used to be only a log line)
+        self.assertIn("Autosave is off", failures[0])
         self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
         self.autosave.flush()
 
         self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+
+    def _hold_session_loads(self) -> threading.Event:
+        """Make every session load wait for the returned event before it reads (so a test can look at the app *during* a load)."""
+        release = threading.Event()
+        real = load_session
+
+        def slow(root, progress=None, cancelled=None):
+            release.wait(10.0)
+            return real(root, progress=progress, cancelled=cancelled)
+
+        patcher = mock.patch.object(session_load_module, "load_session", slow)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(release.set)
+        return release
+
+    def test_a_session_loads_in_the_background_and_autosave_stays_off_until_it_lands(self) -> None:
+        """The window must not freeze while a big session is read, and the blank state it shows meanwhile must never be written
+        over the saved session."""
+        self.dataset.load_dataset(self.dataset_model)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
+        self.autosave.flush()
+        path = self._active_session_path()
+        written_at = path.stat().st_mtime_ns
+
+        self._build()
+        release = self._hold_session_loads()
+        self.dataset.load_dataset(self.dataset_model)  # returns while the session is still being read
+        self.assertTrue(self.session_load.is_running())
+        self.assertEqual(self.roi_toolbox.rois(), ())  # blank for now
+        self.roi_toolbox.add_roi(30.0, 20.0, sample_diameter_px=4.0)  # an edit made during the load...
+        self.autosave.flush()
+        self.assertEqual(path.stat().st_mtime_ns, written_at)  # ...is not saved over the real session
+
+        release.set()
+        self._settle()
+        restored = self.roi_toolbox.rois()
+        self.assertEqual([(r.center_x, r.center_y) for r in restored], [(8.0, 6.0)])  # the saved session is what the user gets
+        self.roi_toolbox.add_roi(9.0, 7.0, sample_diameter_px=4.0)
+        self.autosave.flush()
+        self.assertGreater(path.stat().st_mtime_ns, written_at)  # and autosave is on again
+
+    def test_leaving_a_session_while_it_loads_drops_its_result(self) -> None:
+        self.dataset.load_dataset(self.dataset_model)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
+        self.autosave.flush()
+        first = self.coordinator.active_session_id()
+
+        self._build()
+        release = self._hold_session_loads()
+        self.dataset.load_dataset(self.dataset_model)
+        self.assertTrue(self.session_load.is_running())
+        self.coordinator.create_new()  # leave the session that is still being read
+        release.set()
+        self._settle()
+        self.assertEqual(self.roi_toolbox.rois(), ())  # the new session is blank; the old one's ROIs did not land in it
+        self.assertNotEqual(self.coordinator.active_session_id(), first)
+
+    def test_cancelling_a_session_load_leaves_autosave_off(self) -> None:
+        self.dataset.load_dataset(self.dataset_model)
+        self.roi_toolbox.add_roi(8.0, 6.0, sample_diameter_px=4.0)
+        self.autosave.flush()
+        path = self._active_session_path()
+        written_at = path.stat().st_mtime_ns
+
+        self._build()
+        release = self._hold_session_loads()
+        self.dataset.load_dataset(self.dataset_model)
+        self.session_load.cancel()  # the status bar's Cancel button
+        release.set()
+        self._settle()
+        self.roi_toolbox.add_roi(30.0, 20.0, sample_diameter_px=4.0)
+        self.autosave.flush()
+        self.assertEqual(path.stat().st_mtime_ns, written_at)
+
+
+class SessionLoadTaskTest(unittest.TestCase):
+    """The task alone: progress says what is being read, and the result is the session."""
+
+    def test_progress_describes_what_is_being_read(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            masks = tuple(
+                MaskChange((0, 500.0 + i), "individual", np.eye(8, dtype=bool)) for i in range(6)
+            )
+            save_session(root, SessionState(mask_changes=masks), _NAMING)
+            task = SessionLoadTask()
+            messages: list[str] = []
+            finished: list[tuple[str, str]] = []
+            loaded: list = []
+            task.task_progress.connect(lambda _id, _label, _fraction, message: messages.append(message))
+            task.task_finished.connect(lambda _id, outcome, message: finished.append((outcome, message)))
+            task.completed.connect(loaded.append)
+
+            task.load(root)
+            deadline = time.monotonic() + 30.0
+            while task.is_running() and time.monotonic() < deadline:
+                _APP.processEvents()
+                time.sleep(0.005)
+            _APP.processEvents()
+
+            self.assertEqual(messages[0], "Reading the session file")
+            self.assertEqual(finished, [("completed", "6 masks, 0 ROIs")])
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0].root, root)
+            self.assertEqual(len(loaded[0].state.mask_changes), 6)
+            self.assertEqual(len(loaded[0].state.mask_versions), 6)
+
+    def test_load_session_reports_each_mask_and_stops_when_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            masks = tuple(MaskChange((0, 500.0 + i), "individual", np.eye(8, dtype=bool)) for i in range(5))
+            save_session(root, SessionState(mask_changes=masks), _NAMING)
+            seen: list[tuple[float, str]] = []
+            load_session(root, progress=lambda fraction, message: seen.append((fraction, message)))
+            self.assertEqual([m for _f, m in seen if m.startswith("Loading masks:")][-1], "Loading masks: 5 of 5")
+            self.assertEqual(sorted(f for f, _m in seen), [f for f, _m in seen])  # never goes backwards
+
+            from lspr_imaging_app.progress import Cancelled
+
+            with self.assertRaises(Cancelled):
+                load_session(root, cancelled=lambda: True)
 
 
 if __name__ == "__main__":

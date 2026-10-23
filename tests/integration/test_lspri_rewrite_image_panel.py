@@ -135,6 +135,11 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.panel._renderer.stop()
         self._tmp.cleanup()
 
+    def _ribbon_page(self, name: str):
+        """The ribbon page of the tab called `name` (by name: the tab order has changed before and will again)."""
+        ribbon = self.panel._tool_ribbon
+        return ribbon._stack.widget(ribbon._category_names.index(name))
+
     def _load(self) -> None:
         self.dataset.load_dataset(self.dataset_model)
         # The first picture is drawn once the render thread has delivered it: wait for that, not for a
@@ -1129,7 +1134,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         # their own "Mask" tab, 2026-10-01), not the TransformsSection
         # directly any more; it must still be reachable as a child of that
         # page.
-        self.assertIs(section.parentWidget(), self.panel._tool_ribbon._stack.widget(1))
+        self.assertIs(section.parentWidget(), self._ribbon_page("Image tools"))
 
         section._rotate_button.click()
         self.assertIs(self.panel._active_tool.active(), ImageTool.ROTATE)
@@ -1151,7 +1156,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         controls = self.panel._mask_tab.overlay_controls
         self.assertIsInstance(controls, MaskOverlayControls)
-        page = self.panel._tool_ribbon._stack.widget(2)
+        page = self._ribbon_page("Mask")
         self.assertIs(controls.parentWidget().parentWidget(), page)
 
     def test_mask_scope_toggle_sits_left_of_a_divider_before_the_overlay_controls(self) -> None:
@@ -1163,7 +1168,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         toggle = self.panel._mask_tab._scope_toggle
         self.assertIsInstance(toggle, MaskScopeToggle)
-        page = self.panel._tool_ribbon._stack.widget(2)
+        page = self._ribbon_page("Mask")
         self.assertIs(self.panel._mask_tab._separators[1].parentWidget(), page)
 
         # Each icon widget is now wrapped in its own `_labeled_icon_group`
@@ -1292,7 +1297,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         convention the State|Visibility pair already uses). Renamed "Edit"
         -> "Manual edit" once sibling groups ("General"/"PNG") landed
         beside it (2026-10-02, maintainer request)."""
-        page = self.panel._tool_ribbon._stack.widget(2)
+        page = self._ribbon_page("Mask")
         # Picker + stack -> one row widget -> mask_edit_group (the
         # labeled_icon_group wrapper) -> page. The caption wraps the whole
         # picker+stack row so it is centred on the whole "Manual edit"
@@ -1321,7 +1326,7 @@ class RewriteImagePanelTest(unittest.TestCase):
     def test_general_group_is_the_leftmost_group_in_the_mask_tab(self) -> None:
         """"put this icon [Clear] in solo section 'General' and put section
         the most left" (2026-10-02, maintainer request)."""
-        page = self.panel._tool_ribbon._stack.widget(2)
+        page = self._ribbon_page("Mask")
         general_group = self.panel._mask_tab._clear_action.parentWidget()
         self.assertIs(general_group.parentWidget(), page)
         self.assertEqual(self.panel._mask_tab._general_label.text(), "General")
@@ -1339,7 +1344,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         """"these two icons [load/save] should be in 'PNG' section" -
         placed after "Manual edit", same divider convention as every other
         group boundary in this tab."""
-        page = self.panel._tool_ribbon._stack.widget(2)
+        page = self._ribbon_page("Mask")
         png_group = self.panel._mask_tab._png_actions.parentWidget()
         self.assertIs(png_group.parentWidget(), page)
         self.assertIs(self.panel._mask_tab._separators[3].parentWidget(), page)
@@ -1530,15 +1535,15 @@ class RewriteImagePanelTest(unittest.TestCase):
     # -- histogram highlight overlay (2026-10-02, "Histogram" ribbon tab) ----
 
     def test_histogram_highlight_overlay_controls_live_in_the_view_tab(self) -> None:
-        """"View" is tab index 0 (renamed from "Histogram" and moved first,
-        2026-10-06); the controls sit in its "Histogram" captioned group."""
+        """The "View" tab (renamed from "Histogram" 2026-10-06; moved from first to after Background 2026-10-22) holds
+        the controls, in its "Histogram" captioned group."""
         from lspr_imaging_app.panels.image.histogram_highlight_overlay_controls import (
             HistogramHighlightOverlayControls,
         )
 
         controls = self.panel._view_tab.highlight_controls
         self.assertIsInstance(controls, HistogramHighlightOverlayControls)
-        page = self.panel._tool_ribbon._stack.widget(0)
+        page = self._ribbon_page("View")
         self.assertIs(controls.parentWidget().parentWidget(), page)
         label = self.panel._view_tab._highlight_label
         self.assertEqual(label.text(), "Histogram")

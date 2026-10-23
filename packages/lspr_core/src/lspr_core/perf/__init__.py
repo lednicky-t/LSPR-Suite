@@ -15,7 +15,7 @@ Typical use in a parallel job::
 from .gate import ConcurrencyGate
 from .limits import WorkerLimits, worker_limits
 from .preferences import DEFAULT_PERF_PREFERENCES, MODE_AUTO, MODE_MANUAL, MODE_STANDARD, MODES, PerfPreferences
-from .priority import current_process_priority_is_lowered, lower_process_priority
+from .priority import lower_process_priority
 from .profile_store import LearnedSetting, ProfileStore
 from .runtime import PerfRuntime, RunReport, TunedRun, get_runtime, set_runtime
 from .system_profile import DestinationProfile, SystemProfile, probe_destination, probe_system
@@ -39,7 +39,6 @@ __all__ = [
     "TunedRun",
     "TunerSummary",
     "WorkerLimits",
-    "current_process_priority_is_lowered",
     "get_runtime",
     "lower_process_priority",
     "probe_destination",
