@@ -156,7 +156,7 @@ class MaskScanUiTest(unittest.TestCase):
 
     def test_the_scan_group_sits_between_manual_edit_and_png_behind_dividers(self) -> None:
         tab = self.panel._mask_tab
-        page = self.panel._tool_ribbon._stack.widget(2)
+        page = self.panel._mask_tab
         scan_group = tab._scan_controls.parentWidget()
         self.assertIs(scan_group.parentWidget(), page)
         self.assertEqual(tab._scan_label.text(), "Scan")
@@ -371,7 +371,7 @@ class MaskScanUiTest(unittest.TestCase):
 
     def test_the_auto_mask_group_sits_after_scan_and_before_png(self) -> None:
         tab = self.panel._mask_tab
-        page = self.panel._tool_ribbon._stack.widget(2)
+        page = self.panel._mask_tab
         auto_group = tab._auto_controls.parentWidget()
         self.assertEqual(tab._auto_label.text(), "Auto mask")
         layout = page.layout()

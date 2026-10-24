@@ -171,6 +171,45 @@ class RoiLabelPlacementTest(_PanelCase):
             self.panel = fresh  # tearDown stops it again; harmless
 
 
+class RoiLabelSizeTest(_PanelCase):
+    def test_the_size_box_sits_in_the_labels_row_of_both_menus_and_starts_at_the_old_size(self) -> None:
+        box = self.roi_tab.label_size_box
+        self.assertIs(box.parentWidget(), self.roi_tab.labels_button.parentWidget())
+        view_popup = self.view_tab._roi_display_menu.menu().actions()[0].defaultWidget()
+        self.assertTrue(view_popup.isAncestorOf(self.view_tab._roi_size_copy))
+        self.assertEqual(box.value(), 9)
+        self.assertEqual(self.panel._roi_overlay.label_item.point_size(), 9.0)
+
+    def test_changing_either_box_resizes_the_labels_and_the_other_box_follows(self) -> None:
+        self.roi_tab.label_size_box.setValue(14)
+        self.assertEqual(self.panel._roi_overlay.label_item.point_size(), 14.0)
+        self.assertEqual(self.view_tab._roi_size_copy.value(), 14)
+        self.view_tab._roi_size_copy.setValue(6)
+        self.assertEqual(self.roi_tab.label_size_box.value(), 6)
+        self.assertEqual(self.panel._roi_overlay.label_item.point_size(), 6.0)
+
+    def test_the_size_is_saved_and_restored(self) -> None:
+        saved: dict[str, object] = {}
+        store = UiStateStore({}, on_changed=saved.update)
+        self.panel.restore_ui_state(store)
+        self.view_tab._roi_size_copy.setValue(12)
+        store.flush()
+        self.assertEqual(saved["image/roi_label_point_size"], 12)
+
+        self.panel._renderer.stop()
+        fresh = ImagePanel(
+            DatasetModule(), self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(), RoiToolbox(),
+            SelectionModule(), ActiveToolModule(), ReferenceFrameModule(), HighlightRangeModule(), mask_scope=MaskScopeModule(),
+        )
+        try:
+            fresh.restore_ui_state(UiStateStore(dict(saved)))
+            self.assertEqual(fresh._view_tab._roi_size_copy.value(), 12)
+            self.assertEqual(fresh._roi_overlay.label_item.point_size(), 12.0, "applied, not just shown")
+        finally:
+            fresh._renderer.stop()
+            self.panel = fresh
+
+
 class GroupLabelPlacementTest(_PanelCase):
     def test_the_grid_replaces_the_side_drop_down_and_the_view_tab_has_a_copy_of_the_menu(self) -> None:
         menu = self.roi_tab.group_label_menu

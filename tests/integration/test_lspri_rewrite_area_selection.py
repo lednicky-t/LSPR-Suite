@@ -248,21 +248,24 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     # -- ribbon / general group -------------------------------------------------
 
-    def test_general_group_sits_left_of_the_ribbon_with_cursor_and_picker(self) -> None:
-        general = self.image_panel._general_row
-        self.assertIs(self.image_panel._cursor_overlay.icon_label.parent(), general)
-        self.assertIs(self._picker().parent(), general)
-        ribbon = self.image_panel._tool_ribbon
-        # The General row is the ribbon's own pinned leading column (2026-10-03), so it
-        # sits inside the ribbon, left of the first tab - no longer left of the ribbon.
-        self.assertTrue(ribbon.isAncestorOf(general))
-        first_tab = ribbon._tab_buttons[0]
-        self.assertLess(
-            general.mapTo(self.image_panel, general.rect().topLeft()).x(),
-            first_tab.mapTo(self.image_panel, first_tab.rect().topLeft()).x(),
-        )
-        # Same icon-button size for both, as requested.
-        self.assertEqual(self.image_panel._cursor_overlay.icon_label.size(), self._picker().size())
+    def test_the_picker_is_the_first_group_of_the_mask_and_rois_tabs_and_an_icon_of_the_view_tabs_image_group(self) -> None:
+        panel = self.image_panel
+        mask_picker, roi_picker, view_picker = panel._area_pickers
+        self.assertFalse(hasattr(panel, "_general_row"), "the always-visible General group is gone")
+        self.assertIs(panel._cursor_overlay.icon_label.parent(), panel._view_tab._display_range_controls)
+        for tab, picker in ((panel._mask_tab, mask_picker), (panel._roi_tab, roi_picker)):
+            self.assertIs(tab.layout().itemAt(0).widget(), picker.parentWidget(), "first group of the tab")
+            self.assertTrue(tab.layout().itemAt(0).widget().isAncestorOf(picker))
+        layout = panel._view_tab._display_range_controls.layout()
+        self.assertEqual([layout.itemAt(i).widget() for i in (0, 1)], [panel._cursor_overlay.icon_label, view_picker])
+        # Same icon-button size as the cursor toggle.
+        self.assertEqual(panel._cursor_overlay.icon_label.size(), mask_picker.size())
+
+    def test_every_copy_of_the_picker_shows_the_same_pick(self) -> None:
+        self.image_panel._area_pickers[2]._actions[AreaSelectionMode.LASSO].trigger()
+        self.assertIs(self.area.mode(), AreaSelectionMode.LASSO)
+        for picker in self.image_panel._area_pickers:
+            self.assertTrue(picker._actions[AreaSelectionMode.LASSO].isChecked())
 
     def test_cursor_readout_text_goes_to_the_canvas_not_the_button(self) -> None:
         overlay = self.image_panel._cursor_overlay

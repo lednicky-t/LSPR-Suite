@@ -676,13 +676,13 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertNotEqual(float(self._levels_on_screen()[1]), float(controls._high_edit.text()), "shown at its own range meanwhile")
 
     def test_the_display_range_group_is_the_leftmost_one_on_the_view_tab(self) -> None:
-        """Maintainer's request (2026-10-14): the Display range group sits to the left of the Histogram group;
+        """Maintainer's request (2026-10-14): the Display range group sits to the left of the Histogram (now Masks) group;
         the All group (Show all / Hide all) sits between them, next to Display range."""
         layout = self.panel._view_tab.layout()
         first, all_group, histogram = (layout.itemAt(index).widget() for index in (0, 2, 4))  # odd items are separators
         self.assertTrue(first.isAncestorOf(self.panel._view_tab.display_range_controls))
         self.assertTrue(all_group.isAncestorOf(self.panel._view_tab._all_controls))
-        self.assertTrue(histogram.isAncestorOf(self.panel._view_tab.highlight_controls))
+        self.assertTrue(histogram.isAncestorOf(self.panel._view_tab._masks_menu))  # the Masks menu holds the highlight tint
 
     def test_restoring_the_display_range_does_not_report_it_as_a_user_change(self) -> None:
         self._load()
@@ -1107,15 +1107,13 @@ class RewriteImagePanelTest(unittest.TestCase):
         now shows in the canvas's top-left corner instead of in the bar."""
         top_bar_layout = self.panel._top_bar.layout()
         self.assertIs(self.panel._tool_info.parent(), self.panel._top_bar)
-        self.assertIs(self.panel._cursor_overlay.icon_label.parent(), self.panel._general_row)
+        # (Moved again 2026-10-23: the cursor toggle is the first icon of the View tab's "Image" group.)
+        self.assertIs(self.panel._cursor_overlay.icon_label.parent(), self.panel._view_tab.display_range_controls)
         # The ribbon sits in its roll-up drawer (2026-10-16), which is what the bar's layout holds.
         ribbon_index = top_bar_layout.indexOf(self.panel._top_drawer)
         info_index = top_bar_layout.indexOf(self.panel._tool_info)
         self.assertNotEqual(ribbon_index, -1)
         self.assertIs(self.panel._tool_ribbon.parent(), self.panel._top_drawer)
-        # The General group is the ribbon's pinned, always-visible leading
-        # section (2026-10-03), so it sits inside the ribbon, left of its tabs.
-        self.assertTrue(self.panel._tool_ribbon.isAncestorOf(self.panel._general_row))
         self.assertLess(ribbon_index, info_index)
 
     def test_image_tools_tab_holds_a_transforms_section_wired_to_the_panels_own_modules(self) -> None:
@@ -1325,7 +1323,8 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_general_group_is_the_leftmost_group_in_the_mask_tab(self) -> None:
         """"put this icon [Clear] in solo section 'General' and put section
-        the most left" (2026-10-02, maintainer request)."""
+        the most left" (2026-10-02, maintainer request). Since 2026-10-23 the area-selection "Select" group and its
+        divider come first (items 0 and 1); General is the next group."""
         page = self._ribbon_page("Mask")
         general_group = self.panel._mask_tab._clear_action.parentWidget()
         self.assertIs(general_group.parentWidget(), page)
@@ -1336,7 +1335,8 @@ class RewriteImagePanelTest(unittest.TestCase):
         separator_index = layout.indexOf(self.panel._mask_tab._separators[0])
         state_group = self.panel._mask_tab._scope_toggle.parentWidget()
         state_index = layout.indexOf(state_group)
-        self.assertEqual(general_index, 0, "General must be the leftmost item in the whole Mask tab row")
+        self.assertEqual(general_index, 2, "General follows the Select group and its divider")
+        self.assertEqual(self.panel._mask_tab._select_group._label.text(), "Select")
         self.assertLess(general_index, separator_index)
         self.assertLess(separator_index, state_index)
 
@@ -1543,16 +1543,16 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         controls = self.panel._view_tab.highlight_controls
         self.assertIsInstance(controls, HistogramHighlightOverlayControls)
-        page = self._ribbon_page("View")
-        self.assertIs(controls.parentWidget().parentWidget(), page)
-        label = self.panel._view_tab._highlight_label
-        self.assertEqual(label.text(), "Histogram")
-        self.assertIs(label.parentWidget(), controls.parentWidget())
+        view_tab = self.panel._view_tab
+        popup = view_tab._masks_menu.menu().actions()[0].defaultWidget()
+        self.assertTrue(popup.isAncestorOf(controls), "in the Masks pick-up menu")
+        self.assertTrue(popup.isAncestorOf(view_tab._mask_controls))
+        self.assertEqual(view_tab._masks_label.text(), "Masks")
+        self.assertIs(view_tab._masks_label.parentWidget(), view_tab._masks_menu.parentWidget())
 
     def test_view_tab_mask_icons_mirror_the_mask_tab(self) -> None:
         view_controls = self.panel._view_tab._mask_controls
         mask_controls = self.panel._mask_tab.overlay_controls
-        self.assertEqual(self.panel._view_tab._mask_label.text(), "Mask")
         before = self.panel._mask_tint.visible
         view_controls._toggle_button.click()
         self.assertEqual(self.panel._mask_tint.visible, not before)
@@ -1777,7 +1777,7 @@ class RewriteImagePanelTest(unittest.TestCase):
     def test_the_tool_ribbon_dividers_span_the_icons_not_the_captions(self) -> None:
         """Maintainer (2026-10-18): the | between the groups of the top ribbon ran the full row height, caption
         included, so its centre sat ~11 px below the icons'. Now each line is as tall as an icon button and
-        starts where the icon row starts - in every tab, and for the divider after the General group."""
+        starts where the icon row starts - in every tab."""
         from lspr_imaging_app.panels.image.tool_ribbon import ImageToolRibbon
         from lspr_imaging_app.panels.ribbon_group import RibbonSeparator
 
@@ -1813,14 +1813,6 @@ class RewriteImagePanelTest(unittest.TestCase):
                     self.assertEqual(line[1] - line[0], icon_bottom - icon_top, f"{name}: as tall as an icon button")
                     self.assertAlmostEqual(line[0], icon_top, delta=1, msg=f"{name}: starts where the icons start")
                     checked += 1
-            # The divider after the General group: aligned to the General icons.
-            general = self.panel._general_row
-            general_button = next(b for b in general.findChildren(QtWidgets.QToolButton) if b.height() >= 20)
-            top, bottom = ribbon._pinned_separator.line_span()
-            line = extent(ribbon._pinned_separator, top, bottom)
-            expected = extent(general_button, 0, general_button.height())
-            self.assertEqual(line[1] - line[0], expected[1] - expected[0])
-            self.assertAlmostEqual(line[0], expected[0], delta=1)
             self.assertGreaterEqual(checked, 6)
         finally:
             self.panel.hide()

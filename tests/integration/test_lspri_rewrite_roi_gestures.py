@@ -45,6 +45,7 @@ try:
         DELETE,
         DESELECT,
         GROUP,
+        SELECT_GROUP,
         UNGROUP,
         RoiMenuChoice,
     )
@@ -453,6 +454,22 @@ class RoiGesturesTest(unittest.TestCase):
         menu = self.right_click(20.0, 20.0, None)
         self.assertEqual([name for _id, name in menu.call_args.kwargs["groups"]], ["A"])
         self.assertTrue(menu.call_args.kwargs["any_selected_grouped"])
+
+    def test_the_menu_offers_the_whole_group_only_for_a_grouped_roi(self) -> None:
+        self.roi_toolbox.group_rois((1, 2), "Row")
+        menu = self.right_click(20.0, 20.0, None)  # ROI 1: grouped
+        self.assertEqual(menu.call_args.kwargs["clicked_group"], ("Row", 2))
+        self.assertFalse(menu.call_args.kwargs["clicked_group_fully_selected"])
+        menu = self.right_click(60.0, 45.0, None)  # ROI 3: not grouped
+        self.assertIsNone(menu.call_args.kwargs["clicked_group"])
+
+    def test_menu_select_whole_group_selects_every_member(self) -> None:
+        self.roi_toolbox.group_rois((1, 2), "Row")
+        self.selection.set_roi_selection({3})
+        self.right_click(20.0, 20.0, RoiMenuChoice(SELECT_GROUP))
+        self.assertEqual(self.selection.selected_roi_ids(), frozenset({1, 2}))
+        menu = self.right_click(20.0, 20.0, None)
+        self.assertTrue(menu.call_args.kwargs["clicked_group_fully_selected"])
 
     def test_menu_delete_removes_the_selected_rois(self) -> None:
         self.selection.set_roi_selection({1, 2})
