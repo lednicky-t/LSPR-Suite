@@ -394,5 +394,48 @@ class CommandLineTest(unittest.TestCase):
             self.assertEqual(len(out.getvalue().strip().splitlines()), 2)
 
 
+class QtLogLevelTest(unittest.TestCase):
+    def test_the_known_harmless_font_warning_is_only_a_debug_record(self) -> None:
+        message = "QFont::setPointSize: Point size <= 0 (-1), must be greater than 0"
+        self.assertEqual(applog_setup.qt_log_level(logging.WARNING, message), logging.DEBUG)
+
+    def test_every_other_qt_message_keeps_its_level(self) -> None:
+        self.assertEqual(applog_setup.qt_log_level(logging.WARNING, "QFont::setPixelSize: Pixel size <= 0 (0)"), logging.WARNING)
+        self.assertEqual(applog_setup.qt_log_level(logging.ERROR, "QFont::setPointSize: Point size <= 0 (-1)"), logging.DEBUG)  # ERROR too: it is the same message
+        self.assertEqual(applog_setup.qt_log_level(logging.INFO, "anything"), logging.INFO)
+
+
+class QtMessageOriginTest(unittest.TestCase):
+    """`setup._qt_message_origin`: what the log adds to a Qt warning so it can be traced (no Qt is touched off the GUI thread)."""
+
+    def _origin(self, context) -> dict:
+        out: dict = {}
+        thread = threading.Thread(target=lambda: out.update(applog_setup._qt_message_origin(context)))  # a thread that is not the main one
+        thread.start()
+        thread.join()
+        return out
+
+    def test_the_python_stack_of_the_thread_is_recorded(self) -> None:
+        fields = self._origin(None)
+        self.assertIn("stack", fields)
+        self.assertTrue(fields["stack"])  # the most recent frame first, without the diagnostic's own and the handler's frame
+        self.assertNotIn("_qt_message_origin", fields["stack"])
+        self.assertNotIn("popup", fields)  # widgets are looked at on the GUI thread only
+
+    def test_qts_own_context_is_kept_when_it_has_one(self) -> None:
+        class Context:
+            file, function, line = "qfont.cpp", "QFont::setPointSize", 1234
+
+        fields = self._origin(Context())
+        self.assertEqual((fields["qt_file"], fields["qt_function"], fields["qt_line"]), ("qfont.cpp", "QFont::setPointSize", 1234))
+
+    def test_a_context_that_misbehaves_never_raises(self) -> None:
+        class Broken:
+            def __getattr__(self, name):
+                raise RuntimeError("no context")
+
+        self.assertIn("stack", self._origin(Broken()))  # the stack is taken first, so it survives
+
+
 if __name__ == "__main__":
     unittest.main()

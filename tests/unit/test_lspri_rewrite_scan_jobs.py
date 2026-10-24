@@ -20,9 +20,12 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis.scan_jobs import MaskRef, ScanSource, build_scan_plan, snapshot_source
+    from lspr_imaging_app.analysis.scan import scan_cubes
+    from lspr_imaging_app.analysis.scan_fingerprint import cell_hashes
+    from lspr_imaging_app.analysis.scan_jobs import MaskRef, ScanSource, authored_mask_digest, build_scan_plan, snapshot_source
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
+    from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.image_tools.preprocess import resolve_external_mask
     from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -184,6 +187,65 @@ class RoiLayoutTests(unittest.TestCase):
         empty = ScanSource(**{**source.__dict__, "rois": lambda: []})
         with self.assertRaises(ValueError):
             build_scan_plan(empty)
+
+
+class IgnoreMaskKeyTests(unittest.TestCase):
+    """The staleness check does not build the ignore masks (2026-10-24): it hashes what they are made from (the authored pixels and the
+    chromatic warp), which gives the same answer for far less work."""
+
+    def setUp(self) -> None:
+        rng = np.random.default_rng(3)
+        self.pixels = rng.random((H, W)) > 0.8
+        self.change = MaskChange((0, 500.0), "individual", self.pixels)
+
+    def _source(self, app, change, loads):
+        def resolve(cube, wl):
+            if (cube, wl) != (1, 510.0):
+                return None
+            return MaskRef(change.frame, change.scope, lambda: (loads.append(1), change.mask)[1], change.content_digest)
+
+        return ScanSource(**{**app.source().__dict__, "resolve_mask": resolve})
+
+    def test_a_masks_digest_is_that_of_its_pixels(self) -> None:
+        self.assertEqual(self.change.content_digest(), authored_mask_digest(self.pixels))
+        other = self.pixels.copy()
+        other[0, 0] = not other[0, 0]
+        self.assertNotEqual(MaskChange((0, 500.0), "individual", other).content_digest(), self.change.content_digest())
+
+    def test_a_plan_made_for_checking_decodes_nothing_and_hashes_like_a_full_plan(self) -> None:
+        app = _plain()
+        loads: list[int] = []
+        full = build_scan_plan(self._source(app, self.change, loads))
+        self.assertEqual(len(loads), 1)  # the full plan decodes the mask (once: the frames of one mask share it)
+        loads.clear()
+        light = build_scan_plan(self._source(app, self.change, loads), resolve_masks=False)
+        self.assertEqual(loads, [])
+        self.assertFalse(light.masks_resolved)
+        self.assertEqual(light.ignore_mask_bytes, 0)
+        frame = light.jobs[1].frames[1]
+        self.assertIsNone(frame.ignore)
+        self.assertIsNotNone(frame.ignore_key)
+        self.assertEqual(frame.ignore_key, full.jobs[1].frames[1].ignore_key)
+        self.assertTrue(np.array_equal(cell_hashes(light), cell_hashes(full)))
+
+    def test_the_hash_follows_the_pixels_and_the_warp_and_only_of_the_cubes_that_have_the_mask(self) -> None:
+        app = _plain()
+        base = cell_hashes(build_scan_plan(self._source(app, self.change, []), resolve_masks=False))
+        edited = self.pixels.copy()
+        edited[3, 4] = not edited[3, 4]
+        changed = cell_hashes(build_scan_plan(self._source(app, MaskChange((0, 500.0), "individual", edited), []), resolve_masks=False))
+        self.assertTrue(np.array_equal(changed[[0, 2]], base[[0, 2]]))  # the other cubes do not have the mask
+        self.assertFalse(np.any(changed[1] == base[1]))
+        app.between = lambda a, b: np.array([[1.0, 0.0, 3.0], [0.0, 1.0, -1.0]])  # the chromatic warp to the frame moved
+        warped = cell_hashes(build_scan_plan(self._source(app, self.change, []), resolve_masks=False))
+        self.assertTrue(np.array_equal(warped[[0, 2]], base[[0, 2]]))
+        self.assertFalse(np.any(warped[1] == base[1]))
+
+    def test_a_plan_made_for_checking_cannot_be_scanned(self) -> None:
+        app = _plain()
+        light = build_scan_plan(self._source(app, self.change, []), resolve_masks=False)
+        with self.assertRaises(ValueError):
+            list(scan_cubes(light.jobs, light.settings, processes=1))
 
 
 class IgnoreMaskTests(unittest.TestCase):

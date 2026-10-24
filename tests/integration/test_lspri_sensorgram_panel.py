@@ -164,6 +164,28 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertIn("2 ROIs", self.panel._status.text())
         self.assertNotIn("OUT OF DATE", self.panel._status.text())
 
+    def test_the_scan_check_logs_where_its_time_went(self) -> None:
+        with self.assertLogs("lspr_imaging_app.analysis.scan_results", level="INFO") as logs:
+            self._open_and_scan()
+        loaded = next(line for line in logs.output if "analysis.scan_loaded" in line)
+        checked = next(line for line in logs.output if "analysis.scan_checked" in line)
+        self.assertIn("cpu_ms=", loaded)
+        for field in ("cpu_ms=", "plan_ms=", "hash_ms=", "compare_ms=", "snapshot_ms=", "start_wait_ms=", "handover_ms="):
+            self.assertIn(field, checked)
+
+    def test_the_helper_process_can_be_started_before_the_first_fit_is_asked_for(self) -> None:
+        process_panel = SensorgramPanel(
+            self.m.scan_results, self.m.roi_toolbox, self.m.dataset, self.m.selection, self.m.analysis_settings, self.m.cube_display,
+        )
+        try:
+            process_panel.start_helper_early()
+            process_panel.start_helper_early()  # more than once is the same one process
+            self.assertTrue(_pump(lambda: process_panel._trace_pool._executor is not None), "the helper was never started")
+            self.assertEqual(process_panel._trace_pool._started, 1)
+        finally:
+            process_panel.shutdown()
+            process_panel.deleteLater()
+
     def test_the_helper_process_draws_the_same_traces_as_the_worker_thread(self) -> None:
         self._open_and_scan()
         self.m.selection.set_roi_selection({1, 2})
