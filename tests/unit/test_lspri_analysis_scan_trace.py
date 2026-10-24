@@ -67,7 +67,7 @@ def make_scan(unscanned=(), no_pixels=()) -> StoredScan:
     return StoredScan(
         path=Path("memory.h5"), attrs={}, cube_indices=tuple(range(N_CUBE)), roi_ids=ROI_IDS, wavelength_nm=tuple(WL.tolist()),
         acquired_at_unix_ms=np.zeros((N_CUBE, len(WL)), dtype=np.int64), values={"mean": mean}, std=np.full(shape, 5.0), n_valid=n_valid,
-        n_nominal=np.full(shape, 110, dtype=np.uint32), cell_hash=cell_hash, recipe_id=np.ones((N_CUBE, len(ROI_IDS)), dtype=np.int32),
+        n_nominal=np.full(shape, 110, dtype=np.uint32), n_masked=np.zeros(shape, dtype=np.uint32), cell_hash=cell_hash, recipe_id=np.ones((N_CUBE, len(ROI_IDS)), dtype=np.int32),
         layout_id=np.ones(N_CUBE, dtype=np.int32),
     )
 

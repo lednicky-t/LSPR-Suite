@@ -89,6 +89,7 @@ class SensorgramPanelTests(unittest.TestCase):
         self.panel = SensorgramPanel(
             self.m.scan_results, self.m.roi_toolbox, self.m.dataset, self.m.selection, self.m.analysis_settings, self.m.cube_display,
             trace_in_process=False,  # these tests spy on the fit in the worker thread; the helper process has its own test below
+            mask=self.m.mask,
         )
         self.finished: list[tuple] = []
         self.m.analysis_scan.task_finished.connect(lambda *args: self.finished.append(args))
@@ -116,12 +117,14 @@ class SensorgramPanelTests(unittest.TestCase):
 
     # -- helpers -------------------------------------------------------------------------------------------------------------
 
-    def _open_and_scan(self, extra_rois: int = 0) -> None:
+    def _open_and_scan(self, extra_rois: int = 0, before_scan=None) -> None:
         self.m.dataset.load_dataset(_write_dataset(self.root))
         for cx, cy, _c0 in CENTERS.values():
             self.m.roi_toolbox.add_roi(cx, cy, sample_diameter_px=6.0)
         for k in range(extra_rois):
             self.m.roi_toolbox.add_roi(10.0 + 8.0 * k, 55.0, sample_diameter_px=4.0)
+        if before_scan is not None:
+            before_scan()
         self.finished.clear()
         self.workflow.run_button.click()
         self.assertTrue(_pump(lambda: bool(self.finished)))
@@ -358,9 +361,93 @@ class SensorgramPanelTests(unittest.TestCase):
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
         self.assertEqual(
-            [label.text() for label in self.panel._ribbon._captions], ["Live", "Display", "Average", "Smoothing", "Spikes", "Baseline"]
+            [label.text() for label in self.panel._ribbon._captions], ["Live", "Display", "Average", "Smoothing", "Spikes", "Baseline", "View"]
         )
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~960 px before the row could scroll
+
+    # -- mask marks ------------------------------------------------------------------------------------------------------------------
+
+    def _put_masks_over_roi_1(self) -> None:
+        """ROI 1 (x 40, y 30, disk radius 3) sits under every mask below. ROI 2 (x 60) is clear of them: its disk by far, and its reference
+        ring (outer diameter 36 px, so it starts at x = 42) by two pixels."""
+        over_roi_1 = np.zeros((H, W), dtype=bool)
+        over_roi_1[27:34, 34:41] = True
+        self.m.mask.set_mask_change((3, 510.0), "persistent", over_roi_1)  # applies from cube 3 on
+        self.m.mask.set_mask_change((1, 540.0), "individual", over_roi_1)  # this frame only
+        self.m.mask.set_mask_change((4, 540.0), "individual", over_roi_1)  # ... on top of the persistent one
+
+    def _mask_mark_items(self) -> dict[str, np.ndarray]:
+        """symbol -> x of the drawn mask marks (the orange scatter items)."""
+        found: dict[str, np.ndarray] = {}
+        for item in self.panel._plot._items:
+            if hasattr(item, "opts") and item.opts.get("symbol") in ("t2", "o") and item.opts.get("size") in (11, 13):
+                found[item.opts["symbol"]] = np.asarray(item.getData()[0])
+        return found
+
+    def test_points_a_mask_touched_get_a_triangle_for_persistent_and_a_circle_for_individual(self) -> None:
+        self._open_and_scan(before_scan=self._put_masks_over_roi_1)
+        self.assertGreater(int(self.m.scan_results.stored().n_masked.sum()), 0)
+        self.m.selection.set_roi_selection({1, 2})
+        self._wait_drawn(2)
+        marks = self.panel._mask_marks(self.m.scan_results.stored(), self._series())
+        self.assertEqual(list(marks["roi:1"][0]), [False, False, False, True, True, True])  # persistent from cube 3
+        self.assertEqual(list(marks["roi:1"][1]), [False, True, False, False, True, False])  # individual at cubes 1 and 4
+        self.assertFalse(marks["roi:2"][0].any() or marks["roi:2"][1].any())  # the mask never reached ROI 2
+        drawn = self._mask_mark_items()
+        self.assertEqual(sorted(drawn["t2"]), [3.0, 4.0, 5.0])
+        self.assertEqual(sorted(drawn["o"]), [1.0, 4.0])
+
+    def test_a_mask_that_only_touches_the_reference_ring_still_marks_the_point(self) -> None:
+        def ring_only() -> None:
+            mask = np.zeros((H, W), dtype=bool)
+            mask[30:38, 44:47] = True  # on ROI 2's ring (x >= 42), nowhere near its disk (x 57-63)
+            self.m.mask.set_mask_change((2, 510.0), "persistent", mask)
+
+        self._open_and_scan(before_scan=ring_only)
+        stored = self.m.scan_results.stored()
+        row = stored.roi_ids.index(2)
+        self.assertEqual(int(stored.n_masked[:, row, :, 0].sum()), 0)  # the sample disk lost nothing
+        self.assertGreater(int(stored.n_masked[:, row, :, 1].sum()), 0)  # the ring did
+        self.m.selection.set_roi_selection({2})
+        self._wait_drawn(1)
+        persistent, individual = self.panel._mask_marks(stored, self._series())["roi:2"]
+        self.assertEqual(list(persistent), [False, False, True, True, True, True])
+        self.assertFalse(individual.any())
+
+    def test_an_average_is_marked_where_any_of_its_rois_was_touched(self) -> None:
+        from dataclasses import replace
+
+        self._open_and_scan(before_scan=self._put_masks_over_roi_1)
+        self.m.analysis_settings.set_statistics_settings(replace(self.m.analysis_settings.statistics_settings(), sensorgram_display_mode="average_all"))
+        self.m.selection.set_roi_selection({1, 2})
+        self.assertTrue(_pump(lambda: self.panel._last is not None and self.panel._last[1][0].key == "average" and self.panel._job is None))
+        persistent, individual = self.panel._mask_marks(self.m.scan_results.stored(), self._series())["average"]
+        self.assertEqual(list(persistent), [False, False, False, True, True, True])
+        self.assertEqual(list(individual), [False, True, False, False, True, False])
+
+    def test_the_view_button_hides_and_shows_the_marks_and_is_remembered(self) -> None:
+        store = UiStateStore()
+        self.panel.restore_ui_state(store)
+        self._open_and_scan(before_scan=self._put_masks_over_roi_1)
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        self.assertTrue(self.panel._mask_toggle.isChecked())  # on by default
+        self.assertTrue(self._mask_mark_items())
+        self.panel._mask_toggle.click()
+        self.assertFalse(self._mask_mark_items())
+        self.assertIs(store.get("sensorgram/mask_marks"), False)
+        self.panel._mask_toggle.click()
+        self.assertTrue(self._mask_mark_items())
+        store.set("sensorgram/mask_marks", False)
+        self.panel.restore_ui_state(store)
+        self.assertFalse(self.panel._mask_toggle.isChecked())
+
+    def test_no_mask_no_marks(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1, 2})
+        self._wait_drawn(2)
+        self.assertEqual(int(self.m.scan_results.stored().n_masked.sum()), 0)
+        self.assertFalse(self._mask_mark_items())
 
     def test_the_ribbon_rolls_up_and_the_choice_is_remembered(self) -> None:
         from lspr_imaging_app.panels.ui_state import UiStateStore

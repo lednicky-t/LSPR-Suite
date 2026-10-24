@@ -36,7 +36,7 @@ def _plan(positions):
 def _result(cube_pos, n_frames, fill):
     shape = (2, n_frames, 2)
     return CubeResult(cube_pos, {"mean": np.full(shape, float(fill))}, np.full(shape, fill / 10.0), np.full(shape, 5, dtype=np.int32),
-                      np.full(shape, 6, dtype=np.int32))
+                      np.full(shape, 6, dtype=np.int32), np.full(shape, 2, dtype=np.int32))
 
 
 class PlaceTests(unittest.TestCase):
@@ -50,6 +50,8 @@ class PlaceTests(unittest.TestCase):
         self.assertTrue(np.all(arrays.n_valid[1][:, 1, :] == 0))
         self.assertTrue(np.all(arrays.n_valid[1][:, [0, 2], :] == 5))
         self.assertTrue(np.all(arrays.n_nominal[1][:, [0, 2], :] == 6))
+        self.assertTrue(np.all(arrays.n_masked[1][:, [0, 2], :] == 2))
+        self.assertTrue(np.all(arrays.n_masked[1][:, 1, :] == 0))
         self.assertTrue(np.all(np.isnan(arrays.values["mean"][0])))  # cube 0 not placed yet
         self.assertEqual(list(arrays.done), [False, True])
 

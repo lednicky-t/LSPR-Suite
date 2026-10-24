@@ -83,6 +83,7 @@ def _filled(plan, base=1.0):
         arrays.std[p] = 0.5 * (base + p)
         arrays.n_valid[p] = 100 + p
         arrays.n_nominal[p] = 120 + p
+        arrays.n_masked[p] = 3 * p
         arrays.done[p] = True
     return arrays
 
@@ -134,6 +135,8 @@ class FileContentTests(_TempDirCase):
         self.assertTrue(np.array_equal(back.std, arrays.std))
         self.assertTrue(np.array_equal(back.n_valid, arrays.n_valid))
         self.assertEqual(back.n_valid.dtype, np.uint32)
+        self.assertTrue(np.array_equal(back.n_masked, arrays.n_masked))  # the link between a mask and a ROI survives the file
+        self.assertEqual(back.n_masked.dtype, np.uint32)
         self.assertTrue(np.array_equal(back.cell_hash, hashes))
         self.assertTrue(back.computed().all())
         self.assertEqual(back.acquired_at_unix_ms[2, 0], 1_700_000_000_000 + 2000 + 500)
@@ -266,6 +269,22 @@ class ReuseAndReplace(_TempDirCase):
         self.assertTrue(backup.exists())
         self.assertTrue(scan_store.read_scan(backup).computed()[0].all())  # nothing was lost
         self.assertEqual(scan_store.read_scan(self.path).roi_ids, (1, 2, 3, 4))
+
+    def test_a_schema_1_0_file_without_mask_counts_is_kept_as_previous_and_replaced(self) -> None:
+        plan = _App().plan()
+        store = scan_store.ScanStore(self.path)
+        store.prepare(plan)
+        store.write_cube(plan, _filled(plan), 0, cell_hashes(plan)[0])
+        with h5py.File(self.path, "r+") as f:  # make it look like a file from before n_masked existed
+            del f["processed/scan/n_masked"]
+            f.attrs["schema_version"], f.attrs["schema_minor"] = "1.0", 0
+        with self.assertRaises(scan_store.ScanFileError) as caught:
+            scan_store.read_scan(self.path)
+        self.assertIn("scan again", str(caught.exception))
+        stored = scan_store.ScanStore(self.path).prepare(plan)
+        self.assertTrue(np.all(stored == 0))  # every cell has to be computed again
+        self.assertTrue(self.path.with_name(scan_store.BACKUP_NAME).exists())
+        self.assertEqual(scan_store.read_scan(self.path).n_masked.shape, (4, 3, 3, 2))
 
     def test_a_file_that_is_not_ours_is_moved_aside_not_overwritten(self) -> None:
         self.path.parent.mkdir(parents=True)

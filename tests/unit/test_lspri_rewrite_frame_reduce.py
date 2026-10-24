@@ -202,6 +202,27 @@ class ReduceFrameTests(unittest.TestCase):
         self.assertGreater(with_exclusion.n_nominal[4, SAMPLE], 0)  # corner ROI still has pixels
         self.assertLess(with_exclusion.n_nominal[4, SAMPLE], np.pi * 5.0**2)  # ... but only the part inside the image
 
+    def test_n_masked_is_what_the_ignore_mask_removed_from_each_aperture(self) -> None:
+        rois = _rois()
+        rs = build_roi_set(rois, INNER, OUTER)
+        image, ignore = _image(), _ignore()
+        free = reduce_frame(rs, image, None, IDENTITY, ("mean",))
+        masked = reduce_frame(rs, image, ignore, IDENTITY, ("mean",))
+        self.assertEqual(masked.n_masked.dtype, np.int32)
+        self.assertFalse(free.n_masked.any())  # no mask: nothing removed
+        self.assertTrue(np.array_equal(masked.n_masked, free.n_nominal - masked.n_nominal))
+        self.assertGreater(masked.n_masked[0, SAMPLE], 0)  # ROI 1 sits under the mask
+        self.assertEqual(masked.n_masked[6, SAMPLE], 0)  # ROI 7 is far from it
+        shape = image.shape
+        union = np.zeros(shape, dtype=bool)
+        for roi in rois:
+            union |= rz.rasterize_sample(roi, shape, IDENTITY)
+        for index, roi in enumerate(rois):  # independently: the part of each aperture that lies inside the ignore mask
+            sample = rz.rasterize_sample(roi, shape, IDENTITY)
+            ring = rz.rasterize_reference(roi, shape, IDENTITY, default_inner_diameter_px=INNER, default_outer_diameter_px=OUTER) & ~union
+            self.assertEqual(int(masked.n_masked[index, SAMPLE]), int((sample & ignore).sum()), f"sample of ROI {roi.area_roi_id}")
+            self.assertEqual(int(masked.n_masked[index, REFERENCE]), int((ring & ignore).sum()), f"ring of ROI {roi.area_roi_id}")
+
     def test_a_roi_without_a_ring_or_sample_gets_nan_values_and_counts_of_zero(self) -> None:
         rs = build_roi_set(_rois(), INNER, OUTER)
         result = reduce_frame(rs, _image(), None, IDENTITY, ("mean",))
