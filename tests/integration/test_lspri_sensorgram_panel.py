@@ -163,6 +163,21 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertIn("2 ROIs", self.panel._status.text())
         self.assertNotIn("OUT OF DATE", self.panel._status.text())
 
+    def test_the_fit_waits_while_the_image_is_being_drawn_and_then_starts(self) -> None:
+        from lspr_imaging_app.panels.image_first import ImageFirst
+
+        self._open_and_scan()
+        image_busy = {"on": True}
+        self.panel._image_first = ImageFirst(lambda: image_busy["on"])
+        self.metric_calls.clear()
+        self.m.selection.set_roi_selection({1, 2})
+        _pump(lambda: False, 0.5)  # several coalescing steps: nothing may start
+        self.assertEqual(self.metric_calls, [])
+        self.assertIsNone(self.panel._job)
+        image_busy["on"] = False  # the frame is drawn
+        self._wait_drawn(2)
+        self.assertTrue(self.metric_calls)
+
     def test_clicking_the_plot_moves_the_cube_and_the_cursor_follows_the_slider(self) -> None:
         self._open_and_scan()
         self.m.selection.set_roi_selection({1})
