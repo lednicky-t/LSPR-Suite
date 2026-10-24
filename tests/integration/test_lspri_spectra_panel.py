@@ -20,6 +20,8 @@ from pathlib import Path
 import numpy as np
 import tifffile
 from PyQt6 import QtWidgets
+from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QColor
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
@@ -31,12 +33,13 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app import app_rewrite
+    from lspr_imaging_app.panels.image.mark_colors import wavelength_color
     from lspr_imaging_app.analysis import scan_store
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
     from lspr_imaging_app.panels.spectra import panel as spectra_module
     from lspr_imaging_app.panels.spectra.panel import SpectraPanel
     from lspr_imaging_app.panels.ui_state import UiStateStore
-    from lspr_imaging_app.panels.workflow.panel import WorkflowPanel
+    from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -73,10 +76,7 @@ class SpectraPanelTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self._tmp.name)
         self.m = app_rewrite._build_modules()
-        self.workflow = WorkflowPanel(
-            self.m.dataset, self.m.selection, self.m.reference_frame, self.m.session_coordinator,
-            cube_display=self.m.cube_display, frame_roles=self.m.frame_roles,
-        )
+        self.workflow = AnalysisTab()  # the Image panel's Analysis tab: Scan button, wired like the app does
         self.ui_state = UiStateStore({})
         app_rewrite._wire_analysis_scan(self.m, self.workflow, self.ui_state)
         self.m.scan_results._timer.setInterval(30)  # the debounce is 1.5 s in the app
@@ -89,6 +89,8 @@ class SpectraPanelTests(unittest.TestCase):
 
         def spy(stored, request):
             self.compute_threads.append(threading.current_thread())
+            if getattr(self, "slow", 0.0):
+                time.sleep(self.slow)
             return self._real_compute(stored, request)
 
         spectra_module.compute_spectra = spy
@@ -109,7 +111,7 @@ class SpectraPanelTests(unittest.TestCase):
         self.m.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0)
         self.m.roi_toolbox.add_roi(55.0, 34.0, sample_diameter_px=6.0)
         self.finished.clear()
-        self.workflow.analysis_scan_row._run_button.click()
+        self.workflow.run_button.click()
         self.assertTrue(_pump(lambda: bool(self.finished)))
         self.assertEqual(self.finished[0][1], "completed")
         self.assertTrue(_pump(lambda: self.m.scan_results.stored() is not None))
@@ -163,6 +165,78 @@ class SpectraPanelTests(unittest.TestCase):
         self.m.selection.set_cube(2)
         self.assertTrue(_pump(lambda: self.panel._last[0].request.cube == 2 and not self.panel._busy))
         self.assertFalse(np.array_equal(first, self.panel._last[1][0].values))
+
+    def test_the_cursor_follows_the_wavelength_slider_and_its_circle_sets_the_wavelength(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self.m.selection.set_cube(1)
+        self._wait_drawn(1)
+        cursor = self.panel._plot._axis_cursor
+        self.m.selection.set_wavelength(550.0)
+        self.assertTrue(cursor.is_shown())
+        self.assertEqual(cursor.line.value(), 550.0)
+        self.assertEqual(cursor.x(), 550.0)
+        self.assertEqual(cursor.handle._color.name(), QColor(wavelength_color()).name())  # the Wavelength slider's colour
+        calls = len(self.compute_threads)
+        self.m.selection.set_wavelength(600.0)
+        _pump(lambda: False, 0.4)
+        self.assertEqual(cursor.line.value(), 600.0)
+        self.assertEqual(len(self.compute_threads), calls)  # moving the wavelength recomputes nothing
+        cursor.dragged.emit(503.0)  # dragged to somewhere between ticks: the nearest scanned wavelength
+        self.assertEqual(self.m.selection.current_wavelength(), 500.0)
+        self.assertEqual(cursor.line.value(), 500.0)
+        class _Click:  # a plain left click on the plot area, as pyqtgraph hands it to `sigMouseClicked`
+            def button(self): return Qt.MouseButton.LeftButton
+            def double(self): return False
+            def isAccepted(self): return False
+            def scenePos(self): return scene_pos
+
+        scene_pos = cursor.handle._view_box.mapViewToScene(QPointF(548.0, 0.0))
+        self.panel._plot._on_scene_clicked(_Click())  # a click elsewhere places the cursor (at the nearest scanned wavelength)
+        self.assertEqual(self.m.selection.current_wavelength(), 550.0)
+        self.assertEqual(cursor.x(), 550.0)
+        cursor.line.sigDragged.emit(cursor.line)  # dragging the line itself reports its value too
+        self.assertEqual(self.m.selection.current_wavelength(), 550.0)
+        cursor.line.setValue(512.0)  # let go away from where the owner put it: it goes back
+        cursor.line.sigPositionChangeFinished.emit(cursor.line)
+        self.assertEqual(cursor.line.value(), 550.0)
+        self.m.selection.set_wavelength(0.0)  # the dark frame is not on the spectral axis
+        self.assertFalse(cursor.is_shown())
+
+    def test_a_slow_recompute_is_reported_to_the_status_bar_and_a_quick_one_is_not(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        progress, finished = [], []
+        self.panel.task.task_progress.connect(lambda *a: progress.append(a))
+        self.panel.task.task_finished.connect(lambda *a: finished.append(a))
+        self.panel.task._timer.setInterval(100)
+        self.m.selection.set_cube(2)  # quick: no trace in the status bar
+        self.assertTrue(_pump(lambda: self.panel._last[0].request.cube == 2 and not self.panel._busy))
+        self.assertEqual((progress, finished), ([], []))
+        self.slow = 0.5
+        self.m.selection.set_cube(1)
+        self.assertTrue(_pump(lambda: bool(finished)))
+        self.assertEqual(finished[0][:2], ("spectra.compute", "completed"))
+        self.assertEqual(progress[0][:3], ("spectra.compute", "Spectra", -1.0))
+        self.assertIn("1 ROI on cube 1", progress[0][3])
+
+    def test_cancel_clears_the_plot_and_drops_the_late_result(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        finished = []
+        self.panel.task.task_finished.connect(lambda *a: finished.append(a))
+        self.panel.task._timer.setInterval(50)
+        self.slow = 0.6
+        self.m.selection.set_cube(2)
+        self.assertTrue(_pump(lambda: self.panel.task.is_shown()))
+        self.panel.cancel()
+        self.assertEqual(finished[0][:2], ("spectra.compute", "cancelled"))
+        self.assertEqual(self._items(), 0)
+        self.assertTrue(_pump(lambda: not self.panel._busy))  # the worker ends; its result belongs to an older generation
+        self.assertEqual(self._items(), 0)
+        self.assertIsNone(self.panel._last)
 
     def test_error_bars_are_a_remembered_toggle_and_add_items(self) -> None:
         self._open_and_scan()
@@ -287,7 +361,7 @@ class SpectraPanelTests(unittest.TestCase):
         self.m.roi_toolbox.move_roi(1, 41.0, 30.0)
         self.assertTrue(_pump(lambda: self.m.scan_results.is_cube_current(1) is False))
         self.finished.clear()
-        self.workflow.analysis_scan_row._run_button.click()
+        self.workflow.run_button.click()
         self.assertTrue(_pump(lambda: bool(self.finished)))
         self.assertTrue(_pump(lambda: self.m.scan_results.is_cube_current(1) is True))
         self.assertTrue(_pump(lambda: self.panel._last is not None and "OUT OF DATE" not in self.panel._status.text()))

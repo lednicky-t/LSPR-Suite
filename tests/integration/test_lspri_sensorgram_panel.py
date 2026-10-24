@@ -22,6 +22,8 @@ from unittest import mock
 import numpy as np
 import tifffile
 from PyQt6 import QtWidgets
+from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QColor
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
@@ -33,11 +35,12 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app import app_rewrite
+    from lspr_imaging_app.panels.image.mark_colors import cube_color
     from lspr_imaging_app.analysis import scan_trace
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
     from lspr_imaging_app.panels.sensorgram.panel import SensorgramPanel
     from lspr_imaging_app.panels.ui_state import UiStateStore
-    from lspr_imaging_app.panels.workflow.panel import WorkflowPanel
+    from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -80,10 +83,7 @@ class SensorgramPanelTests(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.m = app_rewrite._build_modules()
         self.m.session_autosave._suspended = True
-        self.workflow = WorkflowPanel(
-            self.m.dataset, self.m.selection, self.m.reference_frame, self.m.session_coordinator,
-            cube_display=self.m.cube_display, frame_roles=self.m.frame_roles,
-        )
+        self.workflow = AnalysisTab()  # the Image panel's Analysis tab: Scan button, wired like the app does
         app_rewrite._wire_analysis_scan(self.m, self.workflow, UiStateStore({}))
         self.m.scan_results._timer.setInterval(30)
         self.panel = SensorgramPanel(
@@ -122,7 +122,7 @@ class SensorgramPanelTests(unittest.TestCase):
         for k in range(extra_rois):
             self.m.roi_toolbox.add_roi(10.0 + 8.0 * k, 55.0, sample_diameter_px=4.0)
         self.finished.clear()
-        self.workflow.analysis_scan_row._run_button.click()
+        self.workflow.run_button.click()
         self.assertTrue(_pump(lambda: bool(self.finished)))
         self.assertEqual(self.finished[0][1], "completed")
         self.assertTrue(_pump(lambda: self.m.scan_results.stored() is not None))
@@ -174,6 +174,51 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertEqual(self.panel._plot._cursor.value(), 4.0)
         _pump(lambda: False, 0.4)
         self.assertEqual(len(self.metric_calls), calls_before)  # moving the cube recomputes nothing
+
+    def test_the_cursor_has_the_slider_circle_and_dragging_it_moves_the_cube(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        cursor = self.panel._plot._axis_cursor
+        self.m.selection.set_cube(2)
+        self.assertTrue(cursor.is_shown())
+        self.assertEqual(cursor.x(), 2.0)  # the circle sits on the cursor line
+        self.assertEqual(cursor.handle._color.name(), QColor(cube_color()).name())  # the Cube slider's colour
+        scene_pos = cursor.handle._view_box.mapViewToScene(QPointF(4.4, 0.0))
+
+        class _Drag:  # what pyqtgraph hands a dragged item: a left button and the pointer's scene position
+            accepted = False
+            def button(self): return Qt.MouseButton.LeftButton
+            def accept(self): self.accepted = True
+            def ignore(self): pass
+            def scenePos(self): return scene_pos
+
+        drag = _Drag()
+        cursor.handle.mouseDragEvent(drag)
+        self.assertTrue(drag.accepted)
+        self.assertEqual(self.m.selection.current_cube(), 4)  # the nearest cube, like the slider
+        self.assertEqual(cursor.line.value(), 4.0)
+        self.assertEqual(cursor.x(), 4.0)
+        self.m.selection.set_roi_selection(set())
+        _pump(lambda: not cursor.is_shown(), 2.0)
+        self.assertFalse(cursor.is_shown())  # nothing plotted: no cursor
+
+    def test_fitting_is_reported_to_the_status_bar_and_cancel_stops_it(self) -> None:
+        self._open_and_scan(extra_rois=10)
+        progress, finished = [], []
+        self.panel.task.task_progress.connect(lambda *a: progress.append(a))
+        self.panel.task.task_finished.connect(lambda *a: finished.append(a))
+        self.panel.task._timer.setInterval(50)
+        self.slow = 0.05
+        self.m.selection.set_roi_selection(set(range(1, 14)))
+        self.assertTrue(_pump(lambda: self.panel.task.is_shown()))
+        self.assertEqual(progress[0][:2], ("sensorgram.compute", "Sensorgram"))
+        self.assertTrue(_pump(lambda: any(0.0 <= p[2] <= 1.0 and "fitting ROI" in p[3] for p in progress)))
+        self.panel.cancel()
+        self.assertEqual(finished[0][:2], ("sensorgram.compute", "cancelled"))
+        self.assertTrue(_pump(lambda: self.panel._job is None))
+        self.assertIsNone(self.panel._last)  # the plot was cleared, not left standing with the old controls
+        self.assertEqual(len(finished), 1)  # the late result of the stopped run closes nothing twice
 
     def test_the_time_axis_uses_the_cube_start_seconds(self) -> None:
         self._open_and_scan()
