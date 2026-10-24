@@ -14,6 +14,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import tifffile
@@ -28,7 +29,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis import scan_store
+    from lspr_imaging_app.analysis import scan_jobs, scan_store
     from lspr_imaging_app.analysis.scan import scan_cubes
     from lspr_imaging_app.analysis.scan_arrays import new_arrays, place
     from lspr_imaging_app.analysis.scan_jobs import MaskRef, ScanSource, build_scan_plan, snapshot_source
@@ -243,6 +244,27 @@ class ScanTaskTests(unittest.TestCase):
         self.assertFalse(np.array_equal(second.cell_hash[2], first.cell_hash[2]))
         self.assertTrue(second.computed().all())
         self.assertEqual(sorted(second.recipes), [1])  # same recipe
+
+    def test_masks_are_built_only_for_the_cubes_that_are_scanned_again(self) -> None:
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        real = scan_jobs.resolve_external_mask
+        built: list[int] = []
+
+        def counting(*args, **kwargs):
+            built.append(1)
+            return real(*args, **kwargs)
+
+        with mock.patch.object(scan_jobs, "resolve_external_mask", counting):
+            self.affine_override = {(2, 510.0): np.array([[1.002, 0.0, 0.4], [0.0, 1.0, 0.0]])}  # cube 2 is stale; the masked cube 1 is current
+            self._rerun(path)
+            self.assertEqual((self.completed[0].cubes, built), (1, []))
+            self.affine_override = {}
+            built.clear()
+            self._rerun(path)  # cube 2 changes back, so it is stale again; cube 1 is still current
+            self.assertEqual(built, [])
+            self._rerun(path, only_stale=False)  # everything is scanned: the masked cube 1 needs its mask now
+            self.assertEqual((self.completed[0].cubes, len(built)), (CUBES, 1))
 
     def test_run_all_ignores_what_is_current(self) -> None:
         path = self._store_path()
