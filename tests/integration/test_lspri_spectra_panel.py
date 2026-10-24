@@ -173,6 +173,25 @@ class SpectraPanelTests(unittest.TestCase):
         self.assertEqual(self._items(), before + 2)
         self.assertEqual(self.ui_state.get("spectra/error_bars"), True)
 
+    # -- the control row is a ribbon (2026-10-24) ----------------------------------------------------------------------------------
+
+    def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
+        self.assertEqual(
+            [label.text() for label in self.panel._ribbon._captions], ["Formula", "Fit", "Metric", "Fit window", "Error bars"]
+        )
+        self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~850 px before the row could scroll
+
+    def test_the_ribbon_rolls_up_and_the_choice_is_remembered(self) -> None:
+        drawer = self.panel._ribbon_drawer
+        self.panel.restore_ui_state(self.ui_state)
+        self.assertTrue(drawer.is_expanded())
+        drawer.set_expanded(False, animate=False)
+        self.assertIs(self.ui_state.get("spectra/ribbon_open"), False)
+        drawer.set_expanded(True, animate=False)
+        self.ui_state.set("spectra/ribbon_open", False)
+        self.panel.restore_ui_state(self.ui_state)
+        self.assertFalse(drawer.is_expanded())
+
     # -- controls edit the modules -----------------------------------------------------------------------------------------------
 
     def test_formula_fit_order_and_metric_are_edited_through_their_modules(self) -> None:

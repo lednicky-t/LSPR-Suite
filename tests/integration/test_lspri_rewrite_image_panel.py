@@ -1071,29 +1071,29 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.panel._show_frame_status(1, 600.0)
         without_time = self.panel.frame_columns()
         self.assertEqual(emitted, [with_everything, without_time])
-        self.assertEqual([c.text for c in with_everything], ["", "Cube 0", "550 nm", "0:03.24", "buffer"])
-        self.assertEqual([c.text for c in without_time], ["", "Cube 1", "600 nm", "", "N/A"])
+        self.assertEqual([c.text for c in with_everything], ["Cube 0", "550 nm", "0:03.24", "buffer", ""])
+        self.assertEqual([c.text for c in without_time], ["Cube 1", "600 nm", "", "N/A", ""])
         # Sizes: the same whatever is shown; cube / wavelength from this dataset (cubes 0-1, 500-600 nm).
         sizes = [c.widest for c in with_everything]
         self.assertEqual(sizes, [c.widest for c in without_time])
-        self.assertEqual(sizes[0], "Dark background")
-        self.assertEqual(sizes[1:3], ["Cube 1", "600 nm"])
-        self.assertTrue(sizes[3])
-        self.assertEqual(sizes[4], "")  # the comment: no fixed width
-        self.assertIn("not linked to experiment data", without_time[4].tooltip)  # no timing for this frame
-        self.assertEqual(with_everything[4].tooltip, "buffer")
+        self.assertEqual(sizes[4], "Dark background")
+        self.assertEqual(sizes[0:2], ["Cube 1", "600 nm"])
+        self.assertTrue(sizes[2])
+        self.assertEqual(sizes[3], "")  # the comment: no fixed width
+        self.assertIn("not linked to experiment data", without_time[3].tooltip)  # no timing for this frame
+        self.assertEqual(with_everything[3].tooltip, "buffer")
         # A change of the cube unit re-measures the cube field (a start time is wider than a number).
         self.panel._frame_widest = ("stale", "stale")
         self.panel._on_cube_display_changed("cube")
-        self.assertEqual(self.panel.frame_columns()[1].widest, "Cube 1")
+        self.assertEqual(self.panel.frame_columns()[0].widest, "Cube 1")
 
     def test_a_message_without_a_frame_goes_in_the_comment_field(self) -> None:
         columns = self.panel.frame_columns()  # "No dataset loaded." from construction
-        self.assertEqual([c.text for c in columns], ["", "", "", "", "No dataset loaded."])
-        self.assertEqual(columns[1].widest, "Cube 0")  # nothing loaded: placeholders, never an error
+        self.assertEqual([c.text for c in columns], ["", "", "", "No dataset loaded.", ""])
+        self.assertEqual(columns[0].widest, "Cube 0")  # nothing loaded: placeholders, never an error
         self._load()
         self.panel._on_dataset_cleared()
-        self.assertEqual([c.text for c in self.panel.frame_columns()], ["", "", "", "", "No dataset loaded."])
+        self.assertEqual([c.text for c in self.panel.frame_columns()], ["", "", "", "No dataset loaded.", ""])
 
     # -- top toolbar (2026-09-30, maintainer request - flipped from a
     # vertical strip on the canvas's left edge to a horizontal bar across
@@ -1113,7 +1113,8 @@ class RewriteImagePanelTest(unittest.TestCase):
         ribbon_index = top_bar_layout.indexOf(self.panel._top_drawer)
         info_index = top_bar_layout.indexOf(self.panel._tool_info)
         self.assertNotEqual(ribbon_index, -1)
-        self.assertIs(self.panel._tool_ribbon.parent(), self.panel._top_drawer)
+        self.assertIs(self.panel._top_drawer.content, self.panel._tool_ribbon)  # inside the drawer's scrolling wrapper (2026-10-24)
+        self.assertIs(self.panel._top_drawer.ribbon.parent(), self.panel._top_drawer)
         self.assertLess(ribbon_index, info_index)
 
     def test_image_tools_tab_holds_a_transforms_section_wired_to_the_panels_own_modules(self) -> None:
@@ -1817,6 +1818,32 @@ class RewriteImagePanelTest(unittest.TestCase):
         finally:
             self.panel.hide()
 
+    def test_the_ribbons_scroll_instead_of_setting_the_panels_minimum_width(self) -> None:
+        """2026-10-24, maintainer request: the Image panel can be made narrower than its ribbon rows. The panel's own minimum
+        is no longer the ribbons' (it was ~760 px); a narrow panel scrolls the ribbon with an arrow at each edge and
+        choosing a tab brings it into view."""
+        from PyQt6.QtCore import QPoint
+
+        self.assertLess(self.panel.minimumSizeHint().width(), 250)
+        self.panel.resize(380, 600)
+        self.panel.show()
+        _pump(0.2)
+        top, slider = self.panel._top_drawer.ribbon, self.panel._ribbon_drawer.ribbon
+        self.assertTrue(top.is_overflowing())
+        self.assertTrue(slider.is_overflowing())
+        ribbon = self.panel._tool_ribbon
+        last_tab = ribbon.tab_button(ribbon._category_names[-1])
+        ribbon.set_category(ribbon._category_names[-1])
+        _pump(0.2)
+        viewport = top._area.viewport()
+        left = last_tab.mapTo(viewport, QPoint(0, 0)).x()
+        self.assertGreaterEqual(left, 0)
+        self.assertLessEqual(left + last_tab.width(), viewport.width())
+        self.panel.resize(1500, 600)  # room again: no arrows
+        _pump(0.2)
+        self.assertFalse(top.is_overflowing())
+        self.panel.hide()
+
     def test_double_click_on_empty_space_rolls_the_tool_ribbon_up_and_the_handle_rolls_it_down(self) -> None:
         """2026-10-16, maintainer request: the top ribbon rolls up like the slider ribbon,
         leaving just a "..." handle (the "i" icon goes with the ribbon), remembered across
@@ -1840,7 +1867,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         QTest.mouseDClick(ribbon, Qt.MouseButton.LeftButton, pos=QPoint(3, ribbon.height() - 3))
         _pump(0.4)  # the roll-up is animated
         self.assertFalse(drawer.is_expanded())
-        self.assertTrue(ribbon.isHidden())
+        self.assertTrue(drawer.ribbon.isHidden())  # the scrolling wrapper that holds the ribbon
         self.assertFalse(drawer._handle.isHidden())
         self.assertTrue(self.panel._tool_info.isHidden())
         self.assertLess(self.panel._top_bar.height(), full_height // 2)
@@ -1848,7 +1875,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         drawer._handle.click()
         _pump(0.4)
         self.assertTrue(drawer.is_expanded())
-        self.assertFalse(ribbon.isHidden())
+        self.assertFalse(drawer.ribbon.isHidden())
         self.assertFalse(self.panel._tool_info.isHidden())
         self.assertTrue(drawer._handle.isHidden())
         self.assertGreaterEqual(self.panel._top_bar.height(), full_height - 2)

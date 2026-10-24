@@ -95,6 +95,41 @@ class DockSubtitleColumnsTest(unittest.TestCase):
         self.assertEqual(bare, widest)
         self.assertEqual(bare, message)
 
+    def test_a_narrow_dock_drops_the_trailing_fields_whole_instead_of_staying_wide(self) -> None:
+        """2026-10-24: the fields no longer set the dock's minimum width; the ones that do not fit are hidden from the right."""
+        self.dock.set_subtitle_columns(_fields("Reference", "Cube 3", "550 nm", "0:03.24", "buffer"))
+        _pump()
+        self.assertTrue(all(not label.isHidden() for label in self._labels()))
+        self.assertLess(self.dock.minimumSizeHint().width(), 250)  # the fields add 480+ px when they all have to fit
+        self.window.resize(self.dock.minimumSizeHint().width() + 120, 400)  # the dock is the only thing in the window
+        for _ in range(4):
+            _pump()
+        shown = [not label.isHidden() for label in self._labels()]
+        self.assertTrue(shown[0] and not shown[-1], shown)  # the first is kept, the last (comment) goes
+        self.assertEqual(shown, sorted(shown, reverse=True), shown)  # always from the right: no hidden field before a shown one
+        host = self.dock._subtitle_columns_host
+        for label in self._labels():
+            if not label.isHidden():
+                self.assertLessEqual(label.mapTo(host, QPoint(label.width(), 0)).x(), host.width())  # a shown field is whole
+
+    def test_an_empty_fixed_field_at_the_end_gives_its_room_to_the_comment(self) -> None:
+        """2026-10-24: the Image dock ends with the frame role word, empty on most frames; it must not leave a blank beside the comment."""
+        def fields(role: str) -> tuple[SubtitleColumn, ...]:
+            return (SubtitleColumn("Cube 3", "Cube 314"), SubtitleColumn("a long comment " * 4), SubtitleColumn(role, "Dark background"))
+
+        self.dock.set_subtitle_columns(fields(""))
+        _pump()
+        cube, comment, role = self._labels()
+        self.assertTrue(role.isHidden())
+        host = self.dock._subtitle_columns_host
+        self.assertEqual(comment.mapTo(host, QPoint(comment.width(), 0)).x(), host.width())  # the comment runs to the host's right edge
+        wide_comment = comment.width()
+        self.dock.set_subtitle_columns(fields("Reference"))
+        _pump()
+        self.assertFalse(role.isHidden())
+        self.assertLess(comment.width(), wide_comment)
+        self.assertEqual(role.mapTo(host, QPoint(role.width(), 0)).x(), host.width())  # the role word sits at the right end
+
     def test_fields_are_left_aligned_in_order_after_the_title_and_the_comment_takes_the_rest(self) -> None:
         self.dock.set_subtitle_columns(_fields("Reference", "Cube 3", "550 nm", "0:03.24", "buffer"))
         _pump()

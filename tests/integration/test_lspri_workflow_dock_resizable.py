@@ -101,16 +101,11 @@ class WorkflowDockResizableTests(unittest.TestCase):
             self._drag_workflow_to(target)
             self.assertAlmostEqual(self.workflow.width(), target, delta=_PIXEL_TOLERANCE, msg=f"asked {target}")
 
-    def test_collapse_then_expand_gives_the_width_back(self) -> None:
-        width = _WORKFLOW_DEFAULT_WIDTH_PX - 40
-        self._drag_workflow_to(width)
+    def test_workflow_has_no_collapse_button(self) -> None:
+        """2026-10-24, maintainer request: the roll-to-a-thin-strip feature is off for Workflow (resize it instead)."""
         self.workflow._set_collapsed(True)
         _pump()
-        self.assertEqual(self.workflow.width(), _COLLAPSED_WIDTH_PX)
-        self.workflow._set_collapsed(False)
-        _pump(40)  # the width comes back in steps, one per event-loop turn
-        self.assertAlmostEqual(self.workflow.width(), width, delta=_PIXEL_TOLERANCE)
-        self.assertEqual(self.workflow.minimumWidth(), _WORKFLOW_MIN_WIDTH_PX)  # floor back, not the strip's 36
+        self.assertGreater(self.workflow.width(), _COLLAPSED_WIDTH_PX)
 
     def test_a_widened_window_is_not_all_handed_to_workflow(self) -> None:
         workflow_before = self.workflow.width()

@@ -256,6 +256,26 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertFalse(self.m.analysis_settings.statistics_settings().baseline_enabled)
         self.assertTrue(_pump(lambda: self.panel._plot.baseline_window() is None))
 
+    def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
+        self.assertEqual(
+            [label.text() for label in self.panel._ribbon._captions], ["Display", "Average", "Smoothing", "Spikes", "Baseline"]
+        )
+        self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~960 px before the row could scroll
+
+    def test_the_ribbon_rolls_up_and_the_choice_is_remembered(self) -> None:
+        from lspr_imaging_app.panels.ui_state import UiStateStore
+
+        store = UiStateStore()
+        drawer = self.panel._ribbon_drawer
+        self.panel.restore_ui_state(store)
+        self.assertTrue(drawer.is_expanded())
+        drawer.set_expanded(False, animate=False)
+        self.assertIs(store.get("sensorgram/ribbon_open"), False)
+        drawer.set_expanded(True, animate=False)
+        store.set("sensorgram/ribbon_open", False)
+        self.panel.restore_ui_state(store)
+        self.assertFalse(drawer.is_expanded())
+
     def test_the_controls_follow_a_change_made_elsewhere(self) -> None:
         from dataclasses import replace
 

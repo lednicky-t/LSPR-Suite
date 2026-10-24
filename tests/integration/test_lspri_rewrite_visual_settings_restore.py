@@ -163,7 +163,7 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         panel = _panel(
             self._build(initial_settings=AppSettings(ui_state={"image/ribbon_category": "Gone"})), "Image", ImagePanel
         )
-        self.assertEqual(panel.active_ribbon_category(), "View")
+        self.assertEqual(panel.active_ribbon_category(), "Image tools")
 
     def test_saved_overlay_looks_are_applied_at_launch(self) -> None:
         window = self._build(
