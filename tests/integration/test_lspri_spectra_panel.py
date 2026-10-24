@@ -80,7 +80,7 @@ class SpectraPanelTests(unittest.TestCase):
         self.ui_state = UiStateStore({})
         app_rewrite._wire_analysis_scan(self.m, self.workflow, self.ui_state)
         self.m.scan_results._timer.setInterval(30)  # the debounce is 1.5 s in the app
-        self.panel = SpectraPanel(self.m.scan_results, self.m.roi_toolbox, self.m.selection, self.m.analysis_settings)
+        self.panel = SpectraPanel(self.m.scan_results, self.m.roi_toolbox, self.m.selection, self.m.analysis_settings, live=self.m.analysis_live)
         self.panel.restore_ui_state(self.ui_state)
         self.finished: list[tuple] = []
         self.m.analysis_scan.task_finished.connect(lambda *args: self.finished.append(args))
@@ -251,7 +251,7 @@ class SpectraPanelTests(unittest.TestCase):
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
         self.assertEqual(
-            [label.text() for label in self.panel._ribbon._captions], ["Formula", "Fit", "Metric", "Fit window", "Error bars"]
+            [label.text() for label in self.panel._ribbon._captions], ["Live", "Formula", "Fit", "Metric", "Fit window", "Error bars"]
         )
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~850 px before the row could scroll
 
@@ -325,6 +325,46 @@ class SpectraPanelTests(unittest.TestCase):
         _pump(lambda: False, 0.3)
         self.assertEqual(len(self.compute_threads), 1)
         self.assertEqual(self.panel._last[0].request.cube, 1)
+
+    # -- live / paused ---------------------------------------------------------------------------------------------------------------
+
+    def test_a_paused_panel_computes_nothing_and_catches_up_once_when_live_again(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        self.m.analysis_live.set_live(False)
+        self.compute_threads.clear()
+        for cube in (0, 1, 2, 1):
+            self.m.selection.set_cube(cube)
+        self.panel._formula.setCurrentIndex(self.panel._formula.findData("ratio"))
+        _pump(lambda: False, 0.4)
+        self.assertEqual(self.compute_threads, [])
+        self.m.analysis_live.set_live(True)
+        self.assertTrue(_pump(lambda: len(self.compute_threads) >= 1 and not self.panel._busy))
+        _pump(lambda: False, 0.3)
+        self.assertEqual(len(self.compute_threads), 1)
+        self.assertEqual(self.panel._last[0].request.cube, 1)
+        self.assertEqual(self.panel._last[0].request.formula_key, "ratio")
+
+    def test_pausing_holds_back_the_out_of_date_check_and_going_live_runs_it_once(self) -> None:
+        self._open_and_scan()
+        self.assertEqual(self.m.scan_results.stale_cubes(), frozenset())
+        self.m.analysis_live.set_live(False)
+        self.m.roi_toolbox.move_roi(1, 41.0, 30.0)
+        _pump(lambda: False, 0.5)
+        self.assertEqual(self.m.scan_results.stale_cubes(), frozenset())  # no check ran
+        self.assertFalse(self.m.scan_results.is_checking())
+        self.m.analysis_live.set_live(True)
+        self.assertTrue(_pump(lambda: self.m.scan_results.is_cube_current(0) is False))
+
+    def test_the_toggles_on_the_analysis_tab_and_in_the_ribbon_share_one_flag(self) -> None:
+        self.assertTrue(self.workflow.live_toggle.is_live() and self.panel._live_toggle.is_live())
+        self.workflow.live_toggle.click()
+        self.assertFalse(self.m.analysis_live.is_live())
+        self.assertFalse(self.panel._live_toggle.is_live())
+        self.panel._live_toggle.click()
+        self.assertTrue(self.m.analysis_live.is_live())
+        self.assertTrue(self.workflow.live_toggle.is_live())
 
     # -- out of date ---------------------------------------------------------------------------------------------------------------
 
