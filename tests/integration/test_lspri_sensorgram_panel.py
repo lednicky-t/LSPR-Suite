@@ -88,6 +88,7 @@ class SensorgramPanelTests(unittest.TestCase):
         self.m.scan_results._timer.setInterval(30)
         self.panel = SensorgramPanel(
             self.m.scan_results, self.m.roi_toolbox, self.m.dataset, self.m.selection, self.m.analysis_settings, self.m.cube_display,
+            trace_in_process=False,  # these tests spy on the fit in the worker thread; the helper process has its own test below
         )
         self.finished: list[tuple] = []
         self.m.analysis_scan.task_finished.connect(lambda *args: self.finished.append(args))
@@ -162,6 +163,23 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertLess(s1.y[-1] - s1.y[0], 50.0)
         self.assertIn("2 ROIs", self.panel._status.text())
         self.assertNotIn("OUT OF DATE", self.panel._status.text())
+
+    def test_the_helper_process_draws_the_same_traces_as_the_worker_thread(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1, 2})
+        self._wait_drawn(2)
+        in_thread = [s.y.copy() for s in self._series()]
+        process_panel = SensorgramPanel(
+            self.m.scan_results, self.m.roi_toolbox, self.m.dataset, self.m.selection, self.m.analysis_settings, self.m.cube_display,
+        )  # the default: the fits run in a helper process
+        try:
+            self.assertTrue(_pump(lambda: process_panel._last is not None and len(process_panel._last[1]) == 2 and process_panel._job is None),
+                            "the panel with the helper process never drew")
+            for expected, series in zip(in_thread, process_panel._last[1]):
+                np.testing.assert_array_equal(series.y, expected)
+        finally:
+            process_panel.shutdown()
+            process_panel.deleteLater()
 
     def test_the_fit_waits_while_the_image_is_being_drawn_and_then_starts(self) -> None:
         from lspr_imaging_app.panels.image_first import ImageFirst

@@ -95,9 +95,9 @@ class MetricTraceTests(unittest.TestCase):
             sample, reference = stored.values["mean"][5, r, :, 0], stored.values["mean"][5, r, :, 1]
             x, _ = metric_value(
                 formula_spectrum(WL, sample, reference, "absorbance"), metric.fit_method, metric.metric_key,
-                poly_order=metric.poly_order, wl_min=metric.fit_wl_min, wl_max=metric.fit_wl_max,
+                poly_order=metric.poly_order, wl_min=metric.fit_wl_min, wl_max=metric.fit_wl_max
             )
-            self.assertEqual(trace[5], x)
+            self.assertAlmostEqual(trace[5], x, delta=1e-6)  # the polynomial fit is batched (trace_fit.py): equal to rounding error, not bit for bit
 
     def test_gaps_are_nan_not_filled(self) -> None:
         stored = make_scan(unscanned=(3,), no_pixels=(7,))
