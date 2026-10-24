@@ -952,6 +952,74 @@ class RememberedStateTest(_PanelCase):
         self.assertEqual(self.model.sort_state(), (COLUMN_ID, False))
 
 
+class GroupOnlyViewTest(_PanelCase):
+    """The Groups-only view (2026-10-24): every group stays collapsed; what the user had open comes back when it is switched off."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.toolbox.group_rois((1, 2), "A")
+        self.toolbox.group_rois((3,), "B")
+        self.refresh()
+
+    def test_switching_on_collapses_every_group_and_off_gives_back_the_open_ones(self) -> None:
+        self.tree.collapse(self.header("group_2"))  # the user closed B by hand
+        self.panel.set_group_only(True)
+        self.assertFalse(self.tree.isExpanded(self.header("group_1")))
+        self.assertFalse(self.tree.isExpanded(self.header("group_2")))
+        self.panel.set_group_only(False)
+        self.assertTrue(self.tree.isExpanded(self.header("group_1")))
+        self.assertFalse(self.tree.isExpanded(self.header("group_2")))
+
+    def test_a_group_that_is_opened_while_locked_closes_again(self) -> None:
+        self.panel.set_group_only(True)
+        self.tree.expand(self.header("group_1"))
+        _APP.processEvents()
+        self.assertFalse(self.tree.isExpanded(self.header("group_1")))
+        self.panel.refresh_now()
+        self.assertFalse(self.tree.isExpanded(self.header("group_1")))
+
+    def test_selecting_a_roi_elsewhere_does_not_open_its_group_while_locked(self) -> None:
+        self.panel.set_group_only(True)
+        self.selection.set_roi_selection({1})
+        self.assertFalse(self.tree.isExpanded(self.header("group_1")))
+
+    def test_the_toolbar_button_and_the_context_menu_switch_it(self) -> None:
+        self.panel._group_only_button.click()
+        self.assertTrue(self.panel.group_only())
+        self.panel._group_only_button.click()
+        self.assertFalse(self.panel.group_only())
+
+    def test_it_is_reported_remembered_and_restored(self) -> None:
+        reported: list[bool] = []
+        self.panel.group_only_changed.connect(reported.append)
+        store = UiStateStore({})
+        self.panel.restore_ui_state(store)
+        self.panel.set_group_only(True)
+        self.assertEqual((reported, store.get("roi_table/group_only")), ([True], True))
+        later = RoiTablePanel(self.toolbox, self.selection, self.geometry, self.engine)
+        later.restore_ui_state(store)
+        self.assertTrue(later.group_only())
+        self.assertTrue(later._group_only_button.isChecked())
+        later.deleteLater()
+
+    def test_the_dock_title_is_the_switch(self) -> None:
+        from lspr_imaging_app.panels.dock_container import PanelContainer, TitleChoice
+
+        dock = PanelContainer("ROI / Groups", self.panel)
+        dock.set_title_choices((TitleChoice("ROI", "r"), TitleChoice("Groups", "g", on_double_click=True)), current=0)
+        picked: list[int] = []
+        dock.title_choice_picked.connect(picked.append)
+        roi_word, groups_word = dock._title_words
+        groups_word.clicked.emit()  # a single click on Groups does nothing
+        self.assertEqual(picked, [])
+        groups_word.double_clicked.emit()
+        self.assertEqual(picked, [1])
+        dock.set_title_current(1)
+        roi_word.clicked.emit()
+        self.assertEqual(picked, [1, 0])
+        dock.deleteLater()
+
+
 class LayoutAndPaintTest(_PanelCase):
     def test_numeric_columns_leave_room_around_their_widest_text(self) -> None:
         """Measured against the font in use here (offscreen Qt may fall back
