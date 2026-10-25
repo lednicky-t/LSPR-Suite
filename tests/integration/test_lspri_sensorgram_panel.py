@@ -349,7 +349,7 @@ class SensorgramPanelTests(unittest.TestCase):
         stats = self.m.analysis_settings.statistics_settings()
         self.assertTrue(stats.baseline_enabled)
         self.assertAlmostEqual(stats.baseline_window_start, 0.0)
-        self.assertAlmostEqual(stats.baseline_window_end, 0.5)  # the first tenth of cubes 0..5
+        self.assertAlmostEqual(stats.baseline_window_end, 1.0)  # the first tenth of cubes 0..5 is 0.5: put on the nearest cube, halfway = the higher
         self.assertTrue(_pump(lambda: self.panel._plot.baseline_window() is not None))
         self.panel._plot.baseline_window_changed.emit(0.0, 1.0)  # what releasing the dragged band emits
         self.assertEqual(self.m.analysis_settings.statistics_settings().baseline_window_end, 1.0)
@@ -357,11 +357,232 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertIn("shift", self.panel._plot._item.getAxis("left").labelText)
         self.panel._baseline.click()
         self.assertFalse(self.m.analysis_settings.statistics_settings().baseline_enabled)
-        self.assertTrue(_pump(lambda: self.panel._plot.baseline_window() is None))
+        self.assertTrue(_pump(lambda: "shift" not in self.panel._plot._item.getAxis("left").labelText))
+        self.assertIsNotNone(self.panel._plot.baseline_window())  # the selector stays: showing it is the View button's business
+
+    def _double_click_at(self, scene_pos: QPointF) -> None:
+        class _Event:
+            def button(self):
+                return Qt.MouseButton.LeftButton
+
+            def double(self):
+                return True
+
+            def isAccepted(self):
+                return False
+
+            def scenePos(self):
+                return scene_pos
+
+        self.panel._plot._on_scene_clicked(_Event())
+
+    def test_a_double_click_on_the_y_axis_label_switches_between_absolute_and_shift(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        label = self.panel._plot._item.getAxis("left").label
+        absolute = float(np.nanmean(self._series()[0].y))
+        self._double_click_at(label.sceneBoundingRect().center())
+        self.assertTrue(self.m.analysis_settings.statistics_settings().baseline_enabled)
+        self.assertTrue(self.panel._baseline.isChecked())
+        self.assertTrue(_pump(lambda: "shift" in self.panel._plot._item.getAxis("left").labelText))
+        self.assertTrue(_pump(lambda: abs(float(np.nanmean(self._series()[0].y))) < abs(absolute)))
+        self._double_click_at(label.sceneBoundingRect().center())
+        self.assertFalse(self.m.analysis_settings.statistics_settings().baseline_enabled)
+        self.assertTrue(_pump(lambda: abs(float(np.nanmean(self._series()[0].y)) - absolute) < 1e-9))
+
+    def test_a_double_click_elsewhere_in_the_plot_does_not_switch_the_axis(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        self._double_click_at(QPointF(-5000.0, -5000.0))
+        self._double_click_at(self.panel._plot._item.getViewBox().sceneBoundingRect().center())
+        self.assertFalse(self.m.analysis_settings.statistics_settings().baseline_enabled)
+
+    def test_the_baseline_selector_is_a_short_band_that_the_view_button_shows_and_hides(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        plot = self.panel._plot
+        self.assertIsNotNone(plot.baseline_window())  # on by default, also while nothing is subtracted
+        self.assertIsNone(self.m.analysis_settings.statistics_settings().baseline_window_start)  # showing it stores nothing
+        for line in plot._window.lines:
+            self.assertEqual(tuple(line.span), (0.0, 0.1))  # the bottom tenth of the plot, not its full height
+        self.panel._band_controls.set_visible(False)
+        self.assertIsNone(plot.baseline_window())
+        self.panel._band_controls.set_visible(True)
+        self.assertIsNotNone(plot.baseline_window())
+
+    def test_the_selector_colour_and_transparency_are_applied_and_remembered(self) -> None:
+        store = UiStateStore()
+        self.panel.restore_ui_state(store)
+        plot = self.panel._plot
+        self.panel._band_controls.alpha_changed.emit(0.5)
+        self.panel._band_controls.color_changed.emit(QColor("#ff8800"))
+        red, green, blue, alpha = plot._window.brush.color().getRgb()
+        self.assertEqual((red, green, blue), (255, 136, 0))
+        self.assertAlmostEqual(alpha / 255.0, 0.5, delta=0.01)
+        self.assertEqual(store.get("sensorgram/baseline_band_color"), "#ff8800")
+        self.assertAlmostEqual(store.get("sensorgram/baseline_band_alpha"), 0.5)
+        self.panel._band_controls.set_visible(False)
+        self.assertIs(store.get("sensorgram/baseline_band_visible"), False)
+        store.set("sensorgram/baseline_band_color", "#00ff00")
+        store.set("sensorgram/baseline_band_alpha", 0.25)
+        store.set("sensorgram/baseline_band_visible", True)
+        self.panel.restore_ui_state(store)
+        self.assertEqual(plot._window.brush.color().getRgb()[:3], (0, 255, 0))
+        self.assertAlmostEqual(plot._window.brush.color().alpha() / 255.0, 0.25, delta=0.01)
+        self.assertTrue(self.panel._band_visible)
+        store.set("sensorgram/baseline_band_color", "not a colour")  # a damaged file falls back to the default blue
+        self.panel.restore_ui_state(store)
+        self.assertEqual(plot._window.brush.color().getRgb()[:3], (120, 160, 255))
+
+    def test_a_new_transparency_is_repainted_at_once_and_keeps_the_hover_brush(self) -> None:
+        """pyqtgraph's setBrush does not ask for a repaint (the change showed only when the pointer moved over the band) and drops the hover brush."""
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        plot = self.panel._plot
+        scene = plot._item.scene()
+        self.panel.resize(700, 400)
+        self.panel.show()  # a scene reports repaints only while a view shows it (offscreen platform: no real window); the plot is a child of the panel
+        self.addCleanup(self.panel.hide)
+        _pump(lambda: False, seconds=0.2)  # let the pending repaints of the drawing go first
+        painted: list[object] = []
+        scene.changed.connect(lambda rects: painted.extend(rects))
+        plot.set_baseline_style(QColor("#ff0000"), 0.5)
+        band = plot._window.sceneBoundingRect()
+        self.assertTrue(_pump(lambda: any(rect.intersects(band) for rect in painted)))
+        rest, hover = plot._window.brush.color().alpha(), plot._window.hoverBrush.color().alpha()
+        self.assertGreater(hover, rest)
+        self.assertEqual(plot._window.currentBrush.color().alpha(), rest)  # not hovered: the resting brush
+        plot._window.setMouseHover(True)
+        plot.set_baseline_style(QColor("#ff0000"), 0.3)  # a change while the pointer is on the band keeps the hover brush
+        self.assertEqual(plot._window.currentBrush.color().alpha(), plot._window.hoverBrush.color().alpha())
+        self.assertGreater(plot._window.currentBrush.color().alpha(), plot._window.brush.color().alpha())
+
+    def test_the_baseline_range_fields_show_the_window_and_typed_values_move_it(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        readout = self.panel._plot._range_readout
+        self.assertEqual((readout._low.text(), readout._high.text()), ("0", "1"))  # cube axis: whole numbers (default window 0 .. 0.5, put on the cubes)
+        readout._low.setText("1")
+        readout._high.setText("3")
+        readout._on_edited()
+        stats = self.m.analysis_settings.statistics_settings()
+        self.assertEqual((stats.baseline_window_start, stats.baseline_window_end), (1.0, 3.0))
+        self.assertTrue(_pump(lambda: self.panel._plot.baseline_window() == (1.0, 3.0)))
+        readout._low.setText("4")  # crossed values are put in order
+        readout._high.setText("2")
+        readout._on_edited()
+        self.assertEqual(self.panel._plot.baseline_window() and self.m.analysis_settings.statistics_settings().baseline_window_start, 2.0)
+        self.assertEqual(self.panel._range_decimals(), 0)
+        self.panel._plot._window.setRegion((0.25, 1.0))  # a drag in progress: the fields follow live
+        self.assertEqual((readout._low.text(), readout._high.text()), ("0", "1"))
+
+    def test_the_selector_height_is_set_in_percent_of_the_plot_and_remembered(self) -> None:
+        store = UiStateStore()
+        self.panel.restore_ui_state(store)
+        plot = self.panel._plot
+        self.assertEqual(self.panel._band_height.value(), 10)
+        self.panel._band_height.setValue(25)
+        self.assertEqual(tuple(plot._window.span), (0.0, 0.25))
+        for line in plot._window.lines:
+            self.assertEqual(tuple(line.span), (0.0, 0.25))
+        self.assertEqual(store.get("sensorgram/baseline_band_height"), 25)
+        store.set("sensorgram/baseline_band_height", 40)
+        self.panel.restore_ui_state(store)
+        self.assertEqual(tuple(plot._window.span), (0.0, 0.4))
+
+    def test_statistic_section_lists_individual_group_all_and_na_is_written_for_no_smoothing(self) -> None:
+        display = self.panel._display
+        self.assertEqual([choice.key for choice in display._choices], ["individual", "average_by_group", "average_all"])
+        self.assertEqual(self.panel._smoothing.currentData(), "none")
+        self.assertEqual(self.panel._smoothing._choices[0].name, "No smoothing")  # the picture says N/A, the menu row spells it out
+
+    def test_the_smoothing_window_is_there_only_while_a_method_is_chosen(self) -> None:
+        window = self.panel._window
+        self.assertTrue(window.isHidden())  # no smoothing by default
+        self.assertEqual(window.prefix(), "")  # just the number, no "window" text
+        self.panel._smoothing.setCurrentIndex(self.panel._smoothing.findData("savgol"))
+        self.assertFalse(window.isHidden())
+        self.panel._smoothing.setCurrentIndex(self.panel._smoothing.findData("none"))
+        self.assertTrue(window.isHidden())
+
+    def test_spikes_and_subtract_are_icon_toggles_in_their_groups(self) -> None:
+        ribbon = self.panel._ribbon
+        self.assertNotIn("Spikes", [label.text() for label in ribbon._captions])
+        self.assertTrue(self.panel._spikes.isCheckable() and self.panel._baseline.isCheckable())
+        self.assertFalse(self.panel._spikes.icon().isNull() or self.panel._baseline.icon().isNull())
+        self.panel._spikes.click()
+        self.assertTrue(self.m.analysis_settings.statistics_settings().spike_rejection_enabled)
+        self.assertIs(self.panel._baseline.parentWidget(), self.panel._band_menu.parentWidget())  # the baseline button sits with Subtract
+
+    def test_the_edges_of_the_selector_follow_a_new_height_at_once(self) -> None:
+        """An InfiniteLine caches its rectangle until the view changes: the edges stayed at the old height until the band was dragged.
+        (A vertical line's own x axis runs along the line, so its extent is the rectangle's width.)"""
+        plot = self.panel._plot
+        plot.set_baseline_window((0.0, 1.0))
+        edge = plot._window.lines[0]
+        before = edge.boundingRect().width()
+        plot.set_baseline_height(40)
+        self.assertGreater(edge.boundingRect().width(), before * 3.5)  # 10 % -> 40 % of the plot
+        self.assertAlmostEqual(edge._endPoints[1] - edge._endPoints[0], 0.4 * edge.viewRect().width(), delta=1e-6 * max(1.0, edge.viewRect().width()))
+        plot.set_baseline_height(10)
+        self.assertAlmostEqual(edge.boundingRect().width(), before, delta=1e-6 * max(1.0, before))
+
+    def test_the_selector_edges_snap_to_the_data_points_while_dragged_and_when_typed(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        plot = self.panel._plot
+        self.assertEqual(list(plot._grid), [0.0, 1.0, 2.0, 3.0, 4.0, 5.0])  # cubes 0..5
+        plot._window.setRegion((0.4, 2.7))  # a drag in progress: the edges are put on cubes 0 and 3
+        self.assertEqual(plot.baseline_window(), (0.0, 3.0))
+        self.assertEqual((plot._range_readout._low.text(), plot._range_readout._high.text()), ("0", "3"))
+        self.panel._on_baseline_dragged(1.4, 3.6)  # typed values between cubes are put on cubes as well
+        stats = self.m.analysis_settings.statistics_settings()
+        self.assertEqual((stats.baseline_window_start, stats.baseline_window_end), (1.0, 4.0))
+
+    def test_snapping_picks_the_nearest_point_and_never_collapses_a_window(self) -> None:
+        from lspr_imaging_app.panels.sensorgram.plot import snap_to_grid, snap_window
+
+        grid = np.array([0.0, 10.0, 25.0, 40.0])  # a time axis: uneven spacing
+        self.assertEqual(snap_to_grid(grid, 4.0), 0.0)
+        self.assertEqual(snap_to_grid(grid, 6.0), 10.0)
+        self.assertEqual(snap_to_grid(grid, 17.5), 25.0)  # halfway: the higher point
+        self.assertEqual(snap_to_grid(grid, -3.0), 0.0)
+        self.assertEqual(snap_to_grid(grid, 99.0), 40.0)
+        self.assertEqual(snap_to_grid(np.empty(0), 3.3), 3.3)  # no grid: left alone
+        self.assertEqual(snap_window(grid, 26.0, 9.0), (10.0, 25.0))  # in order
+        self.assertEqual(snap_window(grid, 11.0, 12.0), (10.0, 25.0))  # both on one point: pulled one point apart
+        self.assertEqual(snap_window(grid, 39.0, 41.0), (25.0, 40.0))  # at the end: the other way
+
+    def test_the_resting_fill_of_the_selector_is_visible_against_the_plot(self) -> None:
+        """The fill must be clearly there without the pointer on it (0.16 was taken for 'off')."""
+        from lspr_imaging_app.panels.sensorgram.baseline_selector_menu import DEFAULT_ALPHA
+
+        self.assertGreaterEqual(DEFAULT_ALPHA, 0.25)
+        self.assertAlmostEqual(self.panel._plot._window.brush.color().alpha() / 255.0, DEFAULT_ALPHA, delta=0.01)
+
+    def test_the_y_range_of_an_average_follows_the_line_and_its_band_not_the_fill(self) -> None:
+        """The shaded band's fill used to stretch the auto-range to about -32 .. 641 nm for peaks near 595 nm."""
+        from lspr_imaging_app.analysis.scan_trace import Series
+
+        x = np.arange(100, dtype=np.float64)
+        y = 595.0 + 5.0 * np.sin(x / 15.0)
+        plot = self.panel._plot
+        plot.show_series([Series("group:a", "A", "#f59e0b", x, y, y - 2.0, y + 2.0, n_members=4, member_ids=(1, 2))])
+        low, high = plot._item.getViewBox().viewRange()[1]
+        self.assertGreater(low, 585.0)
+        self.assertLess(high, 605.0)
+        self.assertLess(low, float(np.min(y - 2.0)))  # the band's edges are inside the range
+        self.assertGreater(high, float(np.max(y + 2.0)))
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
         self.assertEqual(
-            [label.text() for label in self.panel._ribbon._captions], ["Live", "Display", "Average", "Smoothing", "Spikes", "Baseline", "View"]
+            [label.text() for label in self.panel._ribbon._captions], ["Live", "Statistic", "Smoothing", "Baseline", "View"]
         )
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~960 px before the row could scroll
 
@@ -468,7 +689,7 @@ class SensorgramPanelTests(unittest.TestCase):
 
         self.m.analysis_settings.set_statistics_settings(replace(self.m.analysis_settings.statistics_settings(), sensorgram_display_mode="average_all", smoothing_method="savgol"))
         self.assertEqual((self.panel._display.currentData(), self.panel._smoothing.currentData()), ("average_all", "savgol"))
-        self.assertTrue(self.panel._window.isEnabled())
+        self.assertFalse(self.panel._window.isHidden())  # a smoothing method is chosen: its window is there
 
     # -- long computations, hidden panel, out of date --------------------------------------------------------------------------------
 
