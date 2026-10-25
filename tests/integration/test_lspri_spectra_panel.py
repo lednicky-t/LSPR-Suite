@@ -251,7 +251,7 @@ class SpectraPanelTests(unittest.TestCase):
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
         self.assertEqual(
-            [label.text() for label in self.panel._ribbon._captions], ["Live", "Formula", "Fit", "Metric", "Fit window", "Error bars"]
+            [label.text() for label in self.panel._ribbon._captions], ["Live", "Formula", "Fit", "Metric", "Error bars"]
         )
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~850 px before the row could scroll
 
@@ -279,7 +279,7 @@ class SpectraPanelTests(unittest.TestCase):
         metric = self.m.analysis_settings.metric_settings()
         self.assertEqual((metric.fit_method, metric.metric_key), ("none", "centroid"))
         self.assertTrue(_pump(lambda: self.panel._last[0].request.formula_key == "ratio" and self.panel._last[0].request.metric.fit_method == "none"))
-        self.assertFalse(self.panel._window_box.isEnabled())  # no fit: no fit window
+        self.assertFalse(self.panel._window_mode.isEnabled())  # no fit: no fit window
         self.assertFalse(self.panel._order.isEnabled())
         self.panel._fit.setCurrentIndex(self.panel._fit.findData("polynomial"))
         self.panel._order.setValue(2)
@@ -295,7 +295,7 @@ class SpectraPanelTests(unittest.TestCase):
         self._open_and_scan()
         self.m.selection.set_roi_selection({1})
         self._wait_drawn(1)
-        self.panel._window_box.click()
+        self._pick_window("manual")
         metric = self.m.analysis_settings.metric_settings()
         self.assertAlmostEqual(metric.fit_wl_min, 510.0)  # the middle 80 % of 500..600
         self.assertAlmostEqual(metric.fit_wl_max, 590.0)
@@ -303,10 +303,87 @@ class SpectraPanelTests(unittest.TestCase):
         self.panel._plot.fit_window_changed.emit(520.0, 580.0)  # what releasing the dragged band emits
         metric = self.m.analysis_settings.metric_settings()
         self.assertEqual((metric.fit_wl_min, metric.fit_wl_max), (520.0, 580.0))
-        self.panel._window_box.click()
+        self._pick_window("off")
         metric = self.m.analysis_settings.metric_settings()
         self.assertEqual((metric.fit_wl_min, metric.fit_wl_max), (None, None))
         self.assertTrue(_pump(lambda: self.panel._plot.fit_window() is None))
+
+    def _pick_window(self, key: str) -> None:
+        self.panel._window_mode.setCurrentIndex(self.panel._window_mode.findData(key))
+
+    def test_the_fit_window_modes_are_chosen_in_the_menu_and_follow_the_settings(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        panel, settings = self.panel, self.m.analysis_settings
+        self.assertEqual(panel._window_mode.currentData(), "off")  # a new session fits every point
+        self.assertFalse(panel._same_points.isEnabled())
+        self._pick_window("around_max")
+        metric = settings.metric_settings()
+        self.assertEqual((metric.window_mode, metric.relative_window), ("around_max", True))
+        self.assertEqual(metric.manual_bounds(), (None, None))
+        self.assertTrue(panel._same_points.isEnabled())  # the footer applies to the per-spectrum modes
+        self.assertIsNone(panel._plot.fit_window())  # a per-spectrum window is not drawn
+        panel._half_width.setValue(30.0)
+        panel._same_points.setChecked(True)
+        self.assertTrue(settings.metric_settings().relative_window)  # editing a width never turns the window on or off
+        self._pick_window("fwhm")
+        panel._fwhm_factor.setValue(0.6)
+        metric = settings.metric_settings()
+        self.assertEqual((metric.window_mode, metric.window_half_width_nm, metric.window_fwhm_factor, metric.window_same_points),
+                         ("fwhm", 30.0, 0.6, True))
+        self.assertTrue(_pump(lambda: self.panel._last[0].request.metric.window_mode == "fwhm"))
+        self._pick_window("manual")  # a manual range is set (the middle 80 %), the per-spectrum window is replaced
+        metric = settings.metric_settings()
+        self.assertIsNotNone(metric.fit_wl_min)
+        self.assertFalse(metric.relative_window)
+        self.assertTrue(_pump(lambda: self.panel._plot.fit_window() is not None))
+        self._pick_window("off")
+        metric = settings.metric_settings()
+        self.assertEqual((metric.manual_bounds(), metric.relative_window), ((None, None), False))
+        self.assertEqual(panel._window_mode.currentData(), "off")
+        self.assertEqual(metric.window_fwhm_factor, 0.6)  # the widths are remembered while the window is off
+
+    def test_the_metric_range_is_chosen_in_the_menu_and_only_for_the_centroid(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        panel, settings = self.panel, self.m.analysis_settings
+        self.assertEqual(panel._metric_range.currentData(), "off")
+        self.assertFalse(panel._metric_range.isEnabled())  # the maximum has no range
+        panel._metric.setCurrentIndex(panel._metric.findData("centroid"))
+        self.assertTrue(panel._metric_range.isEnabled())
+        panel._metric_range.setCurrentIndex(panel._metric_range.findData("top_fraction"))
+        panel._top_fraction.setValue(40.0)
+        metric = settings.metric_settings()
+        self.assertEqual((metric.metric_range, metric.metric_top_fraction), ("top_fraction", 0.4))
+        self.assertTrue(metric.ranged_centroid)
+        self.assertTrue(_pump(lambda: self.panel._last[0].request.metric.metric_top_fraction == 0.4))
+        panel._metric_range.setCurrentIndex(panel._metric_range.findData("manual"))
+        metric = settings.metric_settings()
+        self.assertAlmostEqual(metric.metric_range_min, 510.0)  # the middle 80 % of 500..600, as a new manual fit range
+        self.assertAlmostEqual(metric.metric_range_max, 590.0)
+        panel._range_max.setValue(570.0)
+        panel._range_min.setValue(580.0)  # the ends are put in order
+        metric = settings.metric_settings()
+        self.assertEqual((metric.metric_range_min, metric.metric_range_max), (570.0, 580.0))
+        panel._metric.setCurrentIndex(panel._metric.findData("maximum"))
+        self.assertFalse(panel._metric_range.isEnabled())
+        self.assertEqual(settings.metric_settings().metric_range, "manual")  # remembered while it does not apply
+        panel._fit.setCurrentIndex(panel._fit.findData("none"))
+        panel._metric.setCurrentIndex(panel._metric.findData("centroid"))
+        self.assertFalse(panel._metric_range.isEnabled())  # no fit, no curve
+
+    def test_the_window_controls_follow_a_change_made_elsewhere(self) -> None:
+        from dataclasses import replace
+
+        current = self.m.analysis_settings.metric_settings()
+        self.m.analysis_settings.set_metric_settings(
+            replace(current, window_mode="around_max", window_on=True, window_half_width_nm=70.0, window_same_points=True)
+        )
+        self.assertEqual(self.panel._window_mode.currentData(), "around_max")
+        self.assertEqual(self.panel._half_width.value(), 70.0)
+        self.assertTrue(self.panel._same_points.isChecked())
 
     # -- a hidden panel does nothing ---------------------------------------------------------------------------------------------
 
