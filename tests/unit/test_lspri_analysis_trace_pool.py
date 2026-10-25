@@ -55,6 +55,19 @@ class TracePoolTests(unittest.TestCase):
         for roi_id, data in work:
             np.testing.assert_array_equal(done[roi_id], trace_from_input(data, "absorbance", metric))
 
+    def test_the_template_shift_gives_the_same_traces_from_the_process(self) -> None:
+        """Each ROI reaches the process whole (its reference cubes are part of its trace) and with its cube numbers, so the reference range of the settings means the same there."""
+        from tests.unit.test_lspri_analysis_template_shift import make_input as template_input
+
+        metric = MetricSettings(fit_method="template", template_first_cube=102, template_last_cube=106)
+        work = [(roi_id, template_input(np.r_[np.zeros(8), np.linspace(0.0, 6.0, 12)], noise=0.0005, seed=roi_id, cube_offset=100)) for roi_id in range(1, 4)]
+        with mock.patch.object(trace_pool, "BATCH_ROWS", 20):  # one ROI per task
+            done, was_cancelled = self.pool.run(work, "absorbance", metric)
+        self.assertFalse(was_cancelled)
+        for roi_id, data in work:
+            np.testing.assert_array_equal(done[roi_id], trace_from_input(data, "absorbance", metric))
+            self.assertTrue(np.all(np.isfinite(done[roi_id])))
+
     def test_progress_is_reported_per_task_of_several_rois(self) -> None:
         seen: list[tuple[int, int]] = []
         with mock.patch.object(trace_pool, "BATCH_ROWS", 24):  # 12 cubes per ROI: two ROIs per task

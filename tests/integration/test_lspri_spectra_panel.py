@@ -247,11 +247,205 @@ class SpectraPanelTests(unittest.TestCase):
         self.assertEqual(self._items(), before + 2)
         self.assertEqual(self.ui_state.get("spectra/error_bars"), True)
 
+    # -- the polynomial order menu (2026-10-25) --------------------------------------------------------------------------------------
+
+    def _wheel(self, widget, delta: int) -> None:
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtGui import QWheelEvent
+
+        event = QWheelEvent(QPointF(5.0, 5.0), QPointF(5.0, 5.0), QPoint(0, 0), QPoint(0, delta), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                            Qt.ScrollPhase.NoScrollPhase, False)
+        QtWidgets.QApplication.sendEvent(widget, event)
+
+    def test_the_order_is_a_pickup_list_of_ordinals_to_the_13th_and_the_wheel_steps_it(self) -> None:
+        from dataclasses import replace
+
+        from lspr_imaging_app.panels.spectra.pick_menu import ordinal_suffix
+
+        picker, settings = self.panel._order, self.m.analysis_settings
+        self.assertEqual((picker.count(), picker._choices[0].key, picker._choices[-1].key), (13, 1, 13))
+        self.assertEqual([ordinal_suffix(k) for k in range(1, 14)], ["st", "nd", "rd"] + ["th"] * 10)  # 11th, 12th, 13th are not 11st, 12nd, 13rd
+        self.assertEqual(picker.value(), 3)  # the default
+        self.assertFalse(picker.icon().isNull())
+        self._wheel(picker, 120)
+        self.assertEqual(picker.value(), 4)  # wheel up: a higher order, like a spin box
+        self.assertEqual(settings.metric_settings().poly_order, 4)
+        self._wheel(picker, -120)
+        self._wheel(picker, -240)
+        self.assertEqual(picker.value(), 1)  # the lower limit holds
+        self._wheel(picker, -120)
+        self.assertEqual(picker.value(), 1)
+        for _ in range(20):
+            self._wheel(picker, 120)
+        self.assertEqual((picker.value(), settings.metric_settings().poly_order), (13, 13))  # the upper limit: 13
+        picker.setValue(99)
+        self.assertEqual(picker.value(), 13)
+        picker.setValue(0)
+        self.assertEqual(picker.value(), 1)
+        picker.setValue(5)
+        self._wheel(picker, 60)  # a touch pad's small steps add up to one notch
+        self.assertEqual(picker.value(), 5)
+        self._wheel(picker, 60)
+        self.assertEqual(picker.value(), 6)
+        picker.setEnabled(False)
+        self._wheel(picker, 120)
+        self.assertEqual(picker.value(), 6)  # a disabled control ignores the wheel
+        picker.setEnabled(True)
+        self.m.analysis_settings.set_metric_settings(replace(settings.metric_settings(), poly_order=11))
+        self.assertEqual(picker.value(), 11)  # a change made elsewhere shows
+
+    def test_the_order_menu_is_judged_on_a_worker_thread_and_a_cube_change_only_recolours_it(self) -> None:
+        from dataclasses import replace
+
+        calls: list[threading.Thread] = []
+        real = spectra_module.evaluate_order_quality
+
+        def spy(inputs, formula_key, metric, **kwargs):
+            calls.append(threading.current_thread())
+            return real(inputs, formula_key, metric, **kwargs)
+
+        spectra_module.evaluate_order_quality = spy
+        try:
+            self._open_and_scan()
+            picker = self.panel._order
+            self.m.selection.set_roi_selection({1, 2})
+            self._wait_drawn(2)
+            self.assertTrue(_pump(lambda: self.panel._quality is not None and not self.panel._quality_busy))
+            _pump(lambda: False, 0.5)  # the scan's own notifications may ask for the check more than once while it settles
+            settled = len(calls)
+            self.assertGreaterEqual(settled, 1)
+            self.assertTrue(all(t is not threading.main_thread() for t in calls))  # never on the GUI thread
+            states = {k: picker._shown[k][0] for k in range(1, 14)}
+            self.assertIn(states[1], ("good", "some"))  # three wavelengths allow one term (half the points): the first order is judged,
+            self.assertTrue(all(states[k] == "na" for k in range(2, 14)))  # and the others cannot be fitted
+            self.assertEqual(picker._rows[4].text().strip(), "needs more points")
+            self.assertIn("Widen the fit window", picker._rows[4].toolTip())
+            self.m.selection.set_cube(2)
+            _pump(lambda: False, 0.4)
+            self.assertEqual(len(calls), settled, "a cube change must not start a new check")
+            self.m.roi_toolbox.add_roi(20.0, 20.0, sample_diameter_px=6.0)  # a ROI added later is not selected: nothing changes
+            self.m.selection.set_roi_selection({2})
+            self._wait_drawn(1)
+            self.assertTrue(_pump(lambda: len(calls) == settled + 1 and not self.panel._quality_busy))  # a new selection: one new check
+            current = self.m.analysis_settings.metric_settings()
+            self.m.analysis_settings.set_metric_settings(replace(current, fit_method="gaussian"))
+            _pump(lambda: False, 0.5)
+            self.assertFalse(picker.isEnabled())
+            self.assertTrue(all(picker._shown[k][0] == "unknown" for k in range(1, 14)))  # another fit has no order: nothing is judged
+            self.assertEqual(len(calls), settled + 1)
+            self.m.analysis_settings.set_metric_settings(replace(current, fit_method="polynomial"))
+            self.assertTrue(_pump(lambda: picker.isEnabled()))
+        finally:
+            spectra_module.evaluate_order_quality = real
+
+    def test_the_order_menu_colours_each_order_by_the_verdict_for_the_present_cube(self) -> None:
+        from lspr_imaging_app.analysis import order_quality as oq
+        from lspr_imaging_app.panels.spectra.order_picker import STATE_COLORS, STATE_NAMES
+
+        g, o, u, na = oq.GOOD, oq.OVER, oq.UNDER, oq.UNAVAILABLE
+        verdict = np.full((oq.MAX_ORDER, 4), na, dtype=np.int8)
+        verdict[0], verdict[1], verdict[2], verdict[3] = (u, u, u, u), (g, g, g, g), (g, o, g, g), (g, g, u, g)
+        quality = oq.OrderQuality(np.arange(4), np.full(verdict.shape, np.nan), verdict, np.zeros(4, dtype=int), 1)
+        picker = self.panel._order
+        picker.apply_quality(quality, 1)
+        self.assertEqual([picker._shown[k][0] for k in (1, 2, 3, 4, 13)], ["under", "good", "over", "some", "na"])
+        for order, state in ((1, "under"), (2, "good"), (3, "over"), (4, "some")):  # the dot is in the colour of its state
+            image = picker._choices[order - 1].picture("#ffffff").toImage()
+            dot = image.pixelColor(9, image.height() // 2).name()
+            self.assertEqual(dot, STATE_COLORS[state], msg=f"order {order}")
+            self.assertEqual(picker._rows[order - 1].text().strip(), STATE_NAMES[state])
+        self.assertIn("over-fitted at this cube", picker._rows[2].toolTip())
+        self.assertIn("under-fitted at this cube", picker._rows[0].toolTip())
+        picker.apply_quality(quality, 2)  # another cube: only the colours that depend on it change, from the stored verdicts
+        self.assertEqual([picker._shown[k][0] for k in (1, 2, 3, 4, 13)], ["under", "good", "some", "under", "na"])
+        picker.apply_quality(None, None)
+        self.assertTrue(all(picker._shown[k][0] == "unknown" for k in range(1, 14)))
+        self.assertEqual(picker._rows[0].text().strip(), STATE_NAMES["unknown"])
+
+    # -- the View menu (2026-10-25) --------------------------------------------------------------------------------------------------
+
+    def test_the_view_group_is_one_pickup_menu_and_the_error_bars_are_a_pictogram_inside_it(self) -> None:
+        captions = [label.text() for label in self.panel._ribbon._captions]
+        self.assertIn("View", captions)
+        self.assertNotIn("Error bars", captions)
+        menu = self.panel._view_menu
+        self.assertEqual(menu.popupMode(), QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.assertFalse(menu.icon().isNull())
+        for control in (self.panel._show_points, self.panel._point_size, self.panel._show_lines, self.panel._line_style, self.panel._error_box):
+            self.assertIs(menu.menu().actions()[0].defaultWidget().isAncestorOf(control), True)  # all of them sit in the one panel
+        for toggle in (self.panel._show_points, self.panel._show_lines, self.panel._error_box):
+            self.assertTrue(toggle.isCheckable())
+            self.assertFalse(toggle.icon().isNull())
+        self.assertEqual((self.panel._show_points.isChecked(), self.panel._point_size.value(), self.panel._show_lines.isChecked(),
+                          self.panel._line_style.style(), self.panel._error_box.isChecked()), (True, 6, True, "solid", False))
+
+    def test_the_view_menu_changes_how_the_points_are_drawn_without_computing_anything(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        panel = self.panel
+        data = lambda: panel._plot._items[0]  # the measured points and the line that joins them: the first item of the ROI  # noqa: E731
+        fit = lambda: panel._plot._items[1]  # noqa: E731
+        self.assertEqual((data().opts["symbol"], data().opts["symbolSize"]), ("o", 6))
+        self.assertEqual(data().opts["pen"].style(), Qt.PenStyle.SolidLine)
+        computed = len(self.compute_threads)
+        panel._point_size.setValue(11)
+        self.assertEqual(data().opts["symbolSize"], 11)
+        panel._line_style._buttons["dash"].click()
+        self.assertEqual(panel._line_style.style(), "dash")
+        self.assertEqual(data().opts["pen"].style(), Qt.PenStyle.DashLine)
+        for key, style in (("dot", Qt.PenStyle.DotLine), ("dashdot", Qt.PenStyle.DashDotLine), ("solid", Qt.PenStyle.SolidLine)):
+            panel._line_style._buttons[key].click()
+            self.assertEqual(data().opts["pen"].style(), style, msg=key)
+        panel._show_lines.click()  # lines off: the dots stay
+        self.assertEqual(data().opts["pen"].style(), Qt.PenStyle.NoPen)
+        self.assertEqual(data().opts["symbol"], "o")
+        panel._show_points.click()  # points off as well: no data marks at all, but the fitted curve and the marker stay
+        self.assertIsNone(data().opts["symbol"])
+        self.assertEqual(self._items(), 3)  # points item (empty of marks), fit curve, metric marker
+        self.assertIsNone(data().name())
+        self.assertEqual(fit().name(), "ROI 1")  # the legend entry moves to the fitted curve, so the ROI is still named
+        panel._show_lines.click()  # lines back on, points still off: the line alone
+        self.assertIsNone(data().opts["symbol"])
+        self.assertEqual(data().opts["pen"].style(), Qt.PenStyle.SolidLine)
+        self.assertEqual(data().name(), "ROI 1")
+        panel._error_box.click()
+        self.assertEqual(self._items(), 4)  # the error bars are drawn whatever the points do
+        self.assertEqual(len(self.compute_threads), computed, "a display choice must not start a computation")
+
+    def test_the_view_choices_are_remembered_and_come_back(self) -> None:
+        self.panel._point_size.setValue(9)
+        self.panel._show_points.click()
+        self.panel._line_style._buttons["dot"].click()
+        self.panel._show_lines.click()
+        self.panel._error_box.click()
+        self.assertEqual(
+            (self.ui_state.get("spectra/point_size"), self.ui_state.get("spectra/show_points"), self.ui_state.get("spectra/line_style"),
+             self.ui_state.get("spectra/show_lines"), self.ui_state.get("spectra/error_bars")),
+            (9, False, "dot", False, True),
+        )
+        saved = {key: self.ui_state.get(key) for key in ("spectra/point_size", "spectra/show_points", "spectra/line_style", "spectra/show_lines", "spectra/error_bars")}
+        again = SpectraPanel(self.m.scan_results, self.m.roi_toolbox, self.m.selection, self.m.analysis_settings, live=self.m.analysis_live)
+        try:
+            again.restore_ui_state(UiStateStore(dict(saved)))
+            self.assertEqual((again._point_size.value(), again._show_points.isChecked(), again._line_style.style(), again._show_lines.isChecked(), again._error_box.isChecked()),
+                             (9, False, "dot", False, True))
+            broken = SpectraPanel(self.m.scan_results, self.m.roi_toolbox, self.m.selection, self.m.analysis_settings, live=self.m.analysis_live)
+            try:  # a saved value that no longer fits is ignored: the defaults stay
+                broken.restore_ui_state(UiStateStore({"spectra/line_style": "wavy", "spectra/point_size": 500, "spectra/show_points": "yes"}))
+                self.assertEqual((broken._line_style.style(), broken._point_size.value(), broken._show_points.isChecked()), ("solid", 6, True))
+            finally:
+                broken.shutdown()
+                broken.deleteLater()
+        finally:
+            again.shutdown()
+            again.deleteLater()
+
     # -- the control row is a ribbon (2026-10-24) ----------------------------------------------------------------------------------
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
         self.assertEqual(
-            [label.text() for label in self.panel._ribbon._captions], ["Live", "Formula", "Fit", "Metric", "Error bars"]
+            [label.text() for label in self.panel._ribbon._captions], ["Live", "Formula", "Fit", "Metric", "View"]
         )
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~850 px before the row could scroll
 
@@ -373,6 +567,47 @@ class SpectraPanelTests(unittest.TestCase):
         panel._fit.setCurrentIndex(panel._fit.findData("none"))
         panel._metric.setCurrentIndex(panel._metric.findData("centroid"))
         self.assertFalse(panel._metric_range.isEnabled())  # no fit, no curve
+
+    def test_the_template_shift_is_chosen_in_the_fit_menu_with_its_reference_cubes(self) -> None:
+        """The fourth fit choice (2026-10-25, `analysis/template_shift.py`): the controls that mean nothing for it are off, the reference cubes are two fields in its row, typed in either
+        order, and a scan with fewer than four wavelengths (this one has three) is explained instead of drawn."""
+        from dataclasses import replace
+
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        panel, settings = self.panel, self.m.analysis_settings
+        self.assertGreaterEqual(panel._fit.findData("template"), 0)
+        settings.set_metric_settings(replace(settings.metric_settings(), fit_wl_min=520.0, fit_wl_max=580.0))  # a manual window that the template shift must not draw
+        panel._fit.setCurrentIndex(panel._fit.findData("template"))
+        metric = settings.metric_settings()
+        self.assertEqual((metric.fit_method, metric.uses_template), ("template", True))
+        self.assertEqual((panel._ref_first.value(), panel._ref_last.value()), (0, 9))  # the first ten cubes
+        for control in (panel._order, panel._window_mode, panel._metric, panel._metric_range):
+            self.assertFalse(control.isEnabled())
+        panel._ref_first.setValue(2)
+        panel._ref_last.setValue(1)  # typed the wrong way round: read as 1 to 2
+        metric = settings.metric_settings()
+        self.assertEqual(metric.reference_cube_range(), (1, 2))
+        self.assertEqual((metric.template_first_cube, metric.template_last_cube), (1, 2))
+        self.assertTrue(_pump(lambda: self.panel._last is not None and self.panel._last[0].request.metric.reference_cube_range() == (1, 2) and not self.panel._busy))
+        spectrum = self.panel._last[1][0]
+        self.assertIn("at least 4 scanned wavelengths", spectrum.note)  # three wavelengths cannot carry a shift against a reference
+        self.assertIsNone(spectrum.fit_values)
+        self.assertGreater(spectrum.values.size, 0)
+        self.assertIsNone(panel._plot.fit_window())  # no window band for a method that uses every point
+        panel._fit.setCurrentIndex(panel._fit.findData("polynomial"))  # the others come back
+        for control in (panel._order, panel._window_mode, panel._metric):
+            self.assertTrue(control.isEnabled())
+        self.assertEqual(settings.metric_settings().reference_cube_range(), (1, 2))  # remembered while it does not apply
+
+    def test_the_reference_cube_fields_follow_a_change_made_elsewhere(self) -> None:
+        from dataclasses import replace
+
+        current = self.m.analysis_settings.metric_settings()
+        self.m.analysis_settings.set_metric_settings(replace(current, fit_method="template", template_first_cube=4, template_last_cube=12))
+        self.assertEqual(self.panel._fit.currentData(), "template")
+        self.assertEqual((self.panel._ref_first.value(), self.panel._ref_last.value()), (4, 12))
 
     def test_the_window_controls_follow_a_change_made_elsewhere(self) -> None:
         from dataclasses import replace
