@@ -87,16 +87,16 @@ class StepStatsItemLayoutTest(unittest.TestCase):
         self.assertEqual({c.color for c in by_line[0]}, {"#ff8800"})
         self.assertEqual({c.color for c in by_line[1]}, {"#0088ff"})
 
-    def test_narrow_steps_shrink_the_text_before_the_sd_is_dropped(self) -> None:
-        self.assertEqual({c.pt for c in self._cells(10.0)}, {9.0})  # room enough: the chosen size
-        metrics = QFontMetricsF(self.item.font(7.0))
-        widest = max(metrics.horizontalAdvance(t) for t in ("591.4 ± 0.1", "593.5 ± 0.1", "580.1 ± 0.2", "582.3 ± 0.1", "584.6 ± 0.1"))  # the shortened variants
-        cells = self._cells((widest * 1.08 + 7.0) / 10.0)  # a step that holds them at 7 pt but not at 9 pt
+    def test_narrow_steps_get_shorter_text_and_keep_the_chosen_size(self) -> None:
+        self.assertEqual({c.pt for c in self._cells(10.0)}, {9.0})  # room enough: the chosen size, with the SD
+        metrics = QFontMetricsF(self.item.font(9.0))
+        mean_only = max(metrics.horizontalAdvance(t) for t in ("591.4", "593.5", "580.1", "582.3", "584.6"))
+        short_with_sd = min(metrics.horizontalAdvance(t) for t in ("591.4 ± 0.1", "593.5 ± 0.1", "580.1 ± 0.2", "582.3 ± 0.1", "584.6 ± 0.1"))
+        cells = self._cells((mean_only * 1.15 + 7.0) / 10.0)  # holds the mean at 9 pt, but not the mean with its SD
+        self.assertLess(mean_only * 1.15, short_with_sd)
         self.assertEqual(len(cells), 5)
-        self.assertTrue(all(PLUS_MINUS in c.text for c in cells))  # the SD is kept
-        self.assertEqual(len({c.pt for c in cells}), 1)  # one size for the whole table
-        self.assertLess(cells[0].pt, 9.0)
-        self.assertGreaterEqual(cells[0].pt, 6.0)
+        self.assertTrue(all(c.text and PLUS_MINUS not in c.text for c in cells))  # the SD is what goes, not the font size
+        self.assertEqual({c.pt for c in cells}, {9.0})
 
     def test_a_step_too_narrow_for_anything_keeps_its_cell_and_the_chosen_size(self) -> None:
         narrow = self._cells(2.5)  # 25 px: not even the mean fits
@@ -104,18 +104,25 @@ class StepStatsItemLayoutTest(unittest.TestCase):
         self.assertTrue(all(c.text == "" for c in narrow))  # the cells stay, for the tooltip
         self.assertEqual({c.pt for c in narrow}, {9.0})  # nothing to shrink the text for
 
-    def test_one_hopeless_step_does_not_shrink_the_numbers_of_the_others(self) -> None:
-        bars = [_bar(0, 0.0, 10.0), _bar(1, 10.0, 20.0), _bar(2, 20.0, 20.3)]  # the last is 3 px wide at 10 px per unit
-        table = build_stats_table(bars, [StatsLine("ROI 1", "#ff8800", (591.41, 593.52, 584.5), (0.14, 0.09, 0.1), (32, 27, 21), False)])
-        self.item.set_table(table, StatsTableSettings(text_pt=9))
-        cells = {c.column.index: c for c in self.item.layout(QTransform().scale(10.0, 10.0), self.view)}
-        self.assertEqual(cells[0].pt, 9.0)
-        self.assertIn(PLUS_MINUS, cells[0].text)
-        self.assertEqual(cells[2].text, "")  # nothing fits in 3 px, and it did not pull the others down
+    def test_the_size_is_the_one_in_the_size_box_whatever_the_numbers_and_the_steps(self) -> None:
+        """The same box value must draw at the same size for every selection (it used to shrink to the narrowest step, so a ROI whose numbers were a sign or a digit longer
+        was drawn at 6 pt while another was at 10 pt)."""
+        short = StatsLine("ROI 1", "#ff8800", (591.41, 593.52, 584.5), (0.14, 0.09, 0.1), (32, 27, 21), False)
+        long = StatsLine("ROI 1", "#ff8800", (-591.4123, -593.5234, -584.5345), (0.1412, 0.0923, 0.1034), (32, 27, 21), False)  # signs and more digits
+        bars = [_bar(0, 0.0, 10.0), _bar(1, 10.0, 20.0), _bar(2, 20.0, 20.3)]  # the last step is 0.3 of a unit wide
+        for pt in (6, 9, 12, 24):
+            for scale in (3.0, 6.0, 10.0, 30.0):  # steps from 30 to 300 px
+                drawn = set()
+                for line in (short, long):
+                    self.item.set_table(build_stats_table(bars, [line]), StatsTableSettings(text_pt=pt))
+                    drawn |= {c.pt for c in self.item.layout(QTransform().scale(scale, 10.0), self.view)}
+                self.assertEqual(drawn, {float(pt)}, (pt, scale))
 
-    def test_the_largest_size_is_the_one_chosen_in_the_size_box(self) -> None:
-        self.item.set_table(self.table, StatsTableSettings(text_pt=12))
-        self.assertEqual({c.pt for c in self.item.layout(QTransform().scale(30.0, 10.0), self.view)}, {12.0})  # 300 px steps: room for 12 pt (at 100 px it would shrink)
+    def test_the_size_chosen_in_the_size_box_is_drawn_even_where_it_does_not_fit(self) -> None:
+        self.item.set_table(self.table, StatsTableSettings(text_pt=24))
+        cells = self.item.layout(QTransform().scale(10.0, 10.0), self.view)  # 100 px steps: mean ± SD at 24 pt needs far more
+        self.assertEqual({c.pt for c in cells}, {24.0})
+        self.assertTrue(all(c.text for c in cells))  # something is written in every cell, shortened if need be
 
     def test_without_a_legend_the_rows_stack_from_the_edge(self) -> None:
         top = self._cells(10.0, "top")

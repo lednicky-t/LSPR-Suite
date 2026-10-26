@@ -244,6 +244,24 @@ class PlanBarControlsTest(unittest.TestCase):
         self.assertEqual((s.visible, s.position, s.height_stop, s.alpha, s.text_mode, s.separators, s.text_stop, s.text_pt),
                          (False, bm.POSITION_BOTTOM, 7, 0.2, "solution", ("_x_", "_y_"), 5, 12))
 
+    def test_top_bottom_is_hidden_while_the_height_is_full_and_keeps_its_choice(self) -> None:
+        c = self.controls
+        c._position.setCurrentIndex(c._position.findData(bm.POSITION_BOTTOM))
+        self.assertFalse(c._position.isHidden())
+        c._height.setValue(bm.HEIGHT_FULL)
+        self.assertTrue(c._position.isHidden())
+        self.assertEqual(c.settings().position, bm.POSITION_BOTTOM)
+        c._height.setValue(4)
+        self.assertFalse(c._position.isHidden())
+
+    def test_the_four_text_controls_live_in_the_one_step_labels_menu(self) -> None:
+        c = self.controls
+        inside = c._labels.findChildren(QtWidgets.QWidget)  # recursive, and through the menu's own window (isAncestorOf stops at a window)
+        for control in (c._content, c._align, c._stop, c._size):
+            self.assertNotIn(control, c.widgets())
+            self.assertIn(control, inside)
+        self.assertIn(c._labels, c.widgets())
+
     def test_the_height_box_has_one_more_stop_that_reads_full(self) -> None:
         box = self.controls._height
         box.setValue(10)
