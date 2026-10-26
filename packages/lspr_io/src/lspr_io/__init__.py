@@ -96,6 +96,7 @@ from .hdf5 import (
     write_session_metadata,
 )
 from .imaging import is_imaging_measurement_file, read_imaging_acquisition_metadata
+from .pump_plan_csv import PumpPlanReadResult, is_pump_plan_csv, read_pump_plan_csv
 from .version import APP_NAME, APP_VERSION, __version__, version_string
 
 __all__ = [
@@ -194,6 +195,9 @@ __all__ = [
     "write_session_metadata",
     "write_xy_csv",
     "version_string",
+    "PumpPlanReadResult",
     "is_imaging_measurement_file",
+    "is_pump_plan_csv",
     "read_imaging_acquisition_metadata",
+    "read_pump_plan_csv",
 ]

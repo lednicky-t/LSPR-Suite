@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 SOURCE_FORMAT_LSPRI_ACQUISITION_V6_4 = "lspri_acquisition_v6_4"
 SOURCE_FORMAT_LEGACY_MEASURING_TIMES_CSV = "legacy_measuring_times_csv"
+
+# Where an `ImagingPlan`'s step start/end times come from. Only the first exists today; a native acquisition
+# file's measured run record (`experiment_control_runtime`, timestamps in unix ms) would be a second value.
+PLAN_TIME_SOURCE_MEASURED_NOTES = "measured_notes"
 
 
 class WavelengthCameraSettings(BaseModel):
@@ -85,6 +91,60 @@ class ImagingCommentEvent(BaseModel):
     comment: str
 
 
+class ImagingPlanStep(BaseModel):
+    """One step of the experiment (a solution run through the cell), placed on the measurement clock.
+
+    Times are unix milliseconds like `ImagingCubeTiming.acquired_at_unix_ms` and `ImagingCommentEvent`, so a
+    step lines up with images without any conversion. The interval is half-open: an image taken exactly at
+    `start_unix_ms` belongs to this step, one taken at `end_unix_ms` to the next. Idle stretches ("Pump is not
+    running") are not steps and are simply absent.
+
+    `label` is the whole note text recorded during the measurement. `devices` is free-form and follows the
+    layout of `lspr_core.ExperimentPlanStep.devices` (what singleLSPR Acquisition writes): `channels` (a list
+    of `{"channel", "flow_ul_min", "direction"}`), `valve` (V1, "Open"/"Close") and `valves` (all, by name).
+    It is empty when only the measured notes are known. `planned_duration_s` is what the plan asked for; the
+    start/end are what was measured, so the two differ by a fraction of a second per step.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    step: int
+    label: str
+    start_unix_ms: int
+    end_unix_ms: int
+    planned_duration_s: float | None = None
+    color: str | None = None
+    devices: dict[str, Any] = {}
+
+    @property
+    def duration_s(self) -> float:
+        return max(0.0, (self.end_unix_ms - self.start_unix_ms) / 1000.0)
+
+
+class ImagingPlan(BaseModel):
+    """The experiment's steps in the order they ran, with where their times and settings came from.
+
+    `source_file` is the plan file the device settings were read from (`None`: only the measured notes are
+    known). `warnings` keeps what was found wrong while reading and joining (a value that looks mistyped, a
+    step count that does not match), so the saved file records it too.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    time_source: str = PLAN_TIME_SOURCE_MEASURED_NOTES
+    source_file: str | None = None
+    steps: list[ImagingPlanStep] = []
+    warnings: list[str] = []
+
+    def step_at(self, acquired_at_unix_ms: int) -> ImagingPlanStep | None:
+        """The step active at *acquired_at_unix_ms*, or None between / outside steps. Scans the steps; a loop
+        over many images should build `imaging_plan.StepLookup` once instead."""
+        for step in self.steps:
+            if step.start_unix_ms <= acquired_at_unix_ms < step.end_unix_ms:
+                return step
+        return None
+
+
 class ImagingAcquisitionMetadata(BaseModel):
     """Camera/illumination setup and per-image timing for one imaging
     dataset, in one shape regardless of whether it came from a native
@@ -106,6 +166,7 @@ class ImagingAcquisitionMetadata(BaseModel):
     illumination_settings_by_wavelength: dict[float, WavelengthIlluminationSettings] = {}
     image_timings: list[ImagingCubeTiming] = []
     comment_events: list[ImagingCommentEvent] = []
+    plan: ImagingPlan | None = None
 
     def comment_at(self, acquired_at_unix_ms: int) -> str | None:
         """The comment active at *acquired_at_unix_ms* - the latest
