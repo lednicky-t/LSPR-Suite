@@ -53,6 +53,8 @@ try:
     from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, TransientEvent
     from lspr_imaging_app.image_tools.mask.mask_pointers import MaskPointersModule
     from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
+    from lspr_imaging_app.plan.module import ExperimentPlanModule
+    from lspr_imaging_app.plan.state import PlanEdit, PlanEditsState
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import SelectionModule
     from lspr_imaging_app.storage import session_index
@@ -445,18 +447,19 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.selection = SelectionModule()
         self.analysis_settings = AnalysisSettingsModule()
         self.events = MaskPointersModule()
+        self.plan = ExperimentPlanModule(self.dataset)
         self.coordinator = SessionCoordinator()
         self.session_load = SessionLoadTask()  # reads the session off the GUI thread: `_settle` waits for it
         self.autosave = _build_session_autosave(
             self.dataset, self.geometry, self.mask, self.chromatic,
-            self.background, self.roi_toolbox, self.selection, self.analysis_settings, None, self.events,
+            self.background, self.roi_toolbox, self.selection, self.analysis_settings, None, self.events, self.plan,
         )
         self._autosaves.append(self.autosave)
         _wire_session_coordinator(
             self.coordinator, self.autosave, _FakeAnalysisEngine(),
             self.geometry, self.mask, self.chromatic, self.background,
             self.roi_toolbox, self.selection, self.analysis_settings, None, self.events,
-            session_load=self.session_load,
+            session_load=self.session_load, experiment_plan=self.plan,
         )
         self.dataset.dataset_loaded.connect(lambda ds: self.coordinator.bind_dataset(ds.home))
         self.dataset.dataset_cleared.connect(self.coordinator.unbind)
@@ -487,6 +490,19 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         restored = self.roi_toolbox.rois()
         self.assertEqual(len(restored), 1)
         self.assertEqual((restored[0].center_x, restored[0].center_y), (8.0, 6.0))
+
+    def test_a_plan_edit_is_written_and_comes_back_after_a_restart(self) -> None:
+        """The plan bar's edits are part of the session: a change announced by the plan module schedules a save, and the next open restores it."""
+        edit = PlanEdit(step=1, measured_start_unix_ms=10_000, measured_label="H2O_--_ch1F", label="Water", end_unix_ms=42_000)
+        self.dataset.load_dataset(self.dataset_model)
+        self.plan.restore_state(PlanEditsState(edits=(edit,)))  # announces `steps_changed` like every command does
+        self.autosave.flush()
+        self.assertEqual(json.loads(self._active_session_path().read_text(encoding="utf-8"))["plan"]["edits"][0]["label"], "Water")
+
+        self._build()
+        self.dataset.load_dataset(self.dataset_model)
+        self._settle()
+        self.assertEqual(self.plan.state(), PlanEditsState(edits=(edit,)))
 
     def test_restoring_a_session_leaves_nothing_to_save(self) -> None:
         """If the restore itself counted as an edit, every dataset open

@@ -312,7 +312,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         first = self._save().read_bytes()
         self.assertEqual(self._save().read_bytes(), first)
         payload = json.loads(first)
-        self.assertEqual(payload["schema_version"], "1.4")
+        self.assertEqual(payload["schema_version"], "1.5")
         self.assertTrue(all(entry.get("timeline") is None for entry in payload["roi"]["rois"]))
 
     def test_a_schema_1_1_file_loads_without_a_timeline(self) -> None:

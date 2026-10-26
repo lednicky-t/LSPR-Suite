@@ -184,7 +184,7 @@ class SessionFileTests(unittest.TestCase):
         state = self._state()
         save_session(self.root, SessionState(mask_pointers=state), self.naming)
         payload = json.loads(session_path(self.root).read_text(encoding="utf-8"))
-        self.assertEqual(payload["schema_version"], "1.4")
+        self.assertEqual(payload["schema_version"], "1.5")
         self.assertEqual(len(payload["mask_pointers"]["events"]), 2)
         loaded = load_session(self.root)
         self.assertEqual(loaded.mask_pointers.info, state.info)
