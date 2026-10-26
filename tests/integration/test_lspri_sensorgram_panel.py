@@ -360,6 +360,27 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertTrue(_pump(lambda: "shift" not in self.panel._plot._item.getAxis("left").labelText))
         self.assertIsNotNone(self.panel._plot.baseline_window())  # the selector stays: showing it is the View button's business
 
+    def test_the_baseline_window_keeps_its_cubes_when_the_x_axis_unit_is_switched(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        stats = self.m.analysis_settings.statistics_settings
+
+        def window() -> tuple[float | None, float | None]:
+            return stats().baseline_window_start, stats().baseline_window_end
+
+        with mock.patch.object(self.m.dataset, "cube_start_seconds", side_effect=lambda c: 10.0 * c + 3.0):
+            for cubes in ((0.0, 5.0), (1.0, 5.0), (2.0, 4.0)):  # a window that starts on the first cube, one that does not, one inside
+                self.m.cube_display.set_mode("cube")
+                self.panel._plot.baseline_window_changed.emit(*cubes)
+                self.assertEqual(window(), cubes)
+                self.m.cube_display.set_mode("time")
+                self.assertEqual(window(), (10.0 * cubes[0] + 3.0, 10.0 * cubes[1] + 3.0))  # the seconds those two cubes start at
+                self.m.cube_display.set_mode("cube")
+                self.assertEqual(window(), cubes)  # and back: the window it was, not the default one
+            self.m.cube_display.mode_changed.emit("cube")  # a signal without a change of unit (a dataset was loaded) leaves it alone
+            self.assertEqual(window(), cubes)
+
     def _double_click_at(self, scene_pos: QPointF) -> None:
         class _Event:
             def button(self):
@@ -494,6 +515,20 @@ class SensorgramPanelTests(unittest.TestCase):
         store.set("sensorgram/baseline_band_height", 40)
         self.panel.restore_ui_state(store)
         self.assertEqual(tuple(plot._window.span), (0.0, 0.4))
+
+    def test_the_range_readout_font_size_resizes_the_box_and_is_remembered(self) -> None:
+        store = UiStateStore()
+        self.panel.restore_ui_state(store)
+        readout = self.panel._plot._range_readout
+        before = readout.height()
+        self.panel._band_font.setValue(self.panel._band_font.value() + 4)
+        enlarged = readout.height()
+        self.assertGreater(enlarged, before)  # the heading and the fields are measured again for the new size
+        self.assertEqual(store.get("sensorgram/baseline_readout_font_size"), self.panel._band_font.value())
+        store.set("sensorgram/baseline_readout_font_size", 6)
+        self.panel.restore_ui_state(store)
+        self.assertEqual(readout._points, 6)
+        self.assertLess(readout.height(), enlarged)
 
     def test_statistic_section_lists_individual_group_all_and_na_is_written_for_no_smoothing(self) -> None:
         display = self.panel._display
