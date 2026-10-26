@@ -154,7 +154,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
             fit_wl_max=590.0, metric_key="centroid",
         ))
         self.analysis_settings.set_statistics_settings(StatisticsSettings(
-            smoothing_method="savgol", smoothing_window=11, smoothing_polyorder=3,
+            smoothing_method="savgol", smoothing_window=11, smoothing_polyorder=3, smooth_within_steps=False,
             spike_rejection_enabled=True, spike_rejection_method="running_median",
             baseline_enabled=True, baseline_window_start=1.0, baseline_window_end=4.0,
             sensorgram_display_mode="average_by_group", sensorgram_aggregation="median",
@@ -289,12 +289,24 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
 
         statistics = analysis.statistics_settings()
         self.assertEqual(statistics.smoothing_method, "savgol")
+        self.assertFalse(statistics.smooth_within_steps)  # the "smooth inside steps" switch (2026-10-26) is remembered with the session
         self.assertTrue(statistics.spike_rejection_enabled)
         self.assertEqual(statistics.spike_rejection_method, "running_median")
         self.assertTrue(statistics.baseline_enabled)
         self.assertEqual((statistics.baseline_window_start, statistics.baseline_window_end), (1.0, 4.0))
         self.assertEqual(statistics.sensorgram_display_mode, "average_by_group")
         self.assertEqual(statistics.sensorgram_band, "sem")
+
+    def test_a_session_written_before_the_smooth_inside_steps_switch_reads_it_as_on(self) -> None:
+        """Additive field of the statistics block (2026-10-26, no schema bump: a missing field is the default, as for the template-shift fields)."""
+        path = self._save()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIs(payload["analysis"]["statistics"]["smooth_within_steps"], False)
+        del payload["analysis"]["statistics"]["smooth_within_steps"]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        state = load_session(self.root)
+        self.assertTrue(state.statistics_settings.smooth_within_steps)
+        self.assertEqual(state.statistics_settings.smoothing_method, "savgol")  # the rest of the block is intact
 
     def test_roi_geometry_timeline_round_trips_through_the_file(self) -> None:
         """Schema 1.2: a ROI's geometry changes by cube (persistent / individual) survive a save and a fresh load."""

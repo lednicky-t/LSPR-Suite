@@ -407,7 +407,7 @@ class PlanBarPanelTest(unittest.TestCase):
         steps = self._bar().steps()
         self.assertEqual([(s.text, round(s.x_start, 6), round(s.x_end, 6)) for s in steps], [("H2O_--_ch1F", 0.0, 3.0), ("10perEG_-_ch1F", 3.0, round(6.0 + 100 / CUBE_MS, 6))])
         self.assertTrue(self._bar().is_shown())
-        self.assertTrue(self.panel._plan_controls.is_available())
+        self.assertTrue(self.panel._steps.plan_controls.is_available())
         self.assertIsNotNone(steps[0].levels)  # the drawn traces give the step its levels
         self.assertIn("Step 1", steps[0].tooltip)
 
@@ -421,7 +421,7 @@ class PlanBarPanelTest(unittest.TestCase):
 
     def test_the_settings_reach_the_bar_and_the_text_follows_the_rule(self) -> None:
         self._open_scan_and_draw()
-        controls = self.panel._plan_controls
+        controls = self.panel._steps.plan_controls
         controls._content.setCurrentIndex(controls._content.findData("solution"))
         self.assertEqual([s.text for s in self._bar().steps()], ["H2O", "10perEG"])
         controls._show.setChecked(False)
@@ -452,20 +452,20 @@ class PlanBarPanelTest(unittest.TestCase):
             self.m.scan_results, self.m.roi_toolbox, self.m.dataset, self.m.selection, self.m.analysis_settings, self.m.cube_display,
             trace_in_process=False, mask=self.m.mask,
         )
-        self.assertFalse(panel._plan_controls.is_available())
+        self.assertFalse(panel._steps.plan_controls.is_available())
         self.assertFalse(panel._plot.plan_bar().is_shown())
         panel.shutdown()
         panel.deleteLater()
 
     def test_a_dataset_without_steps_greys_the_group_out_and_clearing_hides_the_bar(self) -> None:
         self._open_scan_and_draw()
-        self.assertTrue(self.panel._plan_controls.is_available())
+        self.assertTrue(self.panel._steps.plan_controls.is_available())
         self.m.selection.set_roi_selection(set())  # nothing drawn: no axis to put the steps on
         self.assertTrue(_pump(lambda: not self._bar().is_shown()))
         dataset = self.m.dataset._dataset
         dataset.acquisition_metadata = dataset.acquisition_metadata.model_copy(update={"plan": None})
         self.m.experiment_plan.steps_changed.emit("dataset")
-        self.assertFalse(self.panel._plan_controls.is_available())
+        self.assertFalse(self.panel._steps.plan_controls.is_available())
 
 
 if __name__ == "__main__":

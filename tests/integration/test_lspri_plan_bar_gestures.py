@@ -253,7 +253,7 @@ class PlanBarGestureTest(unittest.TestCase):
         drawn = self.bar.layout(self.bar.deviceTransform(self.plot._widget.viewportTransform()), self.bar.view_rect())
         image = self.plot.grab().toImage()
         y = int(drawn[0].rect.top()) + 3
-        marked = [image.pixelColor(int(x), y) for x in (drawn[0].left_edge + 1, drawn[0].right_edge - 1, drawn[2].left_edge + 1, drawn[2].right_edge - 1)]
+        marked = [image.pixelColor(int(x), y) for x in (drawn[0].left_edge, drawn[0].right_edge, drawn[2].left_edge, drawn[2].right_edge)]  # the bar is 2.4 px wide, centred on the edge: that pixel is wholly inside it
         middle = image.pixelColor(int(drawn[1].rect.center().x()), y)
         self.assertTrue(all(c.green() > 200 and c.red() < 60 for c in marked), [c.name() for c in marked])
         self.assertGreater(middle.red(), 200)  # the step between them is not marked
@@ -793,7 +793,7 @@ class PlanBarPanelGestureTest(unittest.TestCase):
         self.assertEqual(self.bar.selected_indices(), (0,))  # the edit redraws the bar; the selection stays
 
     def test_the_menu_of_the_panel_acts_on_the_modules_steps(self) -> None:
-        menu = self.panel._plan_actions.build_menu(1)
+        menu = self.panel._steps.actions.build_menu(1)
         actions = {a.text(): a for a in menu.actions() if a.text()}
         with mock.patch("lspr_imaging_app.panels.sensorgram.plan_actions.QColorDialog.getColor", return_value=QColor("#abcdef")):
             actions["Colour..."].trigger()
