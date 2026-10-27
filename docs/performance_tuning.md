@@ -65,6 +65,16 @@ Deliberately **not** wired:
 - **The old generation** (`io/dataset.py`, `gui/analysis_tasks.py`, `calibrate_analysis_worker_count`): edited only on the maintainer's request. The old app keeps its own I/O-fraction tuner.
 - **Chunk shape, compression level, rounding**: saved data, never tuned (the rule above).
 
+## Performance mode of the analysis scan (2026-10-27)
+
+Not a worker *count* but the *lifetime* of the workers: the Analysis tab's Mode pick-up (Normal / Performance, remembered as `analysis/mode`) keeps
+the scan's worker processes alive between scans (`apps/LSPRi/eva/.../analysis/scan_pool.py`), because starting them (about 1,000 imports per worker, 4-6 s
+for all of them) is most of a short refresh. The count is still chosen by `lspr_core.perf` (a pool is made for the count a big scan would get and is
+replaced if a scan needs more or the priority setting changed). Measured: a one-ROI refresh of 63 cubes 5.8 s -> 1.1 s, of all 314 cubes 12.1 -> 7.8 s;
+the cost is about 150 MB of memory per idle worker. Recipe for another job that wants it: `scan.scan_cubes(warm=...)` shows the pattern (settings and a
+run number travel with each task, a worker drops its caches when a new run starts, workers watch their parent). Record:
+`apps/LSPRi/eva/docs/roi_nudge_partial_scan_proposal_2026-10-26.md` section 11.
+
 ## Preferences screen (Edit -> Preferences..., group "Parallel work (export and scans)")
 
 Screen purpose: keep the standard behaviour, try tuning on this computer, or fix the number of workers. Main actions: choose Standard

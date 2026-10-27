@@ -1,5 +1,5 @@
 """Image panel > Analysis ribbon tab (Scan / Fast scan / Scan file): the real buttons, the real `ScanTask` and a small real dataset
-(2026-10-23; moved from the Workflow panel 2026-10-24).
+(2026-10-23; moved from the Workflow panel 2026-10-24; Fast scan a button since 2026-10-27).
 
 Driven through `QToolButton.click()`, never by screen coordinate. The window is not shown: the modules of the app are built
 (`app_rewrite._build_modules`), an `AnalysisTab` is made and `_wire_analysis_scan` connects it, exactly as `build_main_window` does. Design: apps/LSPRi/eva/docs/analysis_redesign_plan_2026-10-19.md, section 18.
@@ -12,6 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import tifffile
@@ -28,9 +29,11 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app import app_rewrite
     from lspr_imaging_app.analysis import scan_store
+    from lspr_imaging_app.analysis.scan_pool import WarmPool
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
+    from lspr_imaging_app.startup_tracker import STARTUP_TASK_ID, StartupStep, StartupTracker
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -38,6 +41,13 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 H, W = 64, 80
+
+
+def _pump_a_little(seconds: float = 0.3) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        _APP.processEvents()
+        time.sleep(0.005)
 
 
 def _write_dataset(root: Path) -> ImageDataset:
@@ -81,9 +91,13 @@ class ScanRowTests(unittest.TestCase):
             self.m.roi_toolbox.add_roi(40.0, 30.0, sample_diameter_px=6.0)
             self.m.roi_toolbox.add_roi(55.0, 34.0, sample_diameter_px=6.0)
 
-    def _press_run(self) -> None:
+    def _press_run(self) -> None:  # the Scan button: every cube again
         self.finished.clear()
         self.row.run_button.click()
+
+    def _press_fast(self) -> None:  # the Fast scan button: only what is out of date
+        self.finished.clear()
+        self.row.fast_run_button.click()
 
     def _wait_finished(self) -> None:
         _pump(lambda: bool(self.finished))
@@ -114,27 +128,45 @@ class ScanRowTests(unittest.TestCase):
         self.assertTrue(stored.computed().all())
         self.assertTrue(np.isfinite(stored.values["mean"]).all())
 
-    def test_a_second_run_is_up_to_date_and_switching_fast_scan_off_forces_a_rescan(self) -> None:
+    def test_fast_scan_of_an_unchanged_session_is_up_to_date_but_scan_reads_every_cube_again(self) -> None:
         self._open_dataset()
         self._press_run()
         self._wait_finished()
-        self._press_run()
+        self._press_fast()
         self._wait_finished()
         self.assertIn("up to date", self.row.status_text())
-        self.assertTrue(self.row.fast_scan())  # on by default
-        self.row.fast_scan_button.click()  # off: every cube again
-        self.assertFalse(self.row.fast_scan())
         self._press_run()
         self._wait_finished()
         self.assertIn("scanned in", self.row.status_text())
         self.assertNotIn("already current", self.row.status_text())
 
-    def test_moving_a_roi_makes_the_next_run_scan_again(self) -> None:
+    def test_the_button_that_started_a_scan_is_its_stop_and_the_other_one_is_disabled(self) -> None:
         self._open_dataset()
+        self._press_fast()
+        self.assertTrue(self.row.is_running())
+        self.assertEqual(self.row._fast_caption.text(), "Stop")
+        self.assertEqual(self.row._run_caption.text(), "Scan")
+        self.assertTrue(self.row.fast_run_button.isEnabled())
+        self.assertFalse(self.row.run_button.isEnabled())
+        self.row.fast_run_button.click()  # Stop
+        self._wait_finished()
+        self.assertEqual(self.finished[0][1], "cancelled")
+        self.assertEqual(self.row._fast_caption.text(), "Fast scan")
+        self.assertTrue(self.row.run_button.isEnabled())
         self._press_run()
+        self.assertEqual(self.row._run_caption.text(), "Stop")
+        self.assertEqual(self.row._fast_caption.text(), "Fast scan")
+        self.assertFalse(self.row.fast_run_button.isEnabled())
+        self.row.run_button.click()  # Stop
+        self._wait_finished()
+        self.assertTrue(self.row.fast_run_button.isEnabled())
+
+    def test_moving_a_roi_makes_the_next_fast_scan_read_again(self) -> None:
+        self._open_dataset()
+        self._press_fast()  # nothing stored yet: everything is out of date
         self._wait_finished()
         self.m.roi_toolbox.move_roi(1, 41.0, 30.0)
-        self._press_run()
+        self._press_fast()
         self._wait_finished()
         self.assertIn("scanned in", self.row.status_text())
 
@@ -153,9 +185,73 @@ class ScanRowTests(unittest.TestCase):
         self.assertEqual(self.finished[0][1], "failed")
         self.assertIn("no ROIs", self.row.status_text())
 
-    def test_fast_scan_is_remembered(self) -> None:
-        self.row.fast_scan_button.click()
-        self.assertEqual(self.ui_state.get("analysis/fast_scan"), False)
+    # -- the Mode pick-up (2026-10-27): Normal / Performance --------------------------------------------------------------------
+
+    def _wait_for_pool_line(self, text: str) -> None:
+        _pump(lambda: text in self.row.mode_picker.pool_state_line(), 10.0)
+
+    def test_the_mode_pick_up_offers_normal_and_performance_and_says_what_each_does(self) -> None:
+        picker = self.row.mode_picker
+        self.assertEqual(self.row.mode(), "normal")  # the default
+        self.assertEqual([a.text() for a in picker._actions.values()], ["Normal: workers start for each scan", "Performance: workers stay ready between scans"])
+        self.assertIn("closes them when it ends", picker.tooltip_text())
+        picker.set_mode("performance", announce=False)
+        self.assertIn("kept ready between scans", picker.tooltip_text())
+        self.assertIn("about 150 MB", picker.tooltip_text())  # what it costs is told
+        self.assertIn("Performance", self.row.info_html())
+
+    def test_choosing_performance_is_remembered_starts_the_workers_and_tells_when_they_are_ready(self) -> None:
+        with mock.patch.object(WarmPool, "start", return_value={101, 102}):
+            self.row.mode_picker._actions["performance"].trigger()
+            self.assertEqual(self.m.analysis_scan.mode(), "performance")
+            self.assertEqual(self.ui_state.get("analysis/mode"), "performance")
+            self._wait_for_pool_line("Ready: 2 worker processes")
+        self.assertIn("about 300 MB while idle", self.row.mode_picker.pool_state_line())
+        self.row.mode_picker._actions["normal"].trigger()
+        self.assertEqual((self.m.analysis_scan.mode(), self.ui_state.get("analysis/mode")), ("normal", "normal"))
+        _pump_a_little()
+        self.assertEqual(self.row.mode_picker.pool_state_line(), "")
+
+    def test_a_pool_that_cannot_start_is_announced_on_the_status_bar(self) -> None:
+        shown: list[str] = []
+        self.row.status_message.connect(shown.append)
+        with mock.patch.object(WarmPool, "start", side_effect=RuntimeError("no processes")):
+            self.row.mode_picker._actions["performance"].trigger()
+            _pump(lambda: bool(shown), 10.0)
+        self.assertTrue(shown and "could not be started" in shown[0])
+
+    def test_the_mode_cannot_be_changed_while_a_scan_runs(self) -> None:
+        self._open_dataset()
+        self.assertTrue(self.row.mode_picker.isEnabled())
+        self._press_run()
+        self.assertFalse(self.row.mode_picker.isEnabled())
+        self._wait_finished()
+        self.assertTrue(self.row.mode_picker.isEnabled())
+
+    def test_a_remembered_performance_mode_is_shown_at_launch_and_starts_its_workers_when_startup_is_done(self) -> None:
+        m2 = app_rewrite._build_modules()
+        self.addCleanup(m2.analysis_scan.shutdown)
+        row2 = AnalysisTab()
+        self.addCleanup(row2.deleteLater)
+        startup = StartupTracker([StartupStep("x", "waiting", lambda: True)])
+        with mock.patch.object(WarmPool, "start", return_value={7, 8}) as start:
+            app_rewrite._wire_analysis_scan(m2, row2, UiStateStore({"analysis/mode": "performance"}), startup)
+            self.assertEqual((row2.mode(), m2.analysis_scan.mode()), ("performance", "performance"))
+            _pump_a_little()
+            start.assert_not_called()  # the application is still starting: no seven processes now
+            startup.task_finished.emit(STARTUP_TASK_ID, "completed", "")
+            _pump(lambda: start.called, 10.0)
+            self.assertTrue(start.called)
+            _pump(lambda: "Ready" in row2.mode_picker.pool_state_line(), 10.0)
+            self.assertIn("Ready: 2", row2.mode_picker.pool_state_line())
+
+    def test_an_unknown_remembered_mode_means_normal(self) -> None:
+        m2 = app_rewrite._build_modules()
+        self.addCleanup(m2.analysis_scan.shutdown)
+        row2 = AnalysisTab()
+        self.addCleanup(row2.deleteLater)
+        app_rewrite._wire_analysis_scan(m2, row2, UiStateStore({"analysis/mode": "turbo"}))
+        self.assertEqual((row2.mode(), m2.analysis_scan.mode()), ("normal", "normal"))
 
     def test_the_scan_file_button_shows_only_while_there_is_a_file_and_opens_its_folder(self) -> None:
         opened: list[str] = []

@@ -311,7 +311,7 @@ class CellHashTests(unittest.TestCase):
         app = _App()
         app.background = replace(app.background, flatten_background_sigma_px=24.0)
         self.assertTrue((self._hashes(app) != base).all())
-        # a ROI moves: every cell of every cube (the other ROIs' rings exclude it)
+        # every ROI moves: every cell of every cube (a single moved ROI changes only its own cells: test_lspri_scan_local_staleness.py)
         self.assertTrue((self._hashes(_App(shift=0.5)) != base).all())
         # one frame's chromatic affine: only that cube
         app = _App()

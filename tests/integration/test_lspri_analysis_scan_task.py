@@ -8,9 +8,11 @@ question is the task around it. Design: apps/LSPRi/eva/docs/analysis_redesign_pl
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -30,6 +32,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app.analysis import scan_jobs, scan_store
+    from lspr_imaging_app.analysis import scan_task as scan_task_module
     from lspr_imaging_app.analysis.scan import scan_cubes
     from lspr_imaging_app.analysis.scan_arrays import new_arrays, place
     from lspr_imaging_app.analysis.scan_jobs import MaskRef, ScanSource, build_scan_plan, snapshot_source
@@ -84,6 +87,9 @@ class ScanTaskTests(unittest.TestCase):
         self.rois = _rois()
         self.rois_by_cube: dict[int, list] | None = None
         self.affine_override: dict = {}
+        # background removal on, with the ROIs cut out of its estimate: every ROI's numbers depend on where every ROI is
+        self.background = BackgroundSettings(flatten_background_enabled=True, flatten_background_sigma_px=10.0,
+                                             flatten_background_binning=2, flatten_background_exclude_mask=True)
         self.results: list[tuple] = []
         self.task = ScanTask(on_result=lambda plan, arrays, summary: self.results.append((plan, arrays, summary)))
         self.progress: list[tuple] = []
@@ -111,8 +117,7 @@ class ScanTaskTests(unittest.TestCase):
             chromatic_affine_between=lambda a, b: IDENTITY,
             resolve_mask=lambda c, w: MaskRef((c, w), "individual", lambda: _mask()) if (c, w) == (1, 500.0) else None,
             geometry=lambda: GeometrySettings(rotation_angle_deg=1.0),
-            background=lambda: BackgroundSettings(flatten_background_enabled=True, flatten_background_sigma_px=10.0,
-                                                  flatten_background_binning=2, flatten_background_exclude_mask=True),
+            background=lambda: self.background,
             detection=lambda: AreaRoiDetectionSettings(ignore_marked_pixels=True),
             default_reference_diameters=lambda: (14.0, 20.0),
         )
@@ -159,7 +164,7 @@ class ScanTaskTests(unittest.TestCase):
         for event in ("analysis.scan_prepared", "analysis.scan_start", "analysis.scan_done"):
             self.assertIn(event, text)
         done = [line for line in logs.output if "analysis.scan_done" in line][0]
-        for field in ("frames_per_s=", "busy_read_s=", "busy_prepare_s=", "busy_reduce_s="):
+        for field in ("frames_per_s=", "busy_read_s=", "busy_prepare_s=", "busy_reduce_s=", "write_s=", "write_wait_s=", "write_batches="):
             self.assertIn(field, done)
 
     def test_per_cube_timings_are_logged_at_debug_level(self) -> None:
@@ -200,7 +205,8 @@ class ScanTaskTests(unittest.TestCase):
         self.finished.clear()
         self.results.clear()
         self.completed.clear()
-        self._run(store_path=path, processes=1, **kwargs)
+        kwargs.setdefault("processes", 1)
+        self._run(store_path=path, **kwargs)
 
     def test_the_scan_is_saved_and_reads_back_equal(self) -> None:
         path = self._store_path()
@@ -245,6 +251,86 @@ class ScanTaskTests(unittest.TestCase):
         self.assertTrue(second.computed().all())
         self.assertEqual(sorted(second.recipes), [1])  # same recipe
 
+    # -- a moved ROI: only its own cells (2026-10-27) ------------------------------------------------------------------------
+
+    def _assert_file_equals_a_full_scan(self, path: Path) -> None:
+        """The file holds, bit for bit, what a scan of every ROI of the current session gives (the golden reference for a partial refresh)."""
+        expected = self._expected()
+        stored = scan_store.read_scan(path)
+        self.assertTrue(stored.computed().all())
+        self.assertTrue(np.array_equal(stored.values["mean"], expected.values["mean"], equal_nan=True))
+        self.assertTrue(np.array_equal(stored.std, expected.std, equal_nan=True))
+        for name in ("n_valid", "n_nominal", "n_masked"):
+            self.assertTrue(np.array_equal(getattr(stored, name), getattr(expected, name)), name)
+
+    def test_moving_one_roi_rescans_only_that_roi_and_the_file_equals_a_full_scan(self) -> None:
+        self.background = BackgroundSettings()  # off: the numbers of a ROI do not depend on where the other ROIs are
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        first = scan_store.read_scan(path)
+        self.rois[0].center_x += 1.0
+        self._rerun(path)
+        summary = self.completed[0]
+        self.assertEqual((summary.cubes, summary.rois_scanned, summary.rois), (CUBES, 1, 8))
+        self.assertIn("1 of 8 ROIs x 3 cubes", self.finished[0][2])
+        second = scan_store.read_scan(path)
+        self.assertTrue(np.array_equal(second.cell_hash[:, 1:], first.cell_hash[:, 1:]))  # the other ROIs' cells were not touched
+        self.assertTrue((second.cell_hash[:, 0] != first.cell_hash[:, 0]).all())
+        self.assertTrue(np.array_equal(second.values["mean"][:, 1:], first.values["mean"][:, 1:], equal_nan=True))
+        self._assert_file_equals_a_full_scan(path)
+
+    def test_the_refresh_of_one_roi_is_the_same_in_worker_processes(self) -> None:
+        self.background = BackgroundSettings()
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        self.rois[3].center_y -= 1.5
+        self._rerun(path, processes=2)
+        self.assertEqual((self.completed[0].workers, self.completed[0].rois_scanned), (2, 1))
+        self._assert_file_equals_a_full_scan(path)
+
+    def test_a_roi_that_comes_within_reach_of_a_neighbour_refreshes_the_neighbour_too(self) -> None:
+        self.background = BackgroundSettings()
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        self.rois[0].center_x = 30.0  # was 18: its sample disk now touches the ring of the ROI at x = 43
+        self._rerun(path)
+        self.assertEqual(self.completed[0].rois_scanned, 2)
+        self._assert_file_equals_a_full_scan(path)
+
+    def test_with_background_removal_that_cuts_out_the_rois_a_moved_roi_refreshes_every_roi(self) -> None:
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        self.rois[0].center_x += 1.0
+        self._rerun(path)
+        self.assertEqual((self.completed[0].cubes, self.completed[0].rois_scanned), (CUBES, 8))
+        self._assert_file_equals_a_full_scan(path)
+
+    def test_when_most_rois_are_stale_the_whole_cube_is_computed(self) -> None:
+        self.background = BackgroundSettings()
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        for roi in self.rois[:5]:  # 5 of 8 are more than the share a subset may be
+            roi.center_x += 1.0
+        self._rerun(path)
+        self.assertEqual(self.completed[0].rois_scanned, 8)
+        self._assert_file_equals_a_full_scan(path)
+
+    def test_a_refresh_of_one_roi_that_is_cancelled_after_the_first_cube_resumes_to_the_same_file(self) -> None:
+        self.background = BackgroundSettings()
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        first = scan_store.read_scan(path)
+        self.rois[2].center_x += 1.0
+        with self._cancel_once_the_first_cube_is_on_disk() as written:
+            self._rerun(path)
+        self.assertEqual(self.finished[0][1], "cancelled")
+        self.assertEqual(written, [0])
+        refreshed = scan_store.read_scan(path).cell_hash[:, 2] != first.cell_hash[:, 2]
+        self.assertEqual(int(refreshed.sum()), 1)  # one cube holds the new cell; the other two still hold the old one, which is stale
+        self._rerun(path)
+        self.assertEqual((self.completed[0].cubes, self.completed[0].rois_scanned), (CUBES - 1, 1))
+        self._assert_file_equals_a_full_scan(path)
+
     def test_masks_are_built_only_for_the_cubes_that_are_scanned_again(self) -> None:
         path = self._store_path()
         self._run(store_path=path, processes=1)
@@ -272,27 +358,51 @@ class ScanTaskTests(unittest.TestCase):
         self._rerun(path, only_stale=False)
         self.assertEqual((self.completed[0].cubes, self.completed[0].cubes_current), (CUBES, 0))
 
+    @contextlib.contextmanager
+    def _cancel_once_the_first_cube_is_on_disk(self):
+        """Cancel the run exactly when the first cube has been written. Cubes are written by a thread of their own, so "cancel after the first
+        write" would race with the collector; here the collector waits after the first result until that cube is on disk and the cancel is set,
+        so the run stops with exactly one cube saved. Yields the list of cube positions written."""
+        real_write = scan_store.ScanStore.write_batch
+        real_scan = scan_task_module.scan_cubes
+        written: list[int] = []
+        first_written = threading.Event()
+
+        def write_then_cancel(store, plan, arrays, items):
+            real_write(store, plan, arrays, items)
+            written.extend(item[0] for item in items)
+            self.task.cancel()
+            first_written.set()
+
+        def gated(jobs, settings, **kwargs):
+            first = True
+            for result in real_scan(jobs, settings, **kwargs):
+                yield result
+                if first:
+                    first = False
+                    first_written.wait(30)
+
+        with mock.patch.object(scan_store.ScanStore, "write_batch", write_then_cancel), mock.patch.object(scan_task_module, "scan_cubes", gated):
+            yield written
+
     def test_a_cancelled_run_keeps_the_finished_cubes_and_the_next_run_finishes_the_rest(self) -> None:
         path = self._store_path()
-        real = scan_store.ScanStore.write_cube
-        written = []
-
-        def write_then_cancel(store, plan, arrays, cube_pos, row):
-            real(store, plan, arrays, cube_pos, row)
-            written.append(cube_pos)
-            self.task.cancel()  # after the first cube is safely on disk
-
-        scan_store.ScanStore.write_cube = write_then_cancel
-        try:
+        with self._cancel_once_the_first_cube_is_on_disk() as written:
             self._run(store_path=path, processes=1)
-        finally:
-            scan_store.ScanStore.write_cube = real
         self.assertEqual(self.finished[0][1], "cancelled")
-        self.assertEqual(len(written), 1)
+        self.assertEqual(written, [0])
         self.assertEqual(int(scan_store.read_scan(path).computed().any(axis=1).sum()), 1)
         self._rerun(path)  # resume
         self.assertEqual((self.completed[0].cubes, self.completed[0].cubes_current), (CUBES - 1, 1))
         self.assertTrue(scan_store.read_scan(path).computed().all())
+
+    def test_a_disk_error_while_writing_ends_the_run_with_a_readable_message(self) -> None:
+        path = self._store_path()
+        with mock.patch.object(scan_store.ScanStore, "write_batch", side_effect=OSError("disk full")):
+            self._run(store_path=path, processes=1)
+        self.assertEqual(self.finished[0][1], "failed")
+        self.assertIn("Could not save the scan file", self.finished[0][2])
+        self.assertIn("disk full", self.finished[0][2])
 
     def test_a_file_that_cannot_be_written_ends_the_run_with_a_readable_message(self) -> None:
         blocker = Path(self.tmp.name) / "a_file_not_a_folder"
