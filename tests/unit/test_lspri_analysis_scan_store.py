@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
@@ -292,6 +293,197 @@ class ReuseAndReplace(_TempDirCase):
         scan_store.ScanStore(self.path).prepare(_App().plan())
         self.assertEqual(self.path.with_name(scan_store.BACKUP_NAME).read_bytes(), b"precious")
         self.assertEqual(scan_store.read_scan(self.path).cube_indices, (0, 1, 2, 3))
+
+
+class UncompressedFileTests(_TempDirCase):
+    """2026-10-28: the big arrays are stored plain (no growth when ROI rows are rewritten, a faster writer); a gzip file from before is converted once."""
+
+    def _gzip_file(self, plan):
+        """A scan file as the app wrote them before: the four-dimensional arrays and the acquisition times gzip-compressed, shuffled."""
+        original = h5py.Group.create_dataset
+
+        def create(group, name, *args, **kwargs):
+            if len(kwargs.get("shape", ())) == 4 or name == "acquired_at_unix_ms":
+                kwargs.update(compression="gzip", compression_opts=4, shuffle=len(kwargs.get("shape", ())) == 4)
+            return original(group, name, *args, **kwargs)
+
+        store = scan_store.ScanStore(self.path)
+        with mock.patch.object(h5py.Group, "create_dataset", create):
+            store.prepare(plan, dataset_label="old")
+        arrays = _filled(plan, base=7.0)
+        hashes = cell_hashes(plan)
+        for p in range(len(plan.jobs) - 1):  # the last cube stays "never computed"
+            store.write_cube(plan, arrays, p, hashes[p])
+        return store, arrays, hashes
+
+    def _all_datasets_plain(self) -> bool:
+        with h5py.File(self.path, "r") as f:
+            return all(f[path].compression is None for path in scan_store._array_paths(f))
+
+    def test_a_new_file_is_not_compressed(self) -> None:
+        scan_store.ScanStore(self.path).prepare(_App().plan(), dataset_label="run1")
+        self.assertTrue(self._all_datasets_plain())
+
+    def test_rewriting_one_roi_of_every_cube_again_and_again_does_not_change_the_file_size(self) -> None:
+        plan = _App(cubes=6).plan()
+        store = scan_store.ScanStore(self.path)
+        store.prepare(plan, dataset_label="run1")
+        arrays, hashes = _filled(plan), cell_hashes(plan)
+        for p in range(len(plan.jobs)):
+            store.write_cube(plan, arrays, p, hashes[p])
+        size = self.path.stat().st_size
+        rng = np.random.default_rng(4)
+        for _ in range(5):
+            arrays.values["mean"][:, 1] = rng.random(arrays.values["mean"][:, 1].shape)  # numbers that do not compress alike
+            arrays.std[:, 1] = rng.random(arrays.std[:, 1].shape)
+            for p in range(len(plan.jobs)):
+                store.write_cells(plan, arrays, p, (1,), hashes[p])
+            self.assertEqual(self.path.stat().st_size, size)
+
+    def test_a_gzip_file_is_converted_once_with_every_number_and_hash_kept(self) -> None:
+        plan = _App().plan()
+        store, arrays, hashes = self._gzip_file(plan)
+        self.assertFalse(self._all_datasets_plain())
+        before = scan_store.read_scan(self.path)
+        again = scan_store.ScanStore(self.path)
+        stored = again.prepare(plan, dataset_label="old")
+        self.assertTrue(self._all_datasets_plain())
+        self.assertFalse(list(self.path.parent.glob("*.tmp")))
+        self.assertTrue(np.array_equal(stored, hashes.astype(np.uint64) * (np.arange(len(plan.jobs)) < len(plan.jobs) - 1)[:, None]))
+        after = scan_store.read_scan(self.path)
+        for name in ("std", "n_valid", "n_nominal", "n_masked", "cell_hash", "recipe_id", "layout_id", "acquired_at_unix_ms"):
+            self.assertTrue(np.array_equal(getattr(before, name), getattr(after, name), equal_nan=True), name)
+        self.assertTrue(np.array_equal(before.values["mean"], after.values["mean"], equal_nan=True))
+        self.assertEqual((before.recipes, before.layouts, before.cube_indices, before.roi_ids), (after.recipes, after.layouts, after.cube_indices, after.roi_ids))
+        self.assertEqual(before.attrs, after.attrs)
+        # the file is still a working file: the next cube can be written and read back
+        again.write_cube(plan, arrays, len(plan.jobs) - 1, hashes[-1])
+        self.assertTrue(np.all(scan_store.read_scan(self.path).cell_hash == hashes))
+
+    def test_a_converted_file_is_not_converted_again(self) -> None:
+        plan = _App().plan()
+        self._gzip_file(plan)
+        scan_store.ScanStore(self.path).prepare(plan, dataset_label="old")
+        with mock.patch.object(scan_store.ScanStore, "_convert_to_uncompressed") as convert:
+            scan_store.ScanStore(self.path).prepare(plan, dataset_label="old")
+        convert.assert_not_called()
+
+    def test_a_conversion_that_finds_a_difference_keeps_the_original_file(self) -> None:
+        plan = _App().plan()
+        self._gzip_file(plan)
+        before = self.path.read_bytes()
+        with mock.patch.object(scan_store, "_same_scan_content", return_value=False):
+            scan_store.ScanStore(self.path).prepare(plan, dataset_label="old")
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse(list(self.path.parent.glob("*.tmp")))
+
+    def test_a_conversion_that_cannot_swap_the_file_in_keeps_the_original_and_the_run_goes_on(self) -> None:
+        plan = _App().plan()
+        self._gzip_file(plan)
+        before = self.path.read_bytes()
+        with mock.patch.object(scan_store.os, "replace", side_effect=PermissionError("held by a reader")):
+            stored = scan_store.ScanStore(self.path).prepare(plan, dataset_label="old")
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse(list(self.path.parent.glob("*.tmp")))
+        self.assertEqual(stored.shape, (len(plan.jobs), len(plan.roi_ids)))
+
+
+def _reference_cell_hashes(plan) -> np.ndarray:
+    """`scan_fingerprint.cell_hashes` as it was written until 2026-10-27, cell by cell: the stored hashes of every scan file are made this way, so
+    the faster version must give exactly these numbers (a different hash would make every stored cell read as out of date)."""
+    import hashlib
+
+    from lspr_imaging_app.analysis import scan_fingerprint as fp
+    from lspr_imaging_app.analysis.frame_reduce import local_roi_keys
+
+    base = fp.recipe_digest(fp.recipe_of(plan.settings))
+    ignore_cache: dict[int, bytes] = {}
+    global_layout = fp.layout_is_global(plan.settings)
+    local_keys: dict[str, list[bytes]] = {}
+    out = np.zeros((len(plan.jobs), len(plan.roi_ids)), dtype=np.uint64)
+    for p, job in enumerate(plan.jobs):
+        cube = hashlib.blake2b(digest_size=16)
+        cube.update(base)
+        if global_layout:
+            cube.update(job.rois.key.encode("ascii"))
+        elif job.rois.key not in local_keys:
+            local_keys[job.rois.key] = local_roi_keys(job.rois, plan.settings.exclusion_mode)
+        for column, frame in zip(plan.axis_positions[p], job.frames):
+            cube.update(np.int64(column).tobytes())
+            cube.update(frame.path.replace("\\", "/").rsplit("/", 1)[-1].encode("utf-8"))
+            cube.update(np.ascontiguousarray(frame.affine, dtype=np.float64).tobytes())
+            if frame.ignore_key is not None:
+                cube.update(frame.ignore_key)
+            elif frame.ignore is None:
+                cube.update(b"-")
+            else:
+                key = id(frame.ignore)
+                if key not in ignore_cache:
+                    ignore_cache[key] = fp._ignore_digest(frame.ignore)
+                cube.update(ignore_cache[key])
+        digest = cube.digest()
+        keys = None if global_layout else local_keys[job.rois.key]
+        for r, roi_id in enumerate(plan.roi_ids):
+            own = b"" if keys is None else keys[r]
+            h = hashlib.blake2b(digest + own + np.int64(roi_id).tobytes() + np.int64(r).tobytes(), digest_size=8).digest()
+            out[p, r] = int.from_bytes(h, "little") or 1
+    return out
+
+
+class CellHashMatchesTheOriginalTests(unittest.TestCase):
+    """The hash loop was rewritten for speed (2026-10-28); it must give the original's numbers in every situation the plan can be in."""
+
+    def _same(self, plan) -> None:
+        # ``local_masks=False`` is the formula of the reference (the whole ignore mask in every cell); the default only differs for cubes that have masks
+        self.assertTrue(np.array_equal(cell_hashes(plan, local_masks=False), _reference_cell_hashes(plan)))
+        has_mask = [any(f.ignore_key is not None or f.ignore is not None for f in job.frames) for job in plan.jobs]
+        default = cell_hashes(plan)
+        reference = _reference_cell_hashes(plan)
+        self.assertTrue(np.array_equal(default[[not m for m in has_mask]], reference[[not m for m in has_mask]]))  # cubes without masks: unchanged
+
+    def test_plain_plan_and_many_rois(self) -> None:
+        self._same(_App().plan())
+        self._same(_App(cubes=7, ids=tuple(range(1, 41))).plan())
+
+    def test_plans_with_masks_chromatic_affines_and_other_names(self) -> None:
+        app = _App(cubes=5)
+        mask = np.zeros((H, W), dtype=bool)
+        mask[5:15, 5:20] = True
+        app.masks[(1, 500.0)] = mask
+        app.masks[(3, 510.0)] = mask.copy()
+        app.affines[(2, 520.0)] = np.array([[1.002, 0.001, -1.4], [-0.001, 0.999, 0.7]])
+        app.names[(4, 500.0)] = "other_name.tif"
+        self._same(app.plan())
+        self._same(app.plan(resolve_masks=False))
+
+    def test_global_layout_and_a_hand_built_frame_without_a_mask_key(self) -> None:
+        app = _App(cubes=3)
+        app.background = BackgroundSettings(flatten_background_enabled=True, flatten_background_exclude_area_rois=True)
+        plan = app.plan()
+        self._same(plan)
+        keyless = []
+        for job in plan.jobs:
+            frames = tuple(replace(f, ignore_key=None, ignore=_ignore_for(f)) if k == 1 else f for k, f in enumerate(job.frames))
+            keyless.append(replace(job, frames=frames))
+        self._same(replace(plan, jobs=tuple(keyless)))
+
+    def test_affines_that_are_not_float64_or_not_contiguous(self) -> None:
+        plan = _App(cubes=2).plan()
+        odd = []
+        for job in plan.jobs:
+            frames = []
+            for k, f in enumerate(job.frames):
+                affine = f.affine.astype(np.float32) if k == 0 else np.asfortranarray(f.affine) if k == 1 else f.affine.tolist()
+                frames.append(replace(f, affine=affine))
+            odd.append(replace(job, frames=tuple(frames)))
+        odd_plan = replace(plan, jobs=tuple(odd))
+        self.assertTrue(np.array_equal(cell_hashes(odd_plan), _reference_cell_hashes(odd_plan)))
+
+
+def _ignore_for(frame):
+    out = np.zeros((H, W), dtype=bool)
+    out[2:9, 3:12] = True
+    return out
 
 
 class CellHashTests(unittest.TestCase):

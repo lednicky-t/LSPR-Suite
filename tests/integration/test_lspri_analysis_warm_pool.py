@@ -108,7 +108,13 @@ def _wait_until(condition, seconds: float = 30.0) -> bool:
 
 
 def _gone(pids) -> bool:
-    return not any(psutil.pid_exists(p) and psutil.Process(p).status() != psutil.STATUS_ZOMBIE for p in pids)
+    for pid in pids:
+        try:
+            if psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE:
+                return False
+        except psutil.NoSuchProcess:
+            continue  # it ended between the two calls: that is what the test waits for (a flake under load until 2026-10-28)
+    return True
 
 
 class WarmPoolTests(unittest.TestCase):

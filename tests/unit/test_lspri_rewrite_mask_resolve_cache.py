@@ -122,6 +122,90 @@ class ResolveCacheTests(unittest.TestCase):
         self.assertFalse(np.array_equal(before, after))
 
 
+class IdentityGeometryMaskTests(unittest.TestCase):
+    """2026-10-28: with no rotation, flip or crop a bool mask is returned as it is (a copy) instead of going through two float conversions;
+    the result must equal what the general path gives, for every way a geometry can be an identity."""
+
+    @staticmethod
+    def _general_path(mask: np.ndarray, settings: GeometrySettings) -> np.ndarray:
+        """What `apply_spatial_mask` did for every mask before the shortcut."""
+        from lspr_imaging_app.image_tools.geometry import transform
+
+        return transform._apply_spatial_transform(mask.astype(np.float32, copy=False), settings, order=0, mode="constant", cval=0.0) >= 0.5
+
+    def _identities(self) -> list[GeometrySettings]:
+        return [
+            GeometrySettings(),
+            GeometrySettings(crop=CropDefinition(x=5, y=5, width=0, height=0, enabled=True)),  # a crop without size crops nothing
+            GeometrySettings(crop=CropDefinition(x=5, y=5, width=40, height=30, enabled=False)),  # a disabled crop
+            GeometrySettings(image_tools_enabled=False, rotation_angle_deg=12.0, flip_horizontal=True),  # tools off: nothing is applied
+            GeometrySettings(rotation_angle_deg=1e-12),  # below the rotation threshold
+        ]
+
+    def test_a_bool_mask_equals_the_general_path_for_every_identity_geometry(self) -> None:
+        masks = [_blob_mask(seed=s) for s in range(3)] + [
+            np.zeros((60, 80), dtype=bool),
+            np.ones((60, 80), dtype=bool),
+            np.random.default_rng(5).random((37, 53)) > 0.5,  # odd shape, salt and pepper
+            np.asfortranarray(_blob_mask(seed=9)),  # a different memory order
+            _blob_mask(seed=2)[::2, ::3],  # a non-contiguous view
+        ]
+        for settings in self._identities():
+            for mask in masks:
+                result = preprocess.apply_spatial_mask(mask, settings)
+                expected = self._general_path(mask, settings)
+                self.assertEqual(result.dtype, np.bool_)
+                self.assertTrue(np.array_equal(result, expected))
+                self.assertEqual((result.flags.c_contiguous, result.flags.f_contiguous), (expected.flags.c_contiguous, expected.flags.f_contiguous))
+
+    def test_the_result_is_a_new_array_the_caller_may_not_see_change(self) -> None:
+        mask = _blob_mask()
+        before = mask.copy()
+        result = preprocess.apply_spatial_mask(mask, GeometrySettings())
+        self.assertFalse(np.shares_memory(result, mask))
+        result[:] = ~result
+        self.assertTrue(np.array_equal(mask, before))
+
+    def test_other_dtypes_and_real_transforms_keep_the_general_path(self) -> None:
+        mask = _blob_mask()
+        for dtype in (np.uint8, np.float32, np.float64):
+            # 0.3 is "on" for bool() but "off" for the ``>= 0.5`` threshold: a shortcut applied to these dtypes would show here
+            soft = (mask * 0.3).astype(dtype) if dtype != np.uint8 else mask.astype(dtype)
+            result = preprocess.apply_spatial_mask(soft, GeometrySettings())
+            self.assertTrue(np.array_equal(result, self._general_path(soft, GeometrySettings())))
+            if dtype != np.uint8:
+                self.assertFalse(result.any())
+        crop = GeometrySettings(crop=CropDefinition(x=10, y=8, width=50, height=40, enabled=True))
+        self.assertEqual(preprocess.apply_spatial_mask(mask, crop).shape, (40, 50))
+        self.assertTrue(np.array_equal(preprocess.apply_spatial_mask(mask, crop), self._general_path(mask, crop)))
+        rotated = GeometrySettings(rotation_angle_deg=1.46)
+        self.assertTrue(np.array_equal(preprocess.apply_spatial_mask(mask, rotated), preprocess.apply_spatial_mask(mask.astype(np.uint8), rotated)))
+
+    def test_a_caller_supplied_content_key_names_the_cache_entry(self) -> None:
+        preprocess._resolved_mask_cache.clear()
+        preprocess._spatial_mask_cache.clear()
+        mask, geometry = _blob_mask(seed=6), GeometrySettings(rotation_angle_deg=1.0)
+        first = preprocess.resolve_external_mask(mask, geometry, content_key=b"k" * 16)
+        with mock.patch.object(preprocess.hashlib, "blake2b", side_effect=AssertionError("the plane was hashed again")):
+            again = preprocess.resolve_external_mask(mask.copy(), geometry, content_key=b"k" * 16)
+        self.assertIs(first, again)  # found by the key alone
+        plain = preprocess.resolve_external_mask(mask, geometry)  # no key: hashed as always, its own entry, the same pixels
+        self.assertTrue(np.array_equal(first, plain))
+        other = preprocess.resolve_external_mask(_blob_mask(seed=7), geometry, content_key=b"j" * 16)
+        self.assertFalse(np.array_equal(first, other))
+
+    def test_resolve_external_mask_returns_the_same_pixels_and_a_read_only_array(self) -> None:
+        preprocess._resolved_mask_cache.clear()
+        preprocess._spatial_mask_cache.clear()
+        mask = _blob_mask(seed=4)
+        resolved = preprocess.resolve_external_mask(mask, GeometrySettings())
+        self.assertTrue(np.array_equal(resolved, mask))
+        self.assertFalse(resolved.flags.writeable)
+        self.assertTrue(mask.flags.writeable)  # the caller's array was not made read-only on the way
+        warped = preprocess.resolve_external_mask(mask, GeometrySettings(), np.array([[1.0, 0.0, 2.5], [0.0, 1.0, -1.5]]))
+        self.assertTrue(np.array_equal(warped, warp_boolean_mask_affine(mask, np.array([[1.0, 0.0, 2.5], [0.0, 1.0, -1.5]]))))
+
+
 class RenderThreadMaskUseTests(unittest.TestCase):
     @staticmethod
     def _request(**background) -> "render.RenderRequest":

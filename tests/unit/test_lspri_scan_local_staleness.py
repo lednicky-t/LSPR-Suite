@@ -26,8 +26,16 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis import scan_store
-    from lspr_imaging_app.analysis.frame_reduce import LayoutCache, build_layout, build_roi_set, local_roi_keys, reduce_frame
+    from lspr_imaging_app.analysis import frame_reduce, scan_store
+    from lspr_imaging_app.analysis.frame_reduce import (
+        LayoutCache,
+        build_layout,
+        build_roi_set,
+        build_subset_layout,
+        local_roi_keys,
+        reduce_frame,
+        ring_reach_matrix,
+    )
     from lspr_imaging_app.analysis.scan import CubeResult
     from lspr_imaging_app.analysis.scan_arrays import new_arrays, place
     from lspr_imaging_app.analysis.scan_fingerprint import cell_hashes
@@ -127,6 +135,145 @@ class SubsetEqualsFullTests(unittest.TestCase):
         self.assertIs(cache.get(rs, IDENTITY, (H, W), subset=(1, 3)), a)
         self.assertIsNot(cache.get(rs, IDENTITY, (H, W), subset=(1,)), a)
         self.assertTrue(np.array_equal(a.sample_flat, build_layout(rs, IDENTITY, (H, W)).restrict([1, 3]).sample_flat))
+
+
+_LAYOUT_FIELDS = ("sample_roi", "sample_flat", "ring_roi", "ring_flat", "sample_count", "ring_count", "needed_flat", "sample_pos", "ring_pos")
+ROTATED = np.array([[0.9998, -0.0251, 6.1], [0.0251, 0.9998, -3.4]])  # a small rotation, as a chromatic affine can be
+
+
+class DirectSubsetLayoutTests(unittest.TestCase):
+    """`build_subset_layout` (the layout of some ROIs, built without locating the others) is exactly `build_layout(...).restrict(...)`."""
+
+    def assertSameLayout(self, direct, cut, label="") -> None:
+        self.assertEqual((direct.shape, direct.n_rois, direct.exclusion_mode), (cut.shape, cut.n_rois, cut.exclusion_mode), label)
+        for name in _LAYOUT_FIELDS:
+            a, b = getattr(direct, name), getattr(cut, name)
+            self.assertEqual(a.dtype, b.dtype, f"{label} {name} dtype")
+            self.assertTrue(np.array_equal(a, b), f"{label} {name}")
+
+    def _compare(self, rs, subset, affine, shape, mode="exclude_all_sample_rois", label="") -> None:
+        cut = build_layout(rs, affine, shape, mode).restrict(subset)
+        self.assertSameLayout(build_subset_layout(rs, affine, shape, mode, subset), cut, f"{label} subset {list(subset)}")
+
+    def test_every_single_roi_and_several_subsets_of_the_crowded_set(self) -> None:
+        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        subsets = [(i,) for i in range(rs.n)] + [(0, 2, 4, 5), (6, 1), (1, 2), (2, 1), tuple(range(rs.n)), (3, 6)]
+        for affine in (IDENTITY, CHROMATIC, ROTATED):
+            for subset in subsets:
+                self._compare(rs, subset, affine, (H, W))
+
+    def test_without_the_exclusion_and_with_an_image_smaller_than_the_rois(self) -> None:
+        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        for subset in ((0,), (1, 2), (3,), (6,), (0, 1, 2, 3, 4, 5, 6)):
+            self._compare(rs, subset, CHROMATIC, (H, W), mode="none", label="no exclusion")
+            self._compare(rs, subset, CHROMATIC, (50, 70), label="small image")  # ROIs 3 and 4 run over the edge
+            self._compare(rs, subset, IDENTITY, (20, 20), label="tiny image")
+
+    def test_a_ring_still_loses_the_pixels_a_neighbour_that_is_not_in_the_subset_takes(self) -> None:
+        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        full = build_layout(rs, IDENTITY, (H, W))
+        direct = build_subset_layout(rs, IDENTITY, (H, W), subset=(1,))  # ROI 3 (index 2) overlaps its ring
+        self.assertEqual(int(direct.ring_count[0]), int(full.ring_count[1]))
+        self.assertGreater(int(build_layout(rs.subset([1]), IDENTITY, (H, W)).ring_count[0]), int(direct.ring_count[0]))
+
+    def test_empty_subset(self) -> None:
+        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        self._compare(rs, (), IDENTITY, (H, W))
+        self.assertEqual(build_subset_layout(rs, IDENTITY, (H, W), subset=()).n_rois, 0)
+
+    def test_a_single_roi_set(self) -> None:
+        rs = build_roi_set(_crowded_rois()[:1], INNER, OUTER)
+        self._compare(rs, (0,), CHROMATIC, (H, W))
+
+    def test_random_dense_layouts(self) -> None:
+        rng = np.random.default_rng(2026)
+        for trial in range(6):
+            rois = [
+                AreaRoi(
+                    i + 1, float(rng.uniform(-5, W + 5)), float(rng.uniform(-5, H + 5)), float(rng.uniform(6, 18)),
+                    reference_inner_diameter_px=float(rng.uniform(8, 24)), reference_outer_diameter_px=float(rng.uniform(24, 40)),
+                    reference_geometry_type="none" if rng.random() < 0.1 else "annulus",
+                )
+                for i in range(30)
+            ]
+            rs = build_roi_set(rois, INNER, OUTER)
+            affine = (IDENTITY, CHROMATIC, ROTATED)[trial % 3]
+            for _ in range(4):
+                size = int(rng.integers(1, 9))
+                subset = tuple(int(i) for i in rng.choice(rs.n, size, replace=False))  # any order
+                self._compare(rs, subset, affine, (H, W), label=f"trial {trial}")
+
+    def test_the_neighbours_of_a_ring_are_the_rois_the_cell_hash_looks_at(self) -> None:
+        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        near = ring_reach_matrix(rs, [1, 3])
+        self.assertEqual(near.shape, (2, rs.n))
+        self.assertTrue(bool(near[0, 2]) and bool(near[0, 6]))  # ROI 3 overlaps ROI 2's ring; the free-form ROI reaches everything
+        self.assertFalse(bool(near[1, 0]))  # ROI 1 is far from ROI 4
+        self.assertFalse(bool(ring_reach_matrix(rs, [5]).any()))  # a ROI without a ring is reached by nobody
+
+    def test_bad_subsets_and_modes_are_refused(self) -> None:
+        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        with self.assertRaises(ValueError):
+            build_subset_layout(rs, IDENTITY, (H, W), subset=(1, 1))
+        with self.assertRaises(ValueError):
+            build_subset_layout(rs, IDENTITY, (H, W), subset=(rs.n,))
+        with self.assertRaises(ValueError):
+            build_subset_layout(rs, IDENTITY, (H, W), subset=(-1,))
+        with self.assertRaises(ValueError):
+            build_subset_layout(rs, IDENTITY, (H, W), "nonsense", subset=(0,))
+
+    def test_the_cache_does_not_build_the_full_layout_for_a_subset(self) -> None:
+        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        cache = LayoutCache()
+        with mock.patch.object(frame_reduce, "build_layout", side_effect=AssertionError("the full layout was built")):
+            layout = cache.get(rs, CHROMATIC, (H, W), subset=(1, 3))
+        self.assertSameLayout(layout, build_layout(rs, CHROMATIC, (H, W)).restrict([1, 3]))
+
+
+class WindowBoxTests(unittest.TestCase):
+    """`roi_window_boxes`: the box of a ROI must hold every pixel the ROI can read, in every frame geometry (the mask part of the cell hash relies on it)."""
+
+    def test_every_pixel_a_roi_reads_is_inside_its_box(self) -> None:
+        from lspr_imaging_app.analysis.frame_reduce import locate_pixels, roi_window_boxes
+
+        rng = np.random.default_rng(77)
+        affines = [IDENTITY, CHROMATIC, ROTATED, np.array([[1.08, -0.04, 5.0], [0.03, 0.93, -4.0]]), np.array([[0.9, 0.0, -9.5], [0.0, 1.12, 7.25]])]
+        for trial in range(6):
+            rois = [
+                AreaRoi(
+                    i + 1, float(rng.uniform(-8, W + 8)), float(rng.uniform(-8, H + 8)), float(rng.uniform(4, 20)),
+                    reference_inner_diameter_px=float(rng.uniform(8, 24)), reference_outer_diameter_px=float(rng.uniform(24, 44)),
+                    reference_geometry_type="none" if rng.random() < 0.15 else "annulus",
+                )
+                for i in range(25)
+            ]
+            rs = build_roi_set(rois, INNER, OUTER)
+            for affine in affines:
+                y0, y1, x0, x1, bounded = roi_window_boxes(rs, affine, (H, W))
+                self.assertTrue(bounded.all())
+                s_roi, s_flat, r_roi, r_flat = locate_pixels(rs, affine, (H, W))  # before the exclusion: a superset of what is read
+                for roi_of, flat in ((s_roi, s_flat), (r_roi, r_flat)):
+                    rows, cols = np.divmod(flat, W)
+                    self.assertTrue(np.all(rows >= y0[roi_of]) and np.all(rows < y1[roi_of]))
+                    self.assertTrue(np.all(cols >= x0[roi_of]) and np.all(cols < x1[roi_of]))
+
+    def test_a_free_form_roi_has_no_bound_and_gets_the_whole_image(self) -> None:
+        from lspr_imaging_app.analysis.frame_reduce import roi_window_boxes
+
+        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        y0, y1, x0, x1, bounded = roi_window_boxes(rs, IDENTITY, (H, W))
+        free = int(np.flatnonzero(~bounded)[0])
+        self.assertEqual((y0[free], y1[free], x0[free], x1[free]), (0, H, 0, W))
+        self.assertTrue(bounded[:free].all() and bounded.sum() == rs.n - 1)
+        self.assertTrue(np.all(y1 <= H) and np.all(x1 <= W) and np.all(y0 >= 0) and np.all(x0 >= 0))
+
+    def test_the_box_follows_the_chromatic_shift(self) -> None:
+        from lspr_imaging_app.analysis.frame_reduce import roi_window_boxes
+
+        rs = build_roi_set([AreaRoi(1, 60.0, 45.0, 10.0, reference_inner_diameter_px=14.0, reference_outer_diameter_px=20.0)], INNER, OUTER)
+        plain = roi_window_boxes(rs, IDENTITY, (H, W))
+        moved = roi_window_boxes(rs, np.array([[1.0, 0.0, 12.0], [0.0, 1.0, -7.0]]), (H, W))
+        self.assertEqual((int(moved[2][0] - plain[2][0]), int(moved[0][0] - plain[0][0])), (12, -7))
 
 
 class LocalKeyTests(unittest.TestCase):
@@ -360,6 +507,78 @@ class WriteBatchAndWriterTests(unittest.TestCase):
         self.assertTrue(np.array_equal(x.values["mean"], y.values["mean"], equal_nan=True))
         for name in ("std", "n_valid", "n_nominal", "n_masked", "cell_hash", "recipe_id", "layout_id", "acquired_at_unix_ms"):
             self.assertTrue(np.array_equal(getattr(x, name), getattr(y, name), equal_nan=True), name)
+
+    def test_a_mixed_unsorted_batch_with_gaps_changes_exactly_what_it_names(self) -> None:
+        """Checked against numpy arithmetic on the file's earlier content, not against another run of the writer: runs of neighbouring cubes are
+        written as slabs (2026-10-28), and the cubes between the runs must not be touched."""
+        store = self._store("a")
+        for pos in range(5):
+            store.write_cube(self.plan, self.arrays, pos, self.hashes[pos])
+        before = scan_store.read_scan(store.path)
+        fresh = new_arrays(self.plan)
+        rng = np.random.default_rng(9)
+        for pos in range(5):
+            place(fresh, self.plan, CubeResult(
+                pos, {"mean": rng.normal(100, 5, (4, 2, 2))}, np.abs(rng.normal(9, 1, (4, 2, 2))), rng.integers(1, 90, (4, 2, 2)).astype(np.int32),
+                np.full((4, 2, 2), 90, np.int32), rng.integers(0, 3, (4, 2, 2)).astype(np.int32),
+            ))
+        new_hash = self.hashes ^ np.uint64(5)
+        items = [(3, None, new_hash[3]), (0, (1,), new_hash[0]), (1, (0, 2), new_hash[1])]  # not in file order; cubes 2 and 4 are gaps
+        store.write_batch(self.plan, fresh, items)
+        after = scan_store.read_scan(store.path)
+
+        def expect(old, new):
+            out = old.copy()
+            for pos, idx, _ in items:
+                row = self.plan.cube_indices[pos]
+                if idx is None:
+                    out[row] = new[pos]
+                else:
+                    out[row, list(idx)] = new[pos][list(idx)]
+            return out
+
+        self.assertTrue(np.array_equal(after.values["mean"], expect(before.values["mean"], fresh.values["mean"]), equal_nan=True))
+        for name in ("std", "n_valid", "n_nominal", "n_masked"):
+            self.assertTrue(np.array_equal(getattr(after, name), expect(getattr(before, name), getattr(fresh, name)), equal_nan=True), name)
+        expected_hash = before.cell_hash.copy()
+        expected_hash[3] = new_hash[3]
+        expected_hash[0, 1] = new_hash[0][1]
+        expected_hash[1, [0, 2]] = new_hash[1][[0, 2]]
+        self.assertTrue(np.array_equal(after.cell_hash, expected_hash))
+        expected_recipe = before.recipe_id.copy()
+        expected_recipe[3] = store._recipe_id
+        expected_recipe[0, 1] = store._recipe_id
+        expected_recipe[1, [0, 2]] = store._recipe_id
+        self.assertTrue(np.array_equal(after.recipe_id, expected_recipe))
+        for gap in (2, 4):  # untouched, bit for bit
+            for name in ("std", "n_valid", "n_nominal", "n_masked", "cell_hash", "recipe_id"):
+                self.assertTrue(np.array_equal(getattr(after, name)[gap], getattr(before, name)[gap], equal_nan=True), (gap, name))
+            self.assertTrue(np.array_equal(after.values["mean"][gap], before.values["mean"][gap], equal_nan=True))
+
+    def test_a_batch_never_writes_a_row_that_is_not_in_it(self) -> None:
+        """The cubes between two runs are current; even rewriting them with their own values could tear them if the process died at that moment."""
+        import h5py
+
+        store = self._store("a")
+        for pos in range(5):
+            store.write_cube(self.plan, self.arrays, pos, self.hashes[pos])
+        written: list[tuple[str, object]] = []
+        original = h5py.Dataset.__setitem__
+
+        def spy(dataset, key, value):
+            written.append((dataset.name, key))
+            return original(dataset, key, value)
+
+        with mock.patch.object(h5py.Dataset, "__setitem__", spy):
+            store.write_batch(self.plan, self.arrays, [(0, None, self.hashes[0]), (1, (1,), self.hashes[1]), (3, None, self.hashes[3])])
+        rows_written = set()
+        for name, key in written:
+            if not name.startswith(("/processed/scan", "/state", "/axes/acquired")):
+                continue
+            first = key[0] if isinstance(key, tuple) else key
+            self.assertIsInstance(first, slice, (name, key))  # slabs of rows, never a single scalar write that could hide a gap
+            rows_written |= set(range(first.start, first.stop))
+        self.assertEqual(rows_written, {0, 1, 3})
 
     def test_a_batch_writes_the_same_file_as_the_cubes_one_by_one_whole_and_partial(self) -> None:
         one_by_one, batched = self._store("a"), self._store("b")

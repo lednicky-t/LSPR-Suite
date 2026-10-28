@@ -87,6 +87,7 @@ class ScanTaskTests(unittest.TestCase):
         self.rois = _rois()
         self.rois_by_cube: dict[int, list] | None = None
         self.affine_override: dict = {}
+        self.mask_extra: np.ndarray | None = None  # pixels added to the ignore mask of frame (1, 500)
         # background removal on, with the ROIs cut out of its estimate: every ROI's numbers depend on where every ROI is
         self.background = BackgroundSettings(flatten_background_enabled=True, flatten_background_sigma_px=10.0,
                                              flatten_background_binning=2, flatten_background_exclude_mask=True)
@@ -115,12 +116,15 @@ class ScanTaskTests(unittest.TestCase):
             has_timeline=lambda: self.rois_by_cube is not None,
             chromatic_affine=lambda c, w: self.affine_override.get((c, w), IDENTITY),
             chromatic_affine_between=lambda a, b: IDENTITY,
-            resolve_mask=lambda c, w: MaskRef((c, w), "individual", lambda: _mask()) if (c, w) == (1, 500.0) else None,
+            resolve_mask=lambda c, w: MaskRef((c, w), "individual", self._mask_now) if (c, w) == (1, 500.0) else None,
             geometry=lambda: GeometrySettings(rotation_angle_deg=1.0),
             background=lambda: self.background,
             detection=lambda: AreaRoiDetectionSettings(ignore_marked_pixels=True),
             default_reference_diameters=lambda: (14.0, 20.0),
         )
+
+    def _mask_now(self) -> np.ndarray:
+        return _mask() if self.mask_extra is None else _mask() | self.mask_extra
 
     def _run(self, **kwargs) -> None:
         self.task.start(self._source(), **kwargs)
@@ -277,6 +281,64 @@ class ScanTaskTests(unittest.TestCase):
         self.assertTrue(np.array_equal(second.cell_hash[:, 1:], first.cell_hash[:, 1:]))  # the other ROIs' cells were not touched
         self.assertTrue((second.cell_hash[:, 0] != first.cell_hash[:, 0]).all())
         self.assertTrue(np.array_equal(second.values["mean"][:, 1:], first.values["mean"][:, 1:], equal_nan=True))
+        self._assert_file_equals_a_full_scan(path)
+
+    # -- masks are local to the ROIs that can see them (2026-10-28) ----------------------------------------------------------
+
+    def test_a_mask_edit_near_one_roi_rescans_only_that_roi_and_the_file_equals_a_full_scan(self) -> None:
+        self.background = BackgroundSettings()  # off: a ROI sees only the mask pixels in its own window
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        first = scan_store.read_scan(path)
+        extra = np.zeros((H, W), dtype=bool)
+        extra[15:21, 90:96] = True  # next to the ROI at x = 93, y = 18 (index 3); the windows of the other ROIs end before it
+        self.mask_extra = extra
+        self._rerun(path)
+        summary = self.completed[0]
+        self.assertEqual((summary.cubes, summary.rois_scanned), (1, 1))  # only the masked cube, only the ROI that can see the new pixels
+        second = scan_store.read_scan(path)
+        changed = second.cell_hash != first.cell_hash
+        self.assertEqual(np.argwhere(changed).tolist(), [[1, 3]])
+        keep = ~changed
+        self.assertTrue(np.array_equal(second.values["mean"][keep], first.values["mean"][keep], equal_nan=True))  # nothing else was rewritten
+        self._assert_file_equals_a_full_scan(path)
+
+    def test_a_mask_edit_nobody_can_see_scans_nothing(self) -> None:
+        self.background = BackgroundSettings()
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        before = scan_store.read_scan(path)
+        far = np.zeros((H, W), dtype=bool)
+        far[1:4, 1:4] = True  # a corner: outside every ROI's window
+        self.mask_extra = far
+        self._rerun(path)
+        self.assertEqual(self.completed[0].cubes, 0)
+        self.assertIn("up to date", self.finished[0][2])
+        self.assertTrue(np.array_equal(scan_store.read_scan(path).values["mean"], before.values["mean"], equal_nan=True))
+        self._assert_file_equals_a_full_scan(path)  # the numbers really are those of the edited mask
+
+    def test_a_file_stamped_with_the_previous_hash_formula_is_restamped_without_a_rescan(self) -> None:
+        import h5py
+
+        from lspr_imaging_app.analysis.scan_fingerprint import cell_hashes
+
+        self.background = BackgroundSettings()
+        path = self._store_path()
+        self._run(store_path=path, processes=1)
+        plan = build_scan_plan(snapshot_source(self._source()), resolve_masks=False)
+        current, previous = cell_hashes(plan), cell_hashes(plan, local_masks=False)
+        self.assertFalse(np.array_equal(current[1], previous[1]))  # the masked cube has a new stamp now
+        with h5py.File(path, "r+") as f:  # a file written before the change: every cell carries the previous stamp
+            f["state/cell_hash"][...] = previous
+        before = scan_store.read_scan(path)
+        with self.assertLogs(TASK_LOGGER, level="INFO") as logs:
+            self._rerun(path)
+        self.assertEqual(self.completed[0].cubes, 0)  # nothing is scanned again ...
+        self.assertTrue(any("restamped_cells=" in line and "restamped_cells=0" not in line for line in logs.output))
+        after = scan_store.read_scan(path)
+        self.assertTrue(np.array_equal(after.cell_hash, current))  # ... the stamps are the new ones ...
+        self.assertTrue(np.array_equal(after.values["mean"], before.values["mean"], equal_nan=True))  # ... and the numbers are untouched
+        self.assertTrue(np.array_equal(after.std, before.std, equal_nan=True))
         self._assert_file_equals_a_full_scan(path)
 
     def test_the_refresh_of_one_roi_is_the_same_in_worker_processes(self) -> None:

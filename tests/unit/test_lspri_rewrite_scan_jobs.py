@@ -231,15 +231,22 @@ class IgnoreMaskKeyTests(unittest.TestCase):
     def test_the_hash_follows_the_pixels_and_the_warp_and_only_of_the_cubes_that_have_the_mask(self) -> None:
         app = _plain()
         base = cell_hashes(build_scan_plan(self._source(app, self.change, []), resolve_masks=False))
-        edited = self.pixels.copy()
-        edited[3, 4] = not edited[3, 4]
-        changed = cell_hashes(build_scan_plan(self._source(app, MaskChange((0, 500.0), "individual", edited), []), resolve_masks=False))
+        # The mask is authored at frame (0, 500) and used at (1, 510), so it is warped by the fake's (+2, -1) px: authored (row, col) = processed (row - 1, col + 2).
+        # Since 2026-10-28 a cell is hashed with the mask pixels in its ROI's window only (ROI windows here: rows 3-25 and x 1-23, 16-38, 31-53).
+        inside = self.pixels.copy()
+        inside[10, 5] = not inside[10, 5]  # processed (9, 7): in ROI 1's window, in nobody else's
+        changed = cell_hashes(build_scan_plan(self._source(app, MaskChange((0, 500.0), "individual", inside), []), resolve_masks=False))
         self.assertTrue(np.array_equal(changed[[0, 2]], base[[0, 2]]))  # the other cubes do not have the mask
-        self.assertFalse(np.any(changed[1] == base[1]))
+        self.assertNotEqual(changed[1][0], base[1][0])
+        self.assertTrue(np.array_equal(changed[1][1:], base[1][1:]))
+        outside = self.pixels.copy()
+        outside[3, 4] = not outside[3, 4]  # processed (2, 6): above every ROI's window, so no cell can see it
+        unseen = cell_hashes(build_scan_plan(self._source(app, MaskChange((0, 500.0), "individual", outside), []), resolve_masks=False))
+        self.assertTrue(np.array_equal(unseen, base))
         app.between = lambda a, b: np.array([[1.0, 0.0, 3.0], [0.0, 1.0, -1.0]])  # the chromatic warp to the frame moved
         warped = cell_hashes(build_scan_plan(self._source(app, self.change, []), resolve_masks=False))
         self.assertTrue(np.array_equal(warped[[0, 2]], base[[0, 2]]))
-        self.assertFalse(np.any(warped[1] == base[1]))
+        self.assertFalse(np.any(warped[1] == base[1]))  # the whole mask moved: every window holds other pixels now
 
     def test_a_plan_made_for_checking_cannot_be_scanned(self) -> None:
         app = _plain()
