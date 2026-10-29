@@ -36,7 +36,6 @@ class GroupActionsTests(unittest.TestCase):
         self.toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.controls = GroupControls()
-        self.running = False
         self.names: list[str | None] = []
         self.told: list[str] = []
         self.statuses: list[str] = []
@@ -44,7 +43,6 @@ class GroupActionsTests(unittest.TestCase):
             self.controls,
             toolbox=self.toolbox,
             selection=self.selection,
-            analysis_running=lambda: self.running,
             ask_name=lambda title, default: self.names.pop(0) if self.names else default,
             tell=lambda title, text: self.told.append(text),
         )
@@ -109,13 +107,6 @@ class GroupActionsTests(unittest.TestCase):
         self.controls._buttons["ungroup"].click()  # the last one: the group goes away
         self.assertEqual(self.toolbox.groups(), ())
         self.assertIs(slot.currentWidget(), self.controls._buttons["create"])
-
-    def test_group_by_rows_is_refused_while_an_analysis_runs(self) -> None:
-        self.running = True
-        self.controls.by_rows_requested.emit()
-        self.assertEqual(self.toolbox.groups(), ())
-        self.assertTrue(self.told)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -405,17 +405,6 @@ def _write_dataset(root: Path) -> ImageDataset:
     )
 
 
-class _FakeAnalysisEngine:
-    """`_wire_session_coordinator` only ever calls `set_storage_root` on
-    this - a real `AnalysisEngine` needs a `DatasetModule` wired to load
-    planes from, which this autosave-focused test has no use for (same
-    "plain fakes over six Qt modules" philosophy this file's docstring
-    states)."""
-
-    def set_storage_root(self, root: Path | None) -> None:
-        pass
-
-
 class SessionAutosaveDatasetWiringTest(unittest.TestCase):
     """The end-to-end half: opening a dataset resolves/creates its active
     session and restores it, and editing afterwards writes a real file back
@@ -456,7 +445,7 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         )
         self._autosaves.append(self.autosave)
         _wire_session_coordinator(
-            self.coordinator, self.autosave, _FakeAnalysisEngine(),
+            self.coordinator, self.autosave,
             self.geometry, self.mask, self.chromatic, self.background,
             self.roi_toolbox, self.selection, self.analysis_settings, None, self.events,
             session_load=self.session_load, experiment_plan=self.plan,

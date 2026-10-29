@@ -25,7 +25,6 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.app_rewrite import _build_analysis_engine
     from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.image_tools import (
         ActiveToolModule,
@@ -68,7 +67,7 @@ class RoiTimelineUiTest(unittest.TestCase):
         self.panel = ImagePanel(
             self.dataset, self.geometry, MaskModule(), self.chromatic, self.background, self.roi_toolbox,
             self.selection, ActiveToolModule(), ReferenceFrameModule(), HighlightRangeModule(),
-            mask_scope=MaskScopeModule(), analysis_running=lambda: False,
+            mask_scope=MaskScopeModule(),
         )
         self.panel.resize(900, 700)
         self.panel.show()
@@ -81,10 +80,7 @@ class RoiTimelineUiTest(unittest.TestCase):
             self.roi_toolbox.add_roi(x, y, sample_diameter_px=10.0)
         _pump(0.2)
         undo_manager.clear()
-        self.engine = _build_analysis_engine(
-            self.dataset, self.geometry, MaskModule(), self.chromatic, self.background, self.roi_toolbox
-        )
-        self.table = RoiTablePanel(self.roi_toolbox, self.selection, self.geometry, self.engine, edit_target=self.panel.edit_target)
+        self.table = RoiTablePanel(self.roi_toolbox, self.selection, self.geometry, edit_target=self.panel.edit_target)
 
     def tearDown(self) -> None:
         self.panel._renderer.stop()

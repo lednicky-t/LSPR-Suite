@@ -71,7 +71,6 @@ class ArrayActionsTest(unittest.TestCase):
         self.told: list[str] = []
         self.answers: list[bool] = []
         self.statuses: list[str] = []
-        self.analysis_running = False
         self.reference: tuple[int, float] | None = (0, REFERENCE_WL)
         self.actions = ArrayActions(
             self.controls,
@@ -85,7 +84,6 @@ class ArrayActionsTest(unittest.TestCase):
             has_dataset=lambda: True,
             raw_plane_shape=lambda: self.image_for().shape,
             resolve_reference=lambda: self.reference,
-            analysis_running=lambda: self.analysis_running,
             ask=self._ask,
             tell=lambda title, text: self.told.append(text),
         )
@@ -137,13 +135,6 @@ class ArrayActionsTest(unittest.TestCase):
                 self.assertEqual(self._id_at(*spot), roi_id)
         self.assertEqual([self._id_at(x, 50) for x in (10, 35, 60)], [2, 4, 6])
 
-    def test_reorder_is_refused_while_an_analysis_runs(self) -> None:
-        self._add_grid()
-        self.analysis_running = True
-        self.controls._reorder.reorder_requested.emit("rows")
-        self.assertEqual(self._id_at(60, 10), 1)  # unchanged
-        self.assertTrue(self.told)
-
     def test_auto_detect_stores_the_array_as_one_undo_step(self) -> None:
         self.run_and_wait(self.controls._run.click)
         self.assertEqual(len(self.toolbox.rois()), 24)
@@ -178,12 +169,7 @@ class ArrayActionsTest(unittest.TestCase):
         self.assertEqual(self.selection.current_wavelength(), REFERENCE_WL)
         self.assertEqual(len(self.toolbox.rois()), 24)
 
-    def test_refused_while_an_analysis_runs_and_without_a_reference_frame(self) -> None:
-        self.analysis_running = True
-        self.run_and_wait(self.controls._run.click)
-        self.assertTrue(any("analysis is running" in t for t in self.told))
-        self.assertEqual(self.toolbox.rois(), ())
-        self.analysis_running = False
+    def test_refused_without_a_reference_frame(self) -> None:
         self.reference = None
         self.run_and_wait(self.controls._run.click)
         self.assertTrue(any("reference frame" in t for t in self.told))

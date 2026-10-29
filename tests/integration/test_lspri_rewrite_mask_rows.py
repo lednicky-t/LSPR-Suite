@@ -87,7 +87,7 @@ class MaskRowsTest(unittest.TestCase):
         self.panel = ImagePanel(
             self.dataset, GeometryModule(), self.mask, ChromaticModule(), BackgroundModule(), RoiToolbox(),
             self.selection, ActiveToolModule(), ReferenceFrameModule(), HighlightRangeModule(),
-            mask_scope=MaskScopeModule(), analysis_running=lambda: False,
+            mask_scope=MaskScopeModule(),
         )
         self.panel.resize(900, 760)
         self.panel.show()

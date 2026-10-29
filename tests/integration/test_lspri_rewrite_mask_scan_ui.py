@@ -95,7 +95,7 @@ class MaskScanUiTest(unittest.TestCase):
         self.panel = ImagePanel(
             self.dataset, GeometryModule(), self.mask, ChromaticModule(), BackgroundModule(), RoiToolbox(),
             self.selection, ActiveToolModule(), ReferenceFrameModule(), HighlightRangeModule(),
-            mask_scope=MaskScopeModule(), analysis_running=lambda: False,
+            mask_scope=MaskScopeModule(),
         )
         self.panel.resize(1000, 780)
         self.panel.show()

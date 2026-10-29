@@ -81,7 +81,7 @@ class MaskExportUiTest(unittest.TestCase):
         self.panel = ImagePanel(
             self.dataset, GeometryModule(), self.mask, ChromaticModule(), BackgroundModule(), RoiToolbox(),
             SelectionModule(), ActiveToolModule(), ReferenceFrameModule(), HighlightRangeModule(),
-            mask_scope=MaskScopeModule(), analysis_running=lambda: False,
+            mask_scope=MaskScopeModule(),
         )
         self.panel.resize(1000, 700)
         self.panel.show()

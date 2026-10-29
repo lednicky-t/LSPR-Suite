@@ -11,9 +11,7 @@ No Qt, no dataset. One class per consumer in the task's §4 table.
 from __future__ import annotations
 
 import sys
-import tempfile
 import unittest
-from pathlib import Path
 
 import numpy as np
 
@@ -26,7 +24,6 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis.provenance import ProvenanceRecord
     from lspr_imaging_app.analysis.reduction import (
         reduce_mean,
         reduce_median,
@@ -34,8 +31,6 @@ try:
         reduce_trimmed_mean,
         weighted_mean,
     )
-    from lspr_imaging_app.analysis.store import read_all_cells, write_cell
-    from lspr_imaging_app.analysis.tasks import CellResult, WavelengthCoverage
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.image_tools.mask.raster_tools import (
@@ -218,25 +213,6 @@ class TestHistogramAndDisplayHelpers(unittest.TestCase):
         # Whole numbers since 2026-10-03 (cursor readout; see no_data.format_pixel_value).
         self.assertEqual(format_pixel_value(12.34), "12")
         self.assertEqual(format_pixel_value(12.6), "13")
-
-
-class TestStoreCoverageRoundTrip(unittest.TestCase):
-    def _result(self, coverage) -> CellResult:
-        provenance = ProvenanceRecord(roi_geometry={"x": 1}, reduction_method="mean", per_wavelength_settings=((500.0, 1),))
-        return CellResult((500.0,), (1.0,), (2.0,), provenance, coverage)
-
-    def test_coverage_and_flags_survive_write_and_read(self) -> None:
-        cov = (WavelengthCoverage(100, 60, 0.6, 500, 300, 0.6, 0.25, "insufficient_coverage"),)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "data.h5"
-            write_cell(path, 1, 0, self._result(cov))
-            self.assertEqual(read_all_cells(path)[(1, 0)].coverage, cov)
-
-    def test_a_cell_without_coverage_reads_back_as_none(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "data.h5"
-            write_cell(path, 1, 0, self._result(None))
-            self.assertIsNone(read_all_cells(path)[(1, 0)].coverage)
 
 
 class TestOldSessionsStillLoad(unittest.TestCase):

@@ -11,8 +11,8 @@ replaces the stable app.
 
 No Qt, no files: everything here is a pure function or a plain dataclass,
 which is what keeps it in `tests/unit`. The parts that need a real
-`QApplication`, real TIFFs or a real HDF5 store are in
-`tests/integration/test_lspri_rewrite_analysis_engine.py`.
+`QApplication`, real TIFFs or a real HDF5 store are in the scan's tests
+(`tests/integration/test_lspri_analysis_scan_task.py`).
 """
 
 from __future__ import annotations

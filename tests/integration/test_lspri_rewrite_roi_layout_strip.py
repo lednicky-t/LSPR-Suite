@@ -138,7 +138,7 @@ class RoiLayoutRowTest(unittest.TestCase):
         self.panel = ImagePanel(
             self.dataset, GeometryModule(), MaskModule(), ChromaticModule(), BackgroundModule(), self.roi_toolbox,
             self.selection, ActiveToolModule(), ReferenceFrameModule(), HighlightRangeModule(),
-            mask_scope=MaskScopeModule(), analysis_running=lambda: False,
+            mask_scope=MaskScopeModule(),
         )
         self.panel.resize(900, 700)
         self.panel.show()

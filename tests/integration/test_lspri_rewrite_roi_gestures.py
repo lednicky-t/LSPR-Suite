@@ -112,11 +112,10 @@ class RoiGesturesTest(unittest.TestCase):
         self.roi_toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.active_tool = ActiveToolModule()
-        self.busy = False
         self.panel = ImagePanel(
             self.dataset, GeometryModule(), MaskModule(), ChromaticModule(), BackgroundModule(), self.roi_toolbox,
             self.selection, self.active_tool, ReferenceFrameModule(), HighlightRangeModule(),
-            mask_scope=MaskScopeModule(), analysis_running=lambda: self.busy,
+            mask_scope=MaskScopeModule(),
         )
         self.panel.resize(900, 700)
         self.panel.show()
@@ -475,16 +474,6 @@ class RoiGesturesTest(unittest.TestCase):
         self.selection.set_roi_selection({1, 2})
         self.right_click(40.0, 30.0, RoiMenuChoice(DELETE))
         self.assertEqual(len(self.roi_toolbox.rois()), 1)
-
-    def test_menu_delete_is_refused_while_an_analysis_runs(self) -> None:
-        self.busy = True
-        self.selection.set_roi_selection({1})
-        statuses: list[str] = []
-        self.panel.tool_status_changed.connect(statuses.append)
-        menu = self.right_click(20.0, 20.0, RoiMenuChoice(DELETE))
-        self.assertFalse(menu.call_args.kwargs["can_delete"])
-        self.assertEqual(len(self.roi_toolbox.rois()), 3)
-        self.assertTrue(any("analysis" in text for text in statuses))
 
     def test_menu_add_roi_places_one_at_the_click_and_selects_it(self) -> None:
         self.right_click(10.0, 55.0, RoiMenuChoice(ADD_ROI))

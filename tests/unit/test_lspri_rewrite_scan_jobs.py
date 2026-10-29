@@ -2,7 +2,7 @@
 
 The builder only resolves inputs (which frames are spectral, the ROI layout of each cube, the chromatic affine and the ignore
 mask of each frame, the wavelength axis), so the fakes below are plain callables. The reference for the ignore mask is the
-existing `preprocess.resolve_external_mask`; for everything else it is what `AnalysisEngine._gather_wavelength_inputs` does.
+existing `preprocess.resolve_external_mask`; for everything else it is what the former `AnalysisEngine._gather_wavelength_inputs` did (now `tools/reference_inputs.py`).
 Design record: `apps/LSPRi/eva/docs/analysis_redesign_plan_2026-10-19.md`, sections 14-15. No Qt, no files.
 """
 

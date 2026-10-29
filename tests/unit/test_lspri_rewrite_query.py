@@ -4,10 +4,8 @@ Pillar II (`apps/LSPRi/eva/docs/analysis_pipeline_layers.md`).
 **These only run when the `apps/LSPRi/eva` submodule is checked out on its
 `rewrite` branch** - see `test_lspri_rewrite_analysis_core.py`'s docstring.
 
-No Qt, no files. The engine-level half of this layer - the cache, the
-background trace path, and the claim that changing a formula recomputes
-nothing - is in `tests/integration/test_lspri_rewrite_analysis_engine.py`,
-since it needs a real store.
+No Qt, no files. (The engine-level half of this layer, with its cache and background trace path, went with the old analysis engine on
+2026-10-29; the Spectra and Sensorgram panels read `scan_view.py`.)
 
 Most of this is a verbatim port of code that has been in production use, so
 what is pinned here is chosen accordingly: the arithmetic of each formula

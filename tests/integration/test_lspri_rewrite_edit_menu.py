@@ -35,14 +35,6 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
     raise
 
 
-class _FakeEngine:
-    def __init__(self) -> None:
-        self.running = False
-
-    def is_running(self) -> bool:
-        return self.running
-
-
 class _Counter:
     """State that a command changes, so undo/redo are observable."""
 
@@ -65,9 +57,8 @@ class EditMenuTest(unittest.TestCase):
         self.window = QMainWindow()
         self.window.statusBar()
         self.menu = QMenu("&Edit", self.window)
-        self.engine = _FakeEngine()
         self.manager = UndoManager()
-        self.undo, self.redo = _wire_edit_menu(self.menu, self.window, self.engine, manager=self.manager)
+        self.undo, self.redo = _wire_edit_menu(self.menu, self.window, manager=self.manager)
         self.counter = _Counter()
 
     def tearDown(self) -> None:
@@ -102,19 +93,6 @@ class EditMenuTest(unittest.TestCase):
         self.assertIn(QKeySequence("Ctrl+Y"), redo_keys)
         for action in (self.undo, self.redo):  # also from a floating panel (its own top-level window)
             self.assertEqual(action.shortcutContext(), Qt.ShortcutContext.ApplicationShortcut)
-
-    def test_refused_while_an_analysis_runs_and_says_why(self) -> None:
-        self.counter.push(self.manager, "Delete ROI")
-        self.engine.running = True
-        self.undo.trigger()  # what a Ctrl+Z press would fire if the menu state were stale
-        self.assertEqual(self.counter.value, 1, "nothing was undone")
-        self.assertTrue(self.manager.can_undo)
-        self.assertIn("analysis is running", self.window.statusBar().currentMessage())
-        self.menu.aboutToShow.emit()  # opening the menu re-checks
-        self.assertFalse(self.undo.isEnabled())
-        self.engine.running = False
-        self.menu.aboutToShow.emit()
-        self.assertTrue(self.undo.isEnabled())
 
     def test_disabled_during_a_gesture_then_back_when_it_ends(self) -> None:
         self.counter.push(self.manager, "Move ROI")

@@ -37,10 +37,8 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_ui import get_active_theme, load_tabler_icon, set_active_theme, transparent_icon_button_stylesheet
 
-    from lspr_imaging_app.app_rewrite import _build_analysis_engine
-    from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.gui.app_theme import LSPRI_BRIGHT_THEME, LSPRI_DARK_THEME, apply_app_theme
-    from lspr_imaging_app.image_tools import BackgroundModule, ChromaticModule, GeometryModule, MaskModule
+    from lspr_imaging_app.image_tools import GeometryModule
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.panels.image.general_group import style_general_icon_button
     from lspr_imaging_app.panels.roi_table import RoiTablePanel
@@ -105,14 +103,10 @@ class _PanelCase(unittest.TestCase):
         self.toolbox = RoiToolbox()
         self.selection = SelectionModule()
         self.geometry = GeometryModule()
-        # A real engine, wired as the app wires it (its constructor takes every read as a required argument).
-        self.engine = _build_analysis_engine(
-            DatasetModule(), self.geometry, MaskModule(), ChromaticModule(), BackgroundModule(), self.toolbox
-        )
         self.toolbox.roi_ids_renumbered.connect(self.selection.remap_roi_ids)  # as the app wires it
         for x in (10.0, 20.0, 30.0, 40.0, 50.0):
             self.toolbox.add_roi(x, 5.0, sample_diameter_px=6.0)
-        self.panel = RoiTablePanel(self.toolbox, self.selection, self.geometry, self.engine)
+        self.panel = RoiTablePanel(self.toolbox, self.selection, self.geometry)
         self.messages: list[str] = []
         self.panel.status_message.connect(self.messages.append)
         self.model = self.panel._model
@@ -199,7 +193,7 @@ class AppearanceTest(_PanelCase):
         self.assertTrue(timer.isActive(), "with a timeline the rows differ per cube")
 
     def test_no_rois_shows_the_hint_and_adding_one_shows_the_table(self) -> None:
-        empty = RoiTablePanel(RoiToolbox(), SelectionModule(), self.geometry, self.engine)
+        empty = RoiTablePanel(RoiToolbox(), SelectionModule(), self.geometry)
         self.assertEqual(empty._stack.currentIndex(), 1)
         self.assertEqual(empty._footer.text(), "No ROIs")
         self.assertEqual(self.panel._stack.currentIndex(), 0)
@@ -277,7 +271,7 @@ class SharedDisplayStyleTest(_PanelCase):
 
         self.style = RoiDisplayStyle()
         self.panel.deleteLater()
-        self.panel = RoiTablePanel(self.toolbox, self.selection, self.geometry, self.engine, display_style=self.style)
+        self.panel = RoiTablePanel(self.toolbox, self.selection, self.geometry, display_style=self.style)
         self.model = self.panel._model
 
     def test_the_dot_of_a_roi_with_no_colour_follows_the_shared_sample_colour(self) -> None:
@@ -670,15 +664,6 @@ class SortAndReorderTest(_PanelCase):
         self.assertIn("single group", self.footer())
         self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
 
-    def test_nothing_is_reordered_or_deleted_while_an_analysis_runs(self) -> None:
-        self.selection.set_roi_selection({3})
-        with mock.patch.object(self.engine, "is_running", return_value=True):
-            self.panel._move_selected(-1)
-            self.assertIn("analysis to finish", self.footer())
-            self.panel._delete_selected()
-        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
-        self.assertEqual(len(self.toolbox.rois()), 5)
-
 
 class DeleteTest(_PanelCase):
     def test_delete_removes_the_selected_rois(self) -> None:
@@ -996,7 +981,7 @@ class GroupOnlyViewTest(_PanelCase):
         self.panel.restore_ui_state(store)
         self.panel.set_group_only(True)
         self.assertEqual((reported, store.get("roi_table/group_only")), ([True], True))
-        later = RoiTablePanel(self.toolbox, self.selection, self.geometry, self.engine)
+        later = RoiTablePanel(self.toolbox, self.selection, self.geometry)
         later.restore_ui_state(store)
         self.assertTrue(later.group_only())
         self.assertTrue(later._group_only_button.isChecked())
@@ -1233,11 +1218,6 @@ class DragAndDropTest(_PanelCase):
         self.assertIn("Sort by #", self.footer())
         self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
 
-    def test_nothing_is_reordered_by_dragging_while_an_analysis_runs(self) -> None:
-        with mock.patch.object(self.engine, "is_running", return_value=True):
-            self.drop([4], 0)
-        self.assertIn("analysis to finish", self.footer())
-        self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0])
 
     # -- groups ------------------------------------------------------------------------------------
 
@@ -1248,11 +1228,10 @@ class DragAndDropTest(_PanelCase):
         self.assertIsNotNone(self.toolbox.roi_by_id(4).sample_color_hex, "it gets a tint of the group colour")
         self.assertEqual(self.xs(), [10.0, 20.0, 30.0, 40.0, 50.0], "membership only: nobody was renumbered")
 
-    def test_putting_rois_in_a_group_works_whatever_the_sort_and_during_an_analysis(self) -> None:
+    def test_putting_rois_in_a_group_works_whatever_the_sort(self) -> None:
         self.grouped()
         self.panel._on_header_clicked(COLUMN_X)
-        with mock.patch.object(self.engine, "is_running", return_value=True):
-            self.drop([4], -1, self.header("group_2"))
+        self.drop([4], -1, self.header("group_2"))
         self.assertEqual(self.toolbox.groups()[1].area_roi_ids, [2, 4])
 
     def test_dropping_between_the_rows_of_another_group_puts_the_roi_in_that_group(self) -> None:
