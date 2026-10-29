@@ -618,6 +618,7 @@ class PlanBarActionsTest(unittest.TestCase):
         return menu, {action.text(): action for action in menu.actions() if action.text()}
 
     def test_the_menu_offers_what_applies_to_the_step(self) -> None:
+        self.actions.set_structure_tools(False)  # the tools of the Experimental plan tab are off: the menu of 2026-10-26
         menu, actions = self._actions_of(0)
         self.assertEqual(list(actions), [f"Step 1: {NOTE_1}", "Edit text...", "Colour...", "Default colour", "Reset step to measured", "Reset all steps"])
         self.assertFalse(actions[f"Step 1: {NOTE_1}"].isEnabled())
@@ -626,6 +627,112 @@ class PlanBarActionsTest(unittest.TestCase):
             self.assertFalse(actions[greyed].isEnabled(), greyed)  # nothing edited yet
         menu.deleteLater()
         self.assertIsNone(self.actions.build_menu(7))
+
+    # -- structure: remove, add, unify, restore, roles (2026-10-29) ---------------------------------------------------------------
+
+    def _follow_the_module(self) -> None:
+        """What `StepOverlays` does in the panel: hand the module's steps to the bar after every change, and clear the selection when the steps were renumbered."""
+        def redraw(reason: str) -> None:
+            if reason in ("structure", "dataset", "restored"):
+                self.plot.plan_bar().clear_selection()
+            bars = bm.build_bar_steps(self.module.steps(), self.context.axis, [], time_mode=True)
+            self.plot.set_plan(bars, bm.PlanBarSettings())
+
+        self.module.steps_changed.connect(redraw)
+
+    def test_the_menu_has_the_structure_tools_and_the_roles_while_they_are_on(self) -> None:
+        self.assertTrue(self.actions.structure_tools_active())
+        _menu, actions = self._actions_of(0)
+        self.assertEqual(
+            list(actions)[5:],
+            ["Reset all steps", "Remove step", "Add step", "Unify selected steps", "Restore removed steps", "Use as baseline (B1)", "Use as signal (S1)"],
+        )
+        self.assertFalse(actions["Unify selected steps"].isEnabled())  # one step is nothing to unify
+        self.assertFalse(actions["Restore removed steps"].isEnabled())
+        self.assertTrue(actions["Add step"].isEnabled())
+        self.assertEqual([a.text() for a in actions["Add step"].menu().actions()], ["In front of this step", "Behind this step"])
+
+    def test_remove_step_takes_the_selection_away_in_one_undo_step_and_restore_brings_it_back(self) -> None:
+        self._follow_the_module()
+        self.plot.plan_bar().select_many((0, 1), anchor=0)
+        _menu, actions = self._actions_of(1)
+        self.assertEqual(actions["Remove steps"].text(), "Remove steps")
+        actions["Remove steps"].trigger()
+        self.assertEqual(self.module.steps(), ())
+        self.assertEqual(self.plot.plan_bar().selected_indices(), ())
+        undo_manager.undo()
+        self.assertEqual(len(self.module.steps()), 2)  # both together
+        self.assertFalse(undo_manager.can_undo)
+        self.module.remove_steps([0])
+        _menu, actions = self._actions_of(0)
+        self.assertTrue(actions["Restore removed steps"].isEnabled())
+        actions["Restore removed steps"].trigger()
+        self.assertEqual(len(self.module.steps()), 2)
+
+    def test_add_step_behind_cuts_half_off_a_joined_step_and_selects_the_new_one(self) -> None:
+        self._follow_the_module()
+        _menu, actions = self._actions_of(0)
+        behind = next(a for a in actions["Add step"].menu().actions() if a.text() == "Behind this step")
+        behind.trigger()
+        steps = self.module.steps()
+        self.assertEqual([(s.order, s.is_added, s.start_unix_ms, s.end_unix_ms) for s in steps], [(1, False, 10_000, 20_000), (2, True, 20_000, 30_000), (3, False, 30_000, 50_000)])
+        self.assertEqual(self.plot.plan_bar().selected_indices(), (1,))
+        undo_manager.undo()
+        self.assertEqual(self._bounds(), [(10_000, 30_000), (30_000, 50_000)])
+
+    def test_add_step_in_front_and_without_an_axis(self) -> None:
+        self._follow_the_module()
+        _menu, actions = self._actions_of(1)
+        next(a for a in actions["Add step"].menu().actions() if a.text() == "In front of this step").trigger()
+        self.assertEqual([(s.start_unix_ms, s.end_unix_ms) for s in self.module.steps()], [(10_000, 30_000), (30_000, 40_000), (40_000, 50_000)])
+        self.context = None
+        _menu, actions = self._actions_of(0)
+        self.assertFalse(actions["Add step"].menu().actions()[0].isEnabled())  # no plotted cubes, no grid to snap to
+
+    def test_unify_is_offered_for_neighbours_only_and_joins_them_in_one_undo_step(self) -> None:
+        self._follow_the_module()
+        self.plot.plan_bar().select_many((0, 1), anchor=0)
+        _menu, actions = self._actions_of(0)
+        self.assertTrue(actions["Unify selected steps"].isEnabled())
+        actions["Unify selected steps"].trigger()
+        (only,) = self.module.steps()
+        self.assertEqual((only.start_unix_ms, only.end_unix_ms, only.label), (10_000, 50_000, NOTE_1))
+        self.assertEqual(self.plot.plan_bar().selected_indices(), (0,))
+        undo_manager.undo()
+        self.assertEqual(self._bounds(), [(10_000, 30_000), (30_000, 50_000)])
+        self.assertFalse(undo_manager.can_undo)
+
+    def test_use_as_baseline_and_signal_toggle_with_a_check_mark_and_show_on_the_bar(self) -> None:
+        self._follow_the_module()
+        _menu, actions = self._actions_of(0)
+        actions["Use as baseline (B1)"].trigger()
+        _menu, actions = self._actions_of(1)
+        actions["Use as signal (S1)"].trigger()
+        self.assertEqual((self.module.baseline_step().order, self.module.signal_step().order), (1, 2))
+        self.assertEqual([s.roles for s in self.plot.plan_bar().steps()], [("B1",), ("S1",)])
+        _menu, actions = self._actions_of(0)
+        self.assertTrue(actions["Use as baseline (B1)"].isChecked())
+        self.assertFalse(actions["Use as signal (S1)"].isChecked())
+        actions["Use as baseline (B1)"].trigger()  # again: off
+        self.assertIsNone(self.module.baseline_step())
+
+    def test_the_roles_are_for_one_step_so_they_are_greyed_out_for_a_selection(self) -> None:
+        self.plot.plan_bar().select_many((0, 1), anchor=0)
+        _menu, actions = self._actions_of(0)
+        self.assertFalse(actions["Use as baseline (B1)"].isEnabled() or actions["Use as signal (S1)"].isEnabled())
+
+    def test_a_step_the_user_added_has_its_own_colour_and_nothing_to_reset(self) -> None:
+        self.module.add_step(0, "after", self.context.grid_unix_ms)
+        self.module.set_color(1, "#112233")
+        _menu, actions = self._actions_of(1)
+        self.assertTrue(actions["Default colour"].isEnabled())  # an added step keeps its colour in its own record
+        self.assertFalse(actions["Reset step to measured"].isEnabled())  # nothing measured to go back to
+        self.assertTrue(actions["Reset all steps"].isEnabled())
+
+    def test_a_notice_from_the_module_is_shown_as_a_tooltip(self) -> None:
+        with mock.patch("lspr_imaging_app.panels.sensorgram.plan_actions.QToolTip.showText") as show:
+            self.module.notice.emit("Cleared the signal of pair 1: that step is gone.")
+        self.assertTrue(show.called)
 
     def test_colour_default_colour_and_reset_work_from_the_menu(self) -> None:
         with mock.patch("lspr_imaging_app.panels.sensorgram.plan_actions.QColorDialog.getColor", return_value=QColor("#336699")) as dialog:

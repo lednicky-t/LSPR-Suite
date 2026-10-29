@@ -225,7 +225,7 @@ class SessionFileTest(unittest.TestCase):
         save_session(self.root, SessionState(plan_edits=self.state), self.naming)
         payload = json.loads(session_path(self.root).read_text(encoding="utf-8"))
         self.assertEqual(payload["schema_version"], SESSION_SCHEMA_VERSION)
-        self.assertEqual(SESSION_SCHEMA_VERSION, "1.5")
+        self.assertEqual(SESSION_SCHEMA_VERSION, "1.6")
         self.assertEqual(len(payload["plan"]["edits"]), 2)
         self.assertEqual(load_session(self.root).plan_edits, self.state)
 

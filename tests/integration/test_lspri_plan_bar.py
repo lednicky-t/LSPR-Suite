@@ -465,6 +465,90 @@ class PlanBarPanelTest(unittest.TestCase):
         steps = self._bar().steps()
         self.assertEqual((round(steps[0].x_end, 6), round(steps[1].x_start, 6)), (4.0, 4.0))
 
+    # -- the Experimental plan tab, the Evaluation pickers and the structure tools (2026-10-29) ------------------------------------------
+
+    def test_the_control_row_has_a_plot_tab_and_an_experimental_plan_tab(self) -> None:
+        tabs = self.panel._ribbon_tabs
+        self.assertEqual(tabs._category_names, ["Plot", "Experimental plan"])
+        self.assertEqual(self.panel.current_ribbon_tab(), "Plot")  # the first one is shown at the start
+        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["View", "Evaluation", "Step stats"])
+
+    def test_the_structure_tools_are_live_only_while_the_experimental_plan_tab_is_shown(self) -> None:
+        self._open_scan_and_draw()
+        actions = self.panel._steps.actions
+        self.assertFalse(actions.structure_tools_active())
+        self.assertNotIn("Remove step", [a.text() for a in actions.build_menu(0).actions()])
+        self.panel._ribbon_tabs.set_category("Experimental plan")
+        self.assertTrue(actions.structure_tools_active())
+        texts = [a.text() for a in actions.build_menu(0).actions()]
+        self.assertIn("Remove step", texts)
+        self.assertIn("Use as baseline (B1)", texts)
+        self.panel._ribbon_tabs.set_category("Plot")
+        self.assertFalse(actions.structure_tools_active())
+        self.assertIn("Edit text...", [a.text() for a in actions.build_menu(0).actions()])  # the old items stay on every tab
+
+    def test_the_shown_tab_is_remembered_and_brings_its_tools_back(self) -> None:
+        store = UiStateStore({})
+        self.panel.restore_ui_state(store)
+        self.panel._ribbon_tabs.set_category("Experimental plan")
+        saved = dict(store._values)
+        self.assertEqual(saved["sensorgram/ribbon_tab"], "Experimental plan")
+        other = SensorgramPanel(
+            self.m.scan_results, self.m.roi_toolbox, self.m.dataset, self.m.selection, self.m.analysis_settings, self.m.cube_display,
+            trace_in_process=False, mask=self.m.mask, experiment_plan=self.m.experiment_plan,
+        )
+        other.restore_ui_state(UiStateStore(saved))
+        self.assertEqual(other.current_ribbon_tab(), "Experimental plan")
+        self.assertTrue(other._steps.actions.structure_tools_active())
+        other.shutdown()
+        other.deleteLater()
+
+    def test_an_unknown_remembered_tab_is_ignored(self) -> None:
+        self.panel.restore_ui_state(UiStateStore({"sensorgram/ribbon_tab": "Gone"}))
+        self.assertEqual(self.panel.current_ribbon_tab(), "Plot")
+
+    def test_the_evaluation_pickers_list_the_steps_and_write_the_roles(self) -> None:
+        self._open_scan_and_draw()
+        evaluation = self.panel._steps.evaluation
+        picker = evaluation._baseline
+        self.assertEqual([picker.itemText(i) for i in range(picker.count())], ["B1: not set", "B1: 1 · H2O_--_ch1F", "B1: 2 · 10perEG_-_ch1F"])
+        picker.setCurrentIndex(2)
+        picker.activated.emit(2)  # the user picked the second step
+        self.assertEqual(self.m.experiment_plan.baseline_step().order, 2)
+        self.assertEqual([s.roles for s in self._bar().steps()], [(), ("B1",)])  # the chip is on the bar
+        self.assertEqual(evaluation._baseline.currentIndex(), 2)
+        self.m.experiment_plan.set_role("baseline", None)  # cleared elsewhere (the menu, an undo): the picker follows without sending anything
+        self.assertEqual(evaluation._baseline.currentIndex(), 0)
+        self.assertIsNone(self.m.experiment_plan.baseline_step())
+
+    def test_the_evaluation_pickers_follow_a_role_set_in_the_menu_and_an_undo(self) -> None:
+        self._open_scan_and_draw()
+        self.m.experiment_plan.set_role("signal", 0)
+        self.assertEqual(self.panel._steps.evaluation._signal.currentIndex(), 1)
+        undo_manager.undo()
+        self.assertEqual(self.panel._steps.evaluation._signal.currentIndex(), 0)
+
+    def test_a_structure_edit_clears_the_selection_redraws_the_bar_and_keeps_roles_on_their_steps(self) -> None:
+        self._open_scan_and_draw()
+        self.m.experiment_plan.set_role("signal", 1)
+        self._bar().select_many((0, 1), anchor=0)
+        self.m.experiment_plan.remove_steps([0])
+        self.assertEqual(self._bar().selected_indices(), ())
+        self.assertEqual([(s.text, s.roles) for s in self._bar().steps()], [("10perEG_-_ch1F", ("S1",))])  # the signal step is now number 1
+        undo_manager.undo()
+        self.assertEqual(len(self._bar().steps()), 2)
+
+    def test_a_step_the_user_added_is_drawn_and_marked_as_added(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        plan = self.m.experiment_plan
+        ref = plan.add_step(0, "after", plan.snap_grid_unix_ms([0, 1, 2, 3, 4, 5]))
+        self.assertIsNotNone(ref)
+        steps = self._bar().steps()
+        self.assertEqual([s.added for s in steps], [False, True, False])
+        self.assertIn("Added by you", steps[1].tooltip)
+        self.assertEqual(round(steps[0].x_end, 6), round(steps[1].x_start, 6))  # the new step starts where the one it was cut from now ends
+
     def test_without_the_plan_module_the_group_is_greyed_out(self) -> None:
         panel = SensorgramPanel(
             self.m.scan_results, self.m.roi_toolbox, self.m.dataset, self.m.selection, self.m.analysis_settings, self.m.cube_display,

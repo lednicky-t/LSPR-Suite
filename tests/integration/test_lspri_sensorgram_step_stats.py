@@ -267,7 +267,7 @@ class StepStatsPanelTest(unittest.TestCase):
     # -- the group ------------------------------------------------------------------------------------------------------------------
 
     def test_the_group_is_in_the_ribbon_on_by_default_and_has_a_pictogram(self) -> None:
-        self.assertIn("Step stats", [label.text() for label in self.panel._ribbon._captions])
+        self.assertIn("Step stats", [label.text() for label in self.panel._plan_ribbon._captions])  # on the Experimental plan tab since 2026-10-29
         self.assertTrue(self.controls.is_available())
         settings = self.controls.settings()
         self.assertEqual((settings.visible, settings.position), (True, "top"))
