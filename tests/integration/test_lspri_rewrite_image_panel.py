@@ -1529,7 +1529,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(self.mask.settings().morphology_radius_px, 7)
 
     def test_draw_edit_panel_brush_size_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_tab._edit_stack.widget(4)
+        panel = self.panel._mask_tab._edit_stack.widget(5)  # Draw is the last of six since the ROI features tool (index 4) was added
         panel._size_spin.setValue(9)
         self.assertEqual(self.mask.settings().brush_size_px, 9)
 
