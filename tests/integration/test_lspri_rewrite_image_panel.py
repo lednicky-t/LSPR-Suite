@@ -1844,6 +1844,32 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertFalse(top.is_overflowing())
         self.panel.hide()
 
+    def test_the_top_ribbon_takes_all_the_room_the_bar_has_and_scrolls_only_when_the_panel_is_really_too_narrow(self) -> None:
+        """2026-10-29, maintainer report: on a wide panel the ribbon scrolled (arrows) with half of the bar empty. The bar gave the ribbon only its own natural
+        width (a stretch after it took the rest), so a ribbon that was allocated a little too little showed arrows beside an empty bar. The drawer now takes the
+        bar's spare room: the ribbon's width is the bar's, and it scrolls only when the panel really is narrower than its row."""
+        self.panel.resize(2000, 600)
+        self.panel.show()
+        _pump(0.3)
+        drawer, top = self.panel._top_drawer, self.panel._top_drawer.ribbon
+        try:
+            for name in self.panel._tool_ribbon._category_names:
+                self.panel._tool_ribbon.set_category(name)
+                _pump(0.1)
+                self.assertGreater(drawer.width(), 1500, f"{name}: the drawer fills the bar up to the info icon, not just as wide as its row")
+                self.assertFalse(top.is_overflowing(), f"{name}: ribbon {top.width()} px wide, its row needs {top.content.minimumSizeHint().width()} px")
+                # the "i" icon sits right after the ribbon, at the end of the bar (no empty stretch between them)
+                self.assertLessEqual(self.panel._tool_info.geometry().left() - drawer.geometry().right(), 12, name)
+            self.panel._tool_ribbon.set_category("ROIs")
+            self.panel.resize(700, 600)  # a panel that really is too narrow for the row scrolls
+            _pump(0.3)
+            self.assertTrue(top.is_overflowing())
+            self.panel.resize(2000, 600)  # and is whole again when there is room
+            _pump(0.3)
+            self.assertFalse(top.is_overflowing())
+        finally:
+            self.panel.hide()
+
     def test_double_click_on_empty_space_rolls_the_tool_ribbon_up_and_the_handle_rolls_it_down(self) -> None:
         """2026-10-16, maintainer request: the top ribbon rolls up like the slider ribbon,
         leaving just a "..." handle (the "i" icon goes with the ribbon), remembered across

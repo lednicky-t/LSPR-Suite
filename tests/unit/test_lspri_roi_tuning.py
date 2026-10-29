@@ -43,6 +43,33 @@ def _cube_times(cubes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return first, first + CUBE_S * 1000.0
 
 
+class MovedCentreTest(unittest.TestCase):
+    """A trial must scan the centre the ROI toolbox will store after the move: both coordinates rounded to 0.1 px (so accepting never stores a centre that was not measured)."""
+
+    def test_a_moved_centre_is_rounded_to_a_tenth_of_a_pixel_like_every_position_edit(self) -> None:
+        self.assertEqual(rt.moved_centre(15.04, 35.06, 1.0, 0.0), (16.0, 35.1))
+        self.assertEqual(rt.moved_centre(40.6, 20.0, 1.0, -2.0), (41.6, 18.0))
+
+    def test_no_shift_is_no_move_so_the_centre_is_returned_as_it_is(self) -> None:
+        self.assertEqual(rt.moved_centre(15.04, 35.06, 0.0, 0.0), (15.04, 35.06))
+
+    def test_the_toolbox_stores_exactly_the_centre_the_trial_scanned(self) -> None:
+        from lspr_imaging_app.roi.toolbox import POSITION_DECIMALS
+
+        for x, y, dx, dy in ((40.6, 20.3, 1.0, 1.0), (16.0, 16.0, -0.3, 0.7), (63.9, 12.1, 2.0, -2.0)):
+            scanned = rt.moved_centre(x, y, dx, dy)
+            stored = (round(float(x + dx), POSITION_DECIMALS), round(float(y + dy), POSITION_DECIMALS))
+            self.assertEqual(scanned, stored)
+
+    def test_a_shifted_roi_set_has_the_rounded_centre_and_an_unshifted_one_is_left_alone(self) -> None:
+        rs = fr.build_roi_set([_row(15.04), _row(60.0, number=2)], 14.0, 22.0)
+        moved = rt.shifted_roi_set(rs, [0], 1.0, 0.0)
+        self.assertEqual((moved.rois[0].center_x, moved.rois[0].center_y), rt.moved_centre(15.04, 35.0, 1.0, 0.0))
+        self.assertEqual(moved.rois[1].center_x, 60.0)
+        same = rt.shifted_roi_set(rs, [0], 0.0, 0.0)
+        self.assertEqual(same.rois[0].center_x, 15.04)  # an unmoved ROI is not rounded: it equals the ordinary scan's ROI
+
+
 class LatticeTest(unittest.TestCase):
     def test_a_three_by_three_lattice_is_the_square_around_the_centre_dx_fastest(self) -> None:
         offsets = rt.Lattice(3, 2.0).offsets()
