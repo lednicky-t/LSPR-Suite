@@ -28,7 +28,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     import lspr_imaging_app.dataset.io as dio
-    from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord
+    from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise

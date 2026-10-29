@@ -31,7 +31,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 import lspr_imaging_app.dataset.io as dataset_module  # noqa: E402
-from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord  # noqa: E402
+from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord  # noqa: E402
 from lspr_imaging_app.dataset.io import OME_ZARR_ARRAY_DIRNAME, export_ome_zarr_dataset  # noqa: E402
 
 IMAGE_SIZE = 16  # matches chunk_size_px below -> exactly one inner chunk per plane

@@ -1,4 +1,4 @@
-"""Coverage for the ROI-detection algorithm itself (processing/roi_detection.py).
+"""Coverage for the ROI-detection algorithm itself (roi/detection.py).
 
 Only refresh_roi_metrics had a direct test before this file; detect_rois and
 its helpers (_refine_detected_roi, _fit_grid_array, _roi_circular_contrast_score,
@@ -26,8 +26,7 @@ if str(APP_SRC) not in sys.path:
 
 import numpy as np
 
-from lspr_imaging_app.domain.models import AreaRoi, AreaRoiDetectionSettings
-from lspr_imaging_app.processing.roi_detection import (
+from lspr_imaging_app.roi.detection import (
     _estimate_grid_origin_1d,
     _masked_gaussian_filter,
     _refine_detected_roi,
@@ -35,6 +34,7 @@ from lspr_imaging_app.processing.roi_detection import (
     detect_rois,
     ignored_pixel_mask,
 )
+from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings
 
 
 def _disks_image(
@@ -61,12 +61,12 @@ def _nearest_distance(point: tuple[float, float], candidates: list[tuple[float, 
 
 class TestDetectRoisEdgeCases(unittest.TestCase):
     def test_empty_image_returns_no_rois(self) -> None:
-        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0)
+        settings = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0)
         self.assertEqual(detect_rois(np.zeros((0, 0), dtype=np.float32), settings), [])
 
     def test_fully_ignored_pixels_returns_no_rois(self) -> None:
         image = _disks_image(60, [(30.0, 30.0, 8.0)])
-        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0, ignore_marked_pixels=True)
+        settings = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0, ignore_marked_pixels=True)
         external_mask = np.ones((60, 60), dtype=bool)
         self.assertEqual(detect_rois(image, settings, external_mask=external_mask), [])
 
@@ -74,7 +74,7 @@ class TestDetectRoisEdgeCases(unittest.TestCase):
         image = _disks_image(60, [(30.0, 30.0, 8.0)])
         settings = AreaRoiDetectionSettings(
             mode="bright",
-            sample_radius_px=8.0,
+            sample_diameter_px=16.0,
             intensity_min_value=1_000_000.0,
             intensity_max_value=1_000_001.0,
         )
@@ -82,7 +82,7 @@ class TestDetectRoisEdgeCases(unittest.TestCase):
 
     def test_progress_callback_reaches_100_and_stays_in_range(self) -> None:
         image = _disks_image(80, [(40.0, 40.0, 8.0)])
-        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0)
+        settings = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0)
         calls: list[tuple[int, str]] = []
         detect_rois(image, settings, progress_callback=lambda percent, text: calls.append((percent, text)))
         self.assertTrue(calls)
@@ -93,7 +93,7 @@ class TestDetectRoisEdgeCases(unittest.TestCase):
 class TestDetectRoisSingleDisk(unittest.TestCase):
     def test_bright_disk_is_found_near_its_true_center(self) -> None:
         image = _disks_image(100, [(50.0, 50.0, 8.0)])
-        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0)
+        settings = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0)
 
         rois = detect_rois(image, settings)
 
@@ -105,7 +105,7 @@ class TestDetectRoisSingleDisk(unittest.TestCase):
     def test_dark_disk_is_found_near_its_true_center(self) -> None:
         # Invert the disk: dark spot on a bright field, mode="dark".
         image = 1000.0 - _disks_image(100, [(50.0, 50.0, 8.0)])
-        settings = AreaRoiDetectionSettings(mode="dark", sample_radius_px=8.0)
+        settings = AreaRoiDetectionSettings(mode="dark", sample_diameter_px=16.0)
 
         rois = detect_rois(image, settings)
 
@@ -124,7 +124,7 @@ class TestDetectRoisRejectsNonPositiveScoreCandidates(unittest.TestCase):
         # the real disk, returning 36 ROIs instead of 1 for this image. The
         # floor mirrors the one _refine_roi_center already applies below.
         image = _disks_image(100, [(50.0, 50.0, 8.0)])
-        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0)
+        settings = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0)
 
         rois = detect_rois(image, settings)
 
@@ -149,7 +149,7 @@ class TestDetectRoisIntensityFiltering(unittest.TestCase):
         self.image[strong_mask] = strong_only[strong_mask]
 
     def test_both_disks_found_without_any_intensity_bound(self) -> None:
-        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0)
+        settings = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0)
         rois = detect_rois(self.image, settings)
         self.assertEqual(len(rois), 2)
 
@@ -160,7 +160,7 @@ class TestDetectRoisIntensityFiltering(unittest.TestCase):
         strong_value = float(filtered[int(self.strong_center[1]), int(self.strong_center[0])])
         midpoint = (weak_value + strong_value) / 2.0
 
-        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0, intensity_min_value=midpoint)
+        settings = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0, intensity_min_value=midpoint)
         rois = detect_rois(self.image, settings)
 
         self.assertEqual(len(rois), 1)
@@ -179,7 +179,7 @@ class TestDetectRoisIgnoreMask(unittest.TestCase):
         mask_covering_strong_disk = np.zeros((100, 100), dtype=bool)
         mask_covering_strong_disk[60:90, 60:90] = True
 
-        settings_ignoring_off = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0, ignore_marked_pixels=False)
+        settings_ignoring_off = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0, ignore_marked_pixels=False)
         rois_mask_ignored = detect_rois(image, settings_ignoring_off, external_mask=mask_covering_strong_disk)
         self.assertEqual(len(rois_mask_ignored), 2)
 
@@ -189,47 +189,44 @@ class TestDetectRoisIgnoreMask(unittest.TestCase):
         self.assertLess(hypot(rois_mask_applied[0].center_x - weak_center[0], rois_mask_applied[0].center_y - weak_center[1]), 3.0)
 
 
-class TestIgnoredPixelMaskRotationFill(unittest.TestCase):
-    """rotation_fill_mask (unlike external_mask) is not gated behind
-    ignore_marked_pixels: rotation-added padding never had a real measurement,
-    so there's no toggle state where counting it is correct - see the
-    docstring on ignored_pixel_mask.
+class TestIgnoredPixelMaskNonFinite(unittest.TestCase):
+    """Pixels with no value (NaN, e.g. created by a rotation) are not gated behind ignore_marked_pixels: they never had a
+    real measurement, so there is no toggle state where counting them is correct - see the docstring on ignored_pixel_mask.
+    (Until 2026-10-29 this class tested the old `rotation_fill_mask` argument of the former app's copy of this module.)
     """
 
-    def test_rotation_fill_mask_applies_even_when_ignore_marked_pixels_is_false(self) -> None:
+    def test_nan_pixels_are_ignored_even_when_ignore_marked_pixels_is_false(self) -> None:
         image = np.zeros((10, 10), dtype=np.float32)
-        rotation_fill_mask = np.zeros((10, 10), dtype=bool)
-        rotation_fill_mask[0:3, 0:3] = True
+        image[0:3, 0:3] = np.nan
         settings = AreaRoiDetectionSettings(ignore_marked_pixels=False)
 
-        result = ignored_pixel_mask(image, settings, rotation_fill_mask=rotation_fill_mask)
+        result = ignored_pixel_mask(image, settings)
 
-        np.testing.assert_array_equal(result, rotation_fill_mask)
+        np.testing.assert_array_equal(result, np.isnan(image))
 
-    def test_rotation_fill_mask_and_external_mask_combine_when_ignoring_is_on(self) -> None:
+    def test_nan_pixels_and_external_mask_combine_when_ignoring_is_on(self) -> None:
         image = np.zeros((10, 10), dtype=np.float32)
-        rotation_fill_mask = np.zeros((10, 10), dtype=bool)
-        rotation_fill_mask[0:3, 0:3] = True
+        image[0:3, 0:3] = np.nan
         external_mask = np.zeros((10, 10), dtype=bool)
         external_mask[7:10, 7:10] = True
         settings = AreaRoiDetectionSettings(ignore_marked_pixels=True)
 
-        result = ignored_pixel_mask(image, settings, external_mask=external_mask, rotation_fill_mask=rotation_fill_mask)
+        result = ignored_pixel_mask(image, settings, external_mask=external_mask)
 
-        np.testing.assert_array_equal(result, rotation_fill_mask | external_mask)
+        np.testing.assert_array_equal(result, np.isnan(image) | external_mask)
 
-    def test_detect_rois_never_places_a_center_inside_the_rotation_fill_mask(self) -> None:
-        # A disk straddling the fill boundary: without exclusion, detection
-        # could anchor on the flat, high-contrast fill/data edge itself.
+    def test_detect_rois_never_places_a_center_on_or_next_to_nan_pixels(self) -> None:
+        # A disk straddling the data edge: without exclusion, detection could anchor on the flat, high-contrast
+        # edge itself.
         image = _disks_image(60, [(15.0, 30.0, 8.0)])
-        rotation_fill_mask = np.zeros((60, 60), dtype=bool)
-        rotation_fill_mask[:, :20] = True  # covers the disk's true location
-        settings = AreaRoiDetectionSettings(mode="bright", sample_radius_px=8.0)
+        image[:, :20] = np.nan  # covers the disk's true location
+        settings = AreaRoiDetectionSettings(mode="bright", sample_diameter_px=16.0)
 
-        rois = detect_rois(image, settings, rotation_fill_mask=rotation_fill_mask)
+        rois = detect_rois(image, settings)
 
         for roi in rois:
-            self.assertFalse(bool(rotation_fill_mask[int(roi.center_y), int(roi.center_x)]))
+            self.assertFalse(bool(np.isnan(image[int(roi.center_y), int(roi.center_x)])))
+            self.assertGreater(roi.center_x, 20.0 + 8.0 - 1.0, "a ROI must not reach the pixels with no value")
 
 
 class TestDetectRoisGridFit(unittest.TestCase):
@@ -238,7 +235,7 @@ class TestDetectRoisGridFit(unittest.TestCase):
         image = _disks_image(100, [(*pos, 6.0) for pos in expected_positions])
         settings = AreaRoiDetectionSettings(
             mode="bright",
-            sample_radius_px=6.0,
+            sample_diameter_px=12.0,
             array_rows=2,
             array_cols=2,
             array_spacing_px=40,
@@ -261,7 +258,7 @@ class TestRefineDetectedRoi(unittest.TestCase):
         self.filtered, _ = _masked_gaussian_filter(self.image, self.valid_mask, sigma=max(8.0 / 2.5, 1.0))
 
     def test_offset_seed_is_pulled_back_toward_the_true_center(self) -> None:
-        seed = AreaRoi(area_roi_id=5, center_x=44.0, center_y=35.0, sample_radius_px=8.0, score=0.0)
+        seed = AreaRoi(area_roi_id=5, center_x=44.0, center_y=35.0, sample_diameter_px=16.0, score=0.0)
 
         refined = _refine_detected_roi(seed, filtered=self.filtered, valid_mask=self.valid_mask, radius=8.0, mode="bright")
 
@@ -271,7 +268,7 @@ class TestRefineDetectedRoi(unittest.TestCase):
 
     def test_no_signal_in_search_region_keeps_original_position(self) -> None:
         empty_mask = np.zeros((80, 80), dtype=bool)
-        seed = AreaRoi(area_roi_id=2, center_x=10.0, center_y=10.0, sample_radius_px=8.0, score=0.0, inferred=True)
+        seed = AreaRoi(area_roi_id=2, center_x=10.0, center_y=10.0, sample_diameter_px=16.0, score=0.0, inferred=True)
 
         refined = _refine_detected_roi(seed, filtered=self.filtered, valid_mask=empty_mask, radius=8.0, mode="bright")
 
@@ -283,7 +280,7 @@ class TestRefineDetectedRoi(unittest.TestCase):
 
     def test_no_signal_does_not_retroactively_mark_a_confirmed_roi_as_inferred(self) -> None:
         empty_mask = np.zeros((80, 80), dtype=bool)
-        seed = AreaRoi(area_roi_id=3, center_x=10.0, center_y=10.0, sample_radius_px=8.0, inferred=False)
+        seed = AreaRoi(area_roi_id=3, center_x=10.0, center_y=10.0, sample_diameter_px=16.0, inferred=False)
 
         refined = _refine_detected_roi(seed, filtered=self.filtered, valid_mask=empty_mask, radius=8.0, mode="bright")
 

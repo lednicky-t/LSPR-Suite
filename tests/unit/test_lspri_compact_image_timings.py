@@ -26,7 +26,7 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_core import ImagingAcquisitionMetadata, ImagingCubeTiming
 
-from lspr_imaging_app.domain.models import (
+from lspr_imaging_app.dataset.model import (
     CompactImageTimings,
     ImageDataset,
     compact_dataset_image_timings,

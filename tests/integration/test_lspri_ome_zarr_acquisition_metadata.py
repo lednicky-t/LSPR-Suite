@@ -37,7 +37,7 @@ from lspr_core import (  # noqa: E402
 )
 
 import lspr_imaging_app.dataset.io as dataset_module  # noqa: E402
-from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord  # noqa: E402
+from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord  # noqa: E402
 from lspr_imaging_app.dataset.io import export_ome_zarr_dataset, load_ome_zarr_dataset  # noqa: E402
 
 IMAGE_SIZE = 16

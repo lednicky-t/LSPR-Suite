@@ -30,7 +30,7 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord  # noqa: E402
+from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord  # noqa: E402
 from lspr_imaging_app.dataset.io import (  # noqa: E402
     OME_ZARR_LSPR_KEY,
     export_ome_zarr_dataset,

@@ -21,7 +21,7 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord
+from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
 
 
 def _record(wavelength_nm: float, spectral_cube_index: int) -> ImageRecord:
