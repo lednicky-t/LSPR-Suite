@@ -1,5 +1,5 @@
 """Regression test: the Workflow panel's *nested* accordion sections (e.g.
-"Statistics" under Analysis) restore
+"Experimental plan" under Dataset) restore
 across a restart, the same as the 5 top-level stage sections already do
 (see `test_lspri_workflow_panel_stage_restore.py`) -
 `AppSettings.expanded_subsections` / `WorkflowPanel(initial_subsections=...)`
@@ -20,6 +20,10 @@ panel, as they are fully in the Image panel"). **Updated again
 (empty placeholder) ROI editor section was removed 2026-10-12, so this now
 targets sections under Analysis - the restore *mechanism* under test here is generic to
 any nested section, not specific to which ones happen to still exist.
+
+**Updated 2026-10-29**: the Analysis stage has no nested sections any more (the Analysis tab moved to the
+Image panel on 2026-10-24, which left these tests failing on a missing key). They now use the two nested
+sections of the Dataset stage: "Summary" (open by default) and "Experimental plan" (closed by default).
 """
 
 from __future__ import annotations
@@ -63,17 +67,17 @@ class WorkflowPanelSubsectionRestoreTests(unittest.TestCase):
         panel = _workflow_panel(self._build())
         sections = dict(panel._subsections)
         # Hardcoded defaults from panel.py's builder functions.
-        self.assertTrue(sections["ANALYSIS:ROI's math"].is_expanded())
-        self.assertFalse(sections["ANALYSIS:Statistics"].is_expanded())
+        self.assertTrue(sections["DATASET:Summary"].is_expanded())
+        self.assertFalse(sections["DATASET:Experimental plan"].is_expanded())
 
     def test_a_saved_subsection_state_overrides_the_hardcoded_default(self) -> None:
         window = self._build(
-            initial_settings=AppSettings(expanded_subsections={"ANALYSIS:Statistics": True})
+            initial_settings=AppSettings(expanded_subsections={"DATASET:Experimental plan": True})
         )
         sections = dict(_workflow_panel(window)._subsections)
-        self.assertTrue(sections["ANALYSIS:Statistics"].is_expanded())
+        self.assertTrue(sections["DATASET:Experimental plan"].is_expanded())
         # A key with no saved entry keeps its own hardcoded default.
-        self.assertTrue(sections["ANALYSIS:ROI's math"].is_expanded())
+        self.assertTrue(sections["DATASET:Summary"].is_expanded())
 
     def test_multiple_nested_sections_can_stay_open_at_once(self) -> None:
         """Unlike the 5 top-level stages (a real single-open accordion),
@@ -81,12 +85,12 @@ class WorkflowPanelSubsectionRestoreTests(unittest.TestCase):
         `panel.py`'s module docstring."""
         window = self._build(
             initial_settings=AppSettings(
-                expanded_subsections={"ANALYSIS:Statistics": True, "ANALYSIS:ROI's math": True}
+                expanded_subsections={"DATASET:Experimental plan": True, "DATASET:Summary": True}
             )
         )
         sections = dict(_workflow_panel(window)._subsections)
-        self.assertTrue(sections["ANALYSIS:Statistics"].is_expanded())
-        self.assertTrue(sections["ANALYSIS:ROI's math"].is_expanded())
+        self.assertTrue(sections["DATASET:Experimental plan"].is_expanded())
+        self.assertTrue(sections["DATASET:Summary"].is_expanded())
 
     def test_an_unknown_saved_key_is_ignored_silently(self) -> None:
         """A settings file from a build with different section titles (or
@@ -96,7 +100,7 @@ class WorkflowPanelSubsectionRestoreTests(unittest.TestCase):
         )
         # No crash is the assertion; sanity-check an ordinary section too.
         sections = dict(_workflow_panel(window)._subsections)
-        self.assertTrue(sections["ANALYSIS:ROI's math"].is_expanded())
+        self.assertTrue(sections["DATASET:Summary"].is_expanded())
 
     def test_toggling_a_nested_section_persists_it(self) -> None:
         """The other half of the round trip: collapsing/expanding a nested
@@ -106,22 +110,22 @@ class WorkflowPanelSubsectionRestoreTests(unittest.TestCase):
         saved: list[AppSettings] = []
         window = self._build(on_settings_changed=saved.append)
         sections = dict(_workflow_panel(window)._subsections)
-        sections["ANALYSIS:Statistics"].set_expanded(True)
+        sections["DATASET:Experimental plan"].set_expanded(True)
         _APP.processEvents()
         self.assertTrue(saved)
-        self.assertEqual(saved[-1].expanded_subsections.get("ANALYSIS:Statistics"), True)
+        self.assertEqual(saved[-1].expanded_subsections.get("DATASET:Experimental plan"), True)
 
     def test_toggling_two_nested_sections_accumulates_rather_than_overwriting(self) -> None:
         saved: list[AppSettings] = []
         window = self._build(on_settings_changed=saved.append)
         sections = dict(_workflow_panel(window)._subsections)
-        sections["ANALYSIS:Statistics"].set_expanded(True)
+        sections["DATASET:Experimental plan"].set_expanded(True)
         _APP.processEvents()
-        sections["ANALYSIS:ROI's math"].set_expanded(False)
+        sections["DATASET:Summary"].set_expanded(False)
         _APP.processEvents()
         latest = saved[-1].expanded_subsections
-        self.assertEqual(latest.get("ANALYSIS:Statistics"), True)
-        self.assertEqual(latest.get("ANALYSIS:ROI's math"), False)
+        self.assertEqual(latest.get("DATASET:Experimental plan"), True)
+        self.assertEqual(latest.get("DATASET:Summary"), False)
 
 
 if __name__ == "__main__":
