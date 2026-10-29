@@ -37,7 +37,6 @@ try:
     from lspr_imaging_app.analysis.store import read_all_cells, write_cell
     from lspr_imaging_app.analysis.tasks import CellResult, WavelengthCoverage
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
-    from lspr_imaging_app.image_tools.chromatic.landmark_autotrack import prepare_registration_image
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.image_tools.mask.raster_tools import (
         create_histogram_mask,
@@ -149,17 +148,9 @@ class TestDetectionIgnoresInvalidPixels(unittest.TestCase):
         self.assertTrue(all(np.isfinite([roi.center_x, roi.center_y, roi.score]).all() for roi in rois))
 
 
-class TestRegistrationImageIsNaNAware(unittest.TestCase):
-    def test_nan_corner_is_neutral_everywhere_it_matters(self) -> None:
-        rng = np.random.default_rng(1)
-        image = rng.random((100, 120)).astype(np.float32) * 100.0 + 500.0
-        reference = prepare_registration_image(image)
-        image[:, :30] = np.nan
-        prepared = prepare_registration_image(image)
-        self.assertTrue(np.isfinite(prepared).all())  # NaN did not spread
-        self.assertTrue((prepared[:, :30] == 0.0).all())  # no feature on or next to the invalid region
-        self.assertTrue(np.abs(prepared[:, 40:]).max() > 0.0)
-        self.assertEqual(reference.shape, prepared.shape)
+# The registration feature map's NaN handling was tested here through the earlier landmark tracker
+# (removed 2026-10-29); the live finder's is pinned by test_lspri_rewrite_chromatic_auto.py
+# (test_nan_corners_from_rotation_do_not_break_it).
 
 
 class TestMaskCreationTools(unittest.TestCase):

@@ -23,8 +23,8 @@ The suite launcher also exposes acquisition launch profiles for the singleLSPR a
 - `Simulation`
 - `Control editor`
 
-`LSPRimaging-Acquisition` is reserved as a separate repo for later work and is
-not started yet.
+`LSPRimaging-Acquisition` (`apps/LSPRi/acq`) is a separate repo and an early
+scaffold; its launcher card is disabled until it is usable.
 
 Shared logic lives in the `packages/` tree:
 

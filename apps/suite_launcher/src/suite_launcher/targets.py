@@ -239,7 +239,7 @@ TARGETS = [
     AppTarget(
         key="lspri_eva_rewrite",
         title="LSPRimaging Evaluation (Rewrite Preview)",
-        subtitle="In-progress architecture rewrite - not functional yet",
+        subtitle="Rewrite in development - cannot export results yet",
         address="apps/LSPRi/eva/src/main_rewrite.py",
         root_candidates=_candidate_paths(
             SUITE_ROOT / "apps" / "LSPRi" / "eva",
@@ -251,9 +251,8 @@ TARGETS = [
         # main_rewrite.py only exists on apps/LSPRi/eva's `rewrite` branch -
         # is_available() naturally greys this card out otherwise, no extra
         # branch-detection logic needed.
-        note="Only launches when apps/LSPRi/eva is checked out on the `rewrite` branch. Opens a real window wired to the new module skeleton, but every panel is a placeholder - see that app's app_rewrite.py docstring.",
+        note="Only launches when apps/LSPRi/eva is checked out on a branch that has src/main_rewrite.py (the `rewrite` branch). The rewrite already loads datasets, edits ROIs and masks, scans, and shows Spectra and Sensorgram, but it cannot export results yet, so it does not replace the card above - see apps/LSPRi/eva/docs/old_generation_cutover_plan_2026-10-29.md.",
         github_repo="lednicky-t/LSPRimaging-Evaluation",
         version_file="src/lspr_imaging_app/version_rewrite.py",
-        status_label="Scaffold - not functional",
     ),
 ]

@@ -40,16 +40,17 @@ The maintainer is usage-conscious. Be economical without sacrificing correctness
 
 Python scientific software suite for LSPR (Localized Surface Plasmon Resonance) measurements. Target users: scientists and students, not IT professionals.
 
-Four apps, three as git submodules, one (suite launcher) living directly in this repo:
+Five apps, four as git submodules, one (suite launcher) living directly in this repo:
 
 | App | Path | Package | Entry point |
 |-----|------|---------|-------------|
 | singleLSPR Acquisition | `apps/sLSPR/acq` | `lspr_app` | `lspr-acquisition` |
 | singleLSPR Evaluation | `apps/sLSPR/eva` | `lspr_single_evaluation` | `lspr-single-evaluation` |
 | LSPRimaging Evaluation | `apps/LSPRi/eva` | `lspr_imaging_app` | `lspri-evaluation` |
+| LSPRimaging Acquisition | `apps/LSPRi/acq` | `lspri_acq_app` | `lspri-acquisition` |
 | Suite Launcher | `apps/suite_launcher` | `suite_launcher` | `lspr-suite` |
 
-`LSPRimaging Acquisition` is reserved for future work and does not exist yet.
+`LSPRimaging Acquisition` is an early scaffold (see its own README); its launcher card is disabled. It is built on `lspr-acq-shell`.
 
 ## Shared Packages
 

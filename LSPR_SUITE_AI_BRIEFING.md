@@ -8,6 +8,13 @@ status. Read this before making any recommendations or code changes.
 **Date generated:** 2026-06-29
 **Codebase root:** `C:\Users\Admin\Documents\GitHub\LSPR-Suite`
 
+> **Status note (2026-10-29): this briefing is a snapshot from June 2026 and is not kept current.**
+> The rules are in `CLAUDE.md` (root and per app); where this file disagrees with them, they win.
+> Known to be out of date: section 4 ("LSPRimaging Evaluation App - Full Detail") describes the **old**
+> LSPRi Evaluation app; that app is being replaced by a rewrite (`apps/LSPRi/eva/CLAUDE.md`,
+> `apps/LSPRi/eva/docs/old_generation_cutover_plan_2026-10-29.md`). LSPRimaging Acquisition
+> (`apps/LSPRi/acq`) exists as an early scaffold. Use the rest as scientific and structural background only.
+
 ---
 
 ## 1. Scientific Context
