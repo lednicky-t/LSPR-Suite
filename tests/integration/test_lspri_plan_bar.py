@@ -510,23 +510,43 @@ class PlanBarPanelTest(unittest.TestCase):
     def test_the_evaluation_pickers_list_the_steps_and_write_the_roles(self) -> None:
         self._open_scan_and_draw()
         evaluation = self.panel._steps.evaluation
-        picker = evaluation._baseline
-        self.assertEqual([picker.itemText(i) for i in range(picker.count())], ["B1: not set", "B1: 1 · H2O_--_ch1F", "B1: 2 · 10perEG_-_ch1F"])
+        picker = evaluation._picker(1, "baseline")
+        self.assertEqual([picker.itemText(i) for i in range(picker.count())], ["not set", "1 · H2O_--_ch1F", "2 · 10perEG_-_ch1F"])
         picker.setCurrentIndex(2)
         picker.activated.emit(2)  # the user picked the second step
         self.assertEqual(self.m.experiment_plan.baseline_step().order, 2)
         self.assertEqual([s.roles for s in self._bar().steps()], [(), ("B1",)])  # the chip is on the bar
-        self.assertEqual(evaluation._baseline.currentIndex(), 2)
+        self.assertEqual(picker.currentIndex(), 2)
         self.m.experiment_plan.set_role("baseline", None)  # cleared elsewhere (the menu, an undo): the picker follows without sending anything
-        self.assertEqual(evaluation._baseline.currentIndex(), 0)
+        self.assertEqual(picker.currentIndex(), 0)
         self.assertIsNone(self.m.experiment_plan.baseline_step())
 
     def test_the_evaluation_pickers_follow_a_role_set_in_the_menu_and_an_undo(self) -> None:
         self._open_scan_and_draw()
         self.m.experiment_plan.set_role("signal", 0)
-        self.assertEqual(self.panel._steps.evaluation._signal.currentIndex(), 1)
+        self.assertEqual(self.panel._steps.evaluation._picker(1, "signal").currentIndex(), 1)
         undo_manager.undo()
-        self.assertEqual(self.panel._steps.evaluation._signal.currentIndex(), 0)
+        self.assertEqual(self.panel._steps.evaluation._picker(1, "signal").currentIndex(), 0)
+
+    def test_a_second_pair_picked_in_the_popup_reaches_the_plan_and_the_bar(self) -> None:
+        self._open_scan_and_draw()
+        evaluation = self.panel._steps.evaluation
+        evaluation._add.click()  # B2 + S2
+        self.assertEqual(evaluation.pair_count(), 2)
+        picker = evaluation._picker(2, "signal")
+        picker.setCurrentIndex(1)
+        picker.activated.emit(1)  # the user picked the first step for S2
+        self.assertEqual(self.m.experiment_plan.signal_step(2).order, 1)
+        self.assertIsNone(self.m.experiment_plan.signal_step(1))
+        self.assertEqual([s.roles for s in self._bar().steps()], [("S2",), ()])  # the chip says which pair
+        evaluation._remove.click()  # taking pair 2 away clears its roles in the plan, in one undo step
+        self.assertEqual(evaluation.pair_count(), 1)
+        self.assertIsNone(self.m.experiment_plan.signal_step(2))
+        self.assertEqual([s.roles for s in self._bar().steps()], [(), ()])
+        undo_manager.undo()
+        self.assertEqual(self.m.experiment_plan.signal_step(2).order, 1)
+        self.assertEqual(evaluation.pair_count(), 2)  # a pair that is set in the plan is shown again
+        self.assertEqual(evaluation._picker(2, "signal").currentIndex(), 1)
 
     def test_a_structure_edit_clears_the_selection_redraws_the_bar_and_keeps_roles_on_their_steps(self) -> None:
         self._open_scan_and_draw()

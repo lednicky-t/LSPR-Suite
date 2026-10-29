@@ -267,6 +267,14 @@ class RolesTest(unittest.TestCase):
         empty = PlanEditsState()
         self.assertIs(edits.set_role(empty, 3, "signal", None), empty)  # clearing a role that was never set changes nothing
 
+    def test_clearing_a_pair_empties_both_roles_and_leaves_the_other_pairs(self) -> None:
+        state = edits.set_role(PlanEditsState(), 1, "baseline", M1)
+        state = edits.set_role(state, 2, "baseline", M1)
+        state = edits.set_role(state, 2, "signal", M2)
+        after = edits.clear_pair(state, 2)
+        self.assertEqual(after.pairs, (EvalPair(1, baseline=M1),))
+        self.assertIs(edits.clear_pair(after, 2), after)  # a pair with nothing set: nothing changes
+
     def test_pairs_are_kept_in_order_and_start_at_one(self) -> None:
         state = edits.set_role(PlanEditsState(), 2, "signal", M2)
         state = edits.set_role(state, 1, "baseline", M1)

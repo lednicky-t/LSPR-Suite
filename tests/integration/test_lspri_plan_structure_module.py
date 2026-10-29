@@ -160,6 +160,21 @@ class StructureTest(unittest.TestCase):
         self.assertEqual([s.roles for s in self.module.steps()], [("B1",), ("B2",)])
         self.assertEqual((self.module.baseline_step(1).ref, self.module.baseline_step(2).ref), (M1, M2))
 
+    def test_clearing_a_pair_is_one_undo_step(self) -> None:
+        self.module.set_role("baseline", 0, pair=2)
+        self.module.set_role("signal", 1, pair=2)
+        self.module.set_role("baseline", 0)
+        undo_manager.clear()
+        self.reasons.clear()
+        self.assertTrue(self.module.clear_pair(2))
+        self.assertEqual(self.reasons, ["roles"])
+        self.assertEqual((self.module.baseline_step(2), self.module.signal_step(2)), (None, None))
+        self.assertEqual(self.module.baseline_step(1).ref, M1)  # pair 1 is not touched
+        self.assertFalse(self.module.clear_pair(2))  # nothing left to clear: no undo step
+        undo_manager.undo()  # one undo brings back both roles
+        self.assertEqual((self.module.baseline_step(2).ref, self.module.signal_step(2).ref), (M1, M2))
+        self.assertFalse(undo_manager.can_undo)
+
     def test_removing_a_step_clears_its_role_and_the_notice_says_which(self) -> None:
         self.module.set_role("baseline", 0)
         self.module.set_role("signal", 1)
