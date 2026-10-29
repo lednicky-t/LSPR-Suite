@@ -13,7 +13,7 @@ if str(APP_SRC) not in sys.path:
 
 import numpy as np
 
-from lspr_imaging_app.processing.roi_math import (
+from lspr_imaging_app.analysis.reduction import (
     reduce_mean,
     reduce_median,
     reduce_plane_fit_reference,
@@ -88,12 +88,8 @@ class TestReducePlaneFitReference(unittest.TestCase):
         result = reduce_plane_fit_reference(values, xx, yy, sample_x, sample_y)
         self.assertAlmostEqual(result, expected, places=1)
 
-    def test_falls_back_to_mean_with_too_few_points(self) -> None:
-        values = np.array([1.0, 2.0, 3.0])
-        xx = np.array([0.0, 1.0, 2.0])
-        yy = np.array([0.0, 0.0, 0.0])
-        result = reduce_plane_fit_reference(values, xx, yy, sample_x=5.0, sample_y=5.0)
-        self.assertAlmostEqual(result, reduce_mean(values), places=9)
+    # The old app fell back to the mean with too few points; the rewrite returns NaN there by decision
+    # (no value is invented): pinned by test_lspri_rewrite_nan_handling.py (test_plane_fit_with_too_few_pixels_is_nan).
 
     def test_falls_back_to_mean_with_collinear_points(self) -> None:
         # All points share y=0 (and evenly spaced x) - a plane z=ax+by+c is

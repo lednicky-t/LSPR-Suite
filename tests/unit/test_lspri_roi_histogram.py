@@ -18,7 +18,7 @@ if str(APP_SRC) not in sys.path:
 
 import numpy as np
 
-from lspr_imaging_app.processing.roi_histogram import estimate_roi_intensity_range
+from lspr_imaging_app.panels.histogram.compute import estimate_roi_intensity_range
 
 
 def _synthetic_reference_image_values(

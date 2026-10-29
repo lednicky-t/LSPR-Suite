@@ -14,8 +14,8 @@ if str(APP_SRC) not in sys.path:
 import numpy as np
 from scipy.signal import savgol_filter
 
-from lspr_imaging_app.processing.trace_statistics import (
-    aggregate_group_traces,
+from lspr_imaging_app.analysis.statistics import (
+    aggregate_traces,
     normalize_to_baseline_window,
     reject_spikes_hampel,
     reject_spikes_running_median,
@@ -159,7 +159,7 @@ class TestAggregateGroupTraces(unittest.TestCase):
             2: np.array([3.0, 2.0, 1.0]),
             3: np.array([2.0, 2.0, 2.0]),
         }
-        center, low, high = aggregate_group_traces(traces, center="mean", band="sd")
+        center, low, high = aggregate_traces(traces, center="mean", band="sd")
         np.testing.assert_allclose(center, [2.0, 2.0, 2.0], atol=1e-9)
         expected_sd = np.std([1.0, 3.0, 2.0])
         self.assertAlmostEqual(high[0] - center[0], expected_sd, places=9)
@@ -167,13 +167,13 @@ class TestAggregateGroupTraces(unittest.TestCase):
 
     def test_median_center(self) -> None:
         traces = {1: np.array([1.0]), 2: np.array([100.0]), 3: np.array([2.0])}
-        center, _low, _high = aggregate_group_traces(traces, center="median", band="sd")
+        center, _low, _high = aggregate_traces(traces, center="median", band="sd")
         self.assertAlmostEqual(center[0], 2.0, places=9)
 
     def test_sem_band_is_smaller_than_sd_band(self) -> None:
         traces = {1: np.array([1.0, 1.0]), 2: np.array([5.0, 5.0]), 3: np.array([3.0, 3.0])}
-        _center_sd, low_sd, high_sd = aggregate_group_traces(traces, band="sd")
-        _center_sem, low_sem, high_sem = aggregate_group_traces(traces, band="sem")
+        _center_sd, low_sd, high_sd = aggregate_traces(traces, band="sd")
+        _center_sem, low_sem, high_sem = aggregate_traces(traces, band="sem")
         self.assertLess(high_sem[0] - low_sem[0], high_sd[0] - low_sd[0])
 
     def test_nan_in_one_member_is_excluded_per_time_point(self) -> None:
@@ -181,13 +181,13 @@ class TestAggregateGroupTraces(unittest.TestCase):
             1: np.array([1.0, np.nan, 3.0]),
             2: np.array([3.0, 4.0, 5.0]),
         }
-        center, _low, _high = aggregate_group_traces(traces, center="mean", band="sd")
+        center, _low, _high = aggregate_traces(traces, center="mean", band="sd")
         # time point 1: only member 2 has a value (4.0) -> nanmean drops the NaN.
         self.assertAlmostEqual(center[1], 4.0, places=9)
         self.assertAlmostEqual(center[0], 2.0, places=9)
 
     def test_empty_input_returns_empty_arrays(self) -> None:
-        center, low, high = aggregate_group_traces({})
+        center, low, high = aggregate_traces({})
         self.assertEqual(center.size, 0)
         self.assertEqual(low.size, 0)
         self.assertEqual(high.size, 0)

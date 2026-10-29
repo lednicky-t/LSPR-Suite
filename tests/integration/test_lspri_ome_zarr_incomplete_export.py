@@ -31,7 +31,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord  # noqa: E402
-from lspr_imaging_app.io.dataset import (  # noqa: E402
+from lspr_imaging_app.dataset.io import (  # noqa: E402
     OME_ZARR_LSPR_KEY,
     export_ome_zarr_dataset,
     load_ome_zarr_dataset,

@@ -32,7 +32,7 @@ if str(ACQ_SRC) not in sys.path:
 from lspri_acq_app.domain.models import Frame, SpectralCube  # noqa: E402
 from lspri_acq_app.storage.image_writer import OmeZarrCubeWriter  # noqa: E402
 
-from lspr_imaging_app.io.dataset import load_image_array, load_ome_zarr_dataset  # noqa: E402
+from lspr_imaging_app.dataset.io import load_image_array, load_ome_zarr_dataset  # noqa: E402
 
 
 def _make_cube(cube_index: int, wavelengths_nm: list[float], height: int, width: int) -> SpectralCube:

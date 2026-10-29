@@ -270,8 +270,8 @@ def settings_targets() -> list[SettingsTarget]:
             path=SHARED_CONFIG_DIR / "lspr_evaluation_settings.json",
         ),
         SettingsTarget(
-            "lspri_eva", "LSPRimaging Evaluation", "qsettings",
-            org="LSPR", app="LSPRImaging",
+            "lspri_eva", "LSPRimaging Evaluation", "file",
+            path=SHARED_CONFIG_DIR / "lspri_eva_rewrite_settings.json",
         ),
         SettingsTarget(
             "suite_launcher", "Suite Launcher (this app)", "qsettings",

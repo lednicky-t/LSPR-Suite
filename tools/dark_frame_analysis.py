@@ -5,7 +5,7 @@ images (LED/LCTF off) carry information that matters for absorbance/extinction
 processing, or are they negligible camera noise that a future exclusion
 filter can safely skip?
 
-Reuses the app's own dataset loader (lspr_imaging_app.io.dataset) so this
+Reuses the app's own dataset loader (lspr_imaging_app.dataset.io) so this
 reads exactly what the GUI would read -- same TIFF-vs-OME-Zarr autodetection,
 same float32 cast.
 
@@ -51,7 +51,7 @@ for p in (
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from lspr_imaging_app.io.dataset import DatasetLoadChoice, load_dataset, dataset_load_plane  # noqa: E402
+from lspr_imaging_app.dataset.io import DatasetLoadChoice, load_dataset, dataset_load_plane  # noqa: E402
 
 
 def default_roi(height: int, width: int) -> tuple[int, int, int, int]:

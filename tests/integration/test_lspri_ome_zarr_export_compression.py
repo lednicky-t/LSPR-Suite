@@ -25,9 +25,9 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-import lspr_imaging_app.io.dataset as dataset_module  # noqa: E402
+import lspr_imaging_app.dataset.io as dataset_module  # noqa: E402
 from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord  # noqa: E402
-from lspr_imaging_app.io.dataset import OME_ZARR_ARRAY_DIRNAME, export_ome_zarr_dataset  # noqa: E402
+from lspr_imaging_app.dataset.io import OME_ZARR_ARRAY_DIRNAME, export_ome_zarr_dataset  # noqa: E402
 
 SIZE = 64
 CHUNK = 32  # 1024 pixels per chunk: a multiple of 8, as bit-shuffle needs

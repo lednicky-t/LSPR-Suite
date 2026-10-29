@@ -1,6 +1,6 @@
 """Regression test for mirroring `ImagingAcquisitionMetadata` into an OME-Zarr
 export's `.zattrs` (export_ome_zarr_dataset / load_ome_zarr_dataset,
-apps/LSPRi/eva/src/lspr_imaging_app/io/dataset.py).
+apps/LSPRi/eva/src/lspr_imaging_app/dataset/io.py).
 
 Before this, an exported dataset carried only the `lspr` attrs group
 (chunking/compression/dtype/image-tools) - the camera/illumination settings,
@@ -36,9 +36,9 @@ from lspr_core import (  # noqa: E402
     WavelengthIlluminationSettings,
 )
 
-import lspr_imaging_app.io.dataset as dataset_module  # noqa: E402
+import lspr_imaging_app.dataset.io as dataset_module  # noqa: E402
 from lspr_imaging_app.domain.models import ImageDataset, ImageKey, ImageRecord  # noqa: E402
-from lspr_imaging_app.io.dataset import export_ome_zarr_dataset, load_ome_zarr_dataset  # noqa: E402
+from lspr_imaging_app.dataset.io import export_ome_zarr_dataset, load_ome_zarr_dataset  # noqa: E402
 
 IMAGE_SIZE = 16
 SPECTRAL_CUBE_COUNT = 2

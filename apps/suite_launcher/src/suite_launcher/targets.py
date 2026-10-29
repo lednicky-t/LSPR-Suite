@@ -232,27 +232,8 @@ TARGETS = [
             *_venv_python(SUITE_ROOT / "apps" / "LSPRi" / "eva"),
             *_venv_python(LSPRIMAGING_ROOT),
         ),
-        note="Implemented in this workspace. Set LSPR_LEGACY_IMAGING_ROOT to point at a legacy workspace if needed.",
+        note="Datasets, ROIs, masks, scans, Spectra and Sensorgram. Results export is not built yet. Set LSPR_LEGACY_IMAGING_ROOT to run another checkout.",
         github_repo="lednicky-t/LSPRimaging-Evaluation",
         version_file="src/lspr_imaging_app/version.py",
-    ),
-    AppTarget(
-        key="lspri_eva_rewrite",
-        title="LSPRimaging Evaluation (Rewrite Preview)",
-        subtitle="Rewrite in development - cannot export results yet",
-        address="apps/LSPRi/eva/src/main_rewrite.py",
-        root_candidates=_candidate_paths(
-            SUITE_ROOT / "apps" / "LSPRi" / "eva",
-        ),
-        script="src/main_rewrite.py",
-        python_candidates=_candidate_paths(
-            *_venv_python(SUITE_ROOT / "apps" / "LSPRi" / "eva"),
-        ),
-        # main_rewrite.py only exists on apps/LSPRi/eva's `rewrite` branch -
-        # is_available() naturally greys this card out otherwise, no extra
-        # branch-detection logic needed.
-        note="Only launches when apps/LSPRi/eva is checked out on a branch that has src/main_rewrite.py (the `rewrite` branch). The rewrite already loads datasets, edits ROIs and masks, scans, and shows Spectra and Sensorgram, but it cannot export results yet, so it does not replace the card above - see apps/LSPRi/eva/docs/old_generation_cutover_plan_2026-10-29.md.",
-        github_repo="lednicky-t/LSPRimaging-Evaluation",
-        version_file="src/lspr_imaging_app/version_rewrite.py",
     ),
 ]

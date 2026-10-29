@@ -16,7 +16,7 @@ if str(APP_SRC) not in sys.path:
 import numpy as np
 
 from lspr_imaging_app.domain.models import PreprocessingSettings, AreaRoiDetectionSettings
-from lspr_imaging_app.processing.chromatic import apply_mask_wavelength_diff
+from lspr_imaging_app.image_tools.chromatic.warp import apply_mask_wavelength_diff
 from lspr_imaging_app.storage.workspace import (
     _decode_mask_wavelength_diffs,
     _encode_mask_wavelength_diffs,
