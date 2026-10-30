@@ -2,7 +2,12 @@
 number as the per-cube reference (`query.fit_and_metric`, one spectrum at a time), for every setting, with gaps handled alike. No Qt, no files.
 
 Tolerance: the batch keeps the polynomial in the scaled variable, the reference converts it to powers of the wavelength in nm, so they differ by
-rounding error only (measured on the real scan, orders 2-6: <= 2.4e-7 nm; here the bound is 1e-6 nm)."""
+rounding error only (measured on the real scan, orders 2-6: <= 2.4e-7 nm). On this test's synthetic band (26 wavelengths, noise) the rounding
+grows about tenfold per polynomial order: 4e-12 nm at order 1, 1e-9 at order 3, 1e-8 at order 4, and for the centroid at order 6 on the window
+from 560 nm 9.9e-7 nm on the dev laptop (Python 3.14) and 1.55e-6 nm on the CI runner (Python 3.12, other CPU). A real difference is far larger
+(2026-10-30, same data: fit window moved by one point 6.7 nm, order 5 instead of 6 0.18 nm, 'maximum' instead of 'centroid' 26 nm), so the
+bound is 1e-5 nm: 6x above the worst rounding seen, 18000x below the smallest real difference. Until 2026-10-30 it was 1e-6 nm, which
+the laptop already used 98.5 % of and the CI runner exceeded (red on CI)."""
 
 from __future__ import annotations
 
@@ -29,7 +34,7 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 import numpy as np  # noqa: E402
 
 WL = np.linspace(470.0, 720.0, 26)
-TOLERANCE_NM = 1.0e-6
+TOLERANCE_NM = 1.0e-5  # see the docstring: rounding <= 1.6e-6 nm seen, the smallest real difference 0.18 nm
 
 
 def make_input(n_cube: int = 20, seed: int = 1, *, unscanned=(), holes=None, shuffle=False) -> TraceInput:
