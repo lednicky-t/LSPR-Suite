@@ -6,8 +6,13 @@ on:
 
 jobs:
   unittest:
+    name: unittest (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
     runs-on: windows-latest
-    timeout-minutes: 120  # a guess for the first runs: 38 min here with 6 files at a time; tighten once a CI run has been measured
+    timeout-minutes: 60  # measured 2026-10-30: the whole suite took 17.5 min of tests on one runner; a shard is about a third of that
+    strategy:
+      fail-fast: false  # a red shard must not hide what the other shards found
+      matrix:
+        shard: [1, 2, 3]  # the test files are split between these; each shard is a runner of its own (free on a public repo)
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -23,5 +28,6 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
       # One process per test file (see the docstring of tools/run_tests_per_file.py): a single process for all files took 3 to 5 hours.
+      # This shard's share of the files; tests/unit/test_run_tests_per_file.py checks that the shards together are every file once.
       - name: Run unit tests
-        run: python tools/run_tests_per_file.py
+        run: python tools/run_tests_per_file.py --shard ${{ matrix.shard }}/${{ strategy.job-total }}

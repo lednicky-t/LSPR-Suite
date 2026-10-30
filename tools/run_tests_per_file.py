@@ -75,6 +75,30 @@ def find_test_files(pattern: str) -> list[Path]:
     return sorted(files, key=lambda path: (-path.stat().st_size, path.as_posix()))
 
 
+def parse_shard(text: str) -> tuple[int, int]:
+    """'2/3' -> (2, 3): shard 2 of 3 (1-based)."""
+    match = re.fullmatch(r"(\d+)/(\d+)", text.strip())
+    if match is None or not 1 <= int(match.group(1)) <= int(match.group(2)):
+        raise argparse.ArgumentTypeError(f"{text!r} is not K/N with 1 <= K <= N (for example 2/3)")
+    return int(match.group(1)), int(match.group(2))
+
+
+def pick_shard(files: list[Path], index: int, count: int) -> list[Path]:
+    """The files that shard *index* of *count* runs (CI starts one job per shard, each on its own machine).
+
+    Every job makes the same call on the same file list, so every file lands in exactly one shard. *files* must come in
+    `find_test_files` order (biggest first): each file goes to the shard with the least file size so far. File size is only a stand-in
+    for run time, but it divided the real times of 2026-10-30 well enough (3 shards: the worst one 15 % above an ideal split)."""
+    loads = [0] * count
+    mine = []
+    for path in files:
+        target = loads.index(min(loads))
+        loads[target] += path.stat().st_size
+        if target == index - 1:
+            mine.append(path)
+    return mine
+
+
 def core_slices(jobs: int, cores: int) -> list[list[int]]:
     """One group of cores per parallel job, side by side and not shared (jobs > cores: cores are reused)."""
     size = max(1, cores // jobs)
@@ -179,15 +203,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pattern", default="test_*.py", help="file name pattern under tests/ (default: %(default)s)")
     parser.add_argument("--jobs", type=int, default=max(1, cpus - 1), help="files at a time (default: every core but one = %(default)s)")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds one file may take (default: %(default)s)")
+    parser.add_argument("--shard", type=parse_shard, default=None, metavar="K/N", help="run only shard K of N (CI: one job per shard); the shards together are every file once")
     parser.add_argument("--pin", action="store_true", help="give every parallel file its own cores (needs psutil); keeps the files from slowing each other down")
     parser.add_argument("--no-retry", action="store_true", help="do not run a failed file again on its own (see the end of this file's docstring)")
     parser.add_argument("--list", action="store_true", help="print the files that would run and stop")
     args = parser.parse_args(argv)
 
     for stream in (sys.stdout, sys.stderr):
-        stream.reconfigure(encoding="utf-8", errors="replace")  # test output may hold characters the Windows console cannot show
+        if hasattr(stream, "reconfigure"):  # a stream captured by a test has none
+            stream.reconfigure(encoding="utf-8", errors="replace")  # test output may hold characters the Windows console cannot show
 
     files = find_test_files(args.pattern)
+    shard_note = ""
+    if args.shard is not None:
+        files = pick_shard(files, *args.shard)
+        shard_note = f"shard {args.shard[0]} of {args.shard[1]}: "
     if args.list:
         print("\n".join(path.relative_to(REPO_ROOT).as_posix() for path in files))
         return 0
@@ -205,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
             for cores in core_slices(args.jobs, cpus):
                 free_slices.put(cores)
             pinning = f"each file pinned to its own {max(1, cpus // args.jobs)} core(s)"
-    print(f"{len(files)} test files, {args.jobs} at a time ({cpus} cores, {pinning}), {args.timeout:.0f} s limit per file, Python {sys.version.split()[0]}", flush=True)
+    print(f"{shard_note}{len(files)} test files, {args.jobs} at a time ({cpus} cores, {pinning}), {args.timeout:.0f} s limit per file, Python {sys.version.split()[0]}", flush=True)
     started = time.perf_counter()
     results: list[FileResult] = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
