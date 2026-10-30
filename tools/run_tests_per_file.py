@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -32,6 +33,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+
+try:  # a dependency of lspr-core and the LSPRi app; without it --pin is unavailable and a timed-out file's children are not killed
+    import psutil
+except ImportError:  # pragma: no cover
+    psutil = None
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = REPO_ROOT / "tests"
@@ -69,30 +75,67 @@ def find_test_files(pattern: str) -> list[Path]:
     return sorted(files, key=lambda path: (-path.stat().st_size, path.as_posix()))
 
 
-def run_one(path: Path, timeout_s: float) -> FileResult:
+def core_slices(jobs: int, cores: int) -> list[list[int]]:
+    """One group of cores per parallel job, side by side and not shared (jobs > cores: cores are reused)."""
+    size = max(1, cores // jobs)
+    return [list(range(i * size, (i + 1) * size)) if (i + 1) * size <= cores else [i % cores] for i in range(jobs)]
+
+
+def kill_tree(process: subprocess.Popen) -> None:
+    """End a test process and everything it started (pool workers keep the output pipe open, which would block the reader)."""
+    if psutil is not None:
+        try:
+            for child in psutil.Process(process.pid).children(recursive=True):
+                child.kill()
+        except psutil.Error:
+            pass
+    process.kill()
+
+
+def run_one(path: Path, timeout_s: float, cores: list[int] | None = None) -> FileResult:
+    """Run one file in a process of its own. *cores* pins that process (and, because children inherit it, the workers it starts)
+    to those cores; the app's own worker count (`lspr_core.perf`) then counts only these cores too."""
     command = [sys.executable, "-X", "faulthandler", "-m", "unittest", path.relative_to(REPO_ROOT).as_posix()]
     environment = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
     start = time.perf_counter()
+    process = subprocess.Popen(
+        command, cwd=REPO_ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace"
+    )
+    if cores and psutil is not None:
+        try:
+            psutil.Process(process.pid).cpu_affinity(cores)
+        except (psutil.Error, OSError, AttributeError):
+            pass  # not every platform lets a process be pinned: the file then simply runs unpinned
     try:
-        done = subprocess.run(
-            command, cwd=REPO_ROOT, env=environment, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s
-        )
-    except subprocess.TimeoutExpired as expired:
-        partial = as_text(expired.stdout) + as_text(expired.stderr)
-        return FileResult(path, "TIMEOUT", time.perf_counter() - start, 0, 0, f"no result after {timeout_s:.0f} s\n{partial}")
+        output, _ = process.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        kill_tree(process)
+        try:
+            partial, _ = process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            partial = ""
+        return FileResult(path, "TIMEOUT", time.perf_counter() - start, 0, 0, f"no result after {timeout_s:.0f} s\n{as_text(partial)}")
     seconds = time.perf_counter() - start
-    output = (done.stdout or "") + (done.stderr or "")
     ran = _RAN.search(output)
     tests = int(ran.group(1)) if ran else 0
     skipped_match = _SKIPPED.search(output.rsplit("Ran ", 1)[-1]) if ran else None
     skipped = int(skipped_match.group(1)) if skipped_match else 0
-    if done.returncode == 0:
+    if process.returncode == 0:
         status = "ok"
-    elif done.returncode == 5 or (ran and tests == 0):
+    elif process.returncode == 5 or (ran and tests == 0):
         status = "NO TESTS"
     else:
         status = "FAIL"
     return FileResult(path, status, seconds, tests, skipped, output)
+
+
+def run_on_free_slice(path: Path, timeout_s: float, free_slices: queue.Queue) -> FileResult:
+    """Take a group of cores nobody is using, run the file pinned to it, hand the cores back."""
+    cores = free_slices.get()
+    try:
+        return run_one(path, timeout_s, cores)
+    finally:
+        free_slices.put(cores)
 
 
 def retry_alone(results: list[FileResult], timeout_s: float) -> list[FileResult]:
@@ -136,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pattern", default="test_*.py", help="file name pattern under tests/ (default: %(default)s)")
     parser.add_argument("--jobs", type=int, default=max(1, cpus - 1), help="files at a time (default: every core but one = %(default)s)")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds one file may take (default: %(default)s)")
+    parser.add_argument("--pin", action="store_true", help="give every parallel file its own cores (needs psutil); keeps the files from slowing each other down")
     parser.add_argument("--no-retry", action="store_true", help="do not run a failed file again on its own (see the end of this file's docstring)")
     parser.add_argument("--list", action="store_true", help="print the files that would run and stop")
     args = parser.parse_args(argv)
@@ -151,11 +195,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No test file matches {args.pattern!r} under {TESTS_DIR}.", file=sys.stderr)
         return 1
 
-    print(f"{len(files)} test files, {args.jobs} at a time ({cpus} cores), {args.timeout:.0f} s limit per file, Python {sys.version.split()[0]}", flush=True)
+    free_slices: queue.Queue | None = None
+    pinning = "files share all cores"
+    if args.pin:
+        if psutil is None:
+            print("--pin needs psutil, which is not installed: the files will share all cores.", file=sys.stderr)
+        else:
+            free_slices = queue.Queue()
+            for cores in core_slices(args.jobs, cpus):
+                free_slices.put(cores)
+            pinning = f"each file pinned to its own {max(1, cpus // args.jobs)} core(s)"
+    print(f"{len(files)} test files, {args.jobs} at a time ({cpus} cores, {pinning}), {args.timeout:.0f} s limit per file, Python {sys.version.split()[0]}", flush=True)
     started = time.perf_counter()
     results: list[FileResult] = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = [pool.submit(run_one, path, args.timeout) for path in files]
+        if free_slices is None:
+            futures = [pool.submit(run_one, path, args.timeout) for path in files]
+        else:
+            futures = [pool.submit(run_on_free_slice, path, args.timeout, free_slices) for path in files]
         for future in as_completed(futures):
             result = future.result()
             results.append(result)
