@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = REPO_ROOT / "tests"
-DEFAULT_TIMEOUT_S = 1800
+DEFAULT_TIMEOUT_S = 600  # the slowest file takes about 3.5 min (2026-10-30); a hung one (the live worker test, under load) should not stall a run for longer
 MAX_FAILURE_LINES = 150  # per failing file: enough for the tracebacks, never the whole log
 MAX_FIRST_FAILURE_LINES = 40  # for a file that passed on retry: just enough to see what went wrong the first time
 

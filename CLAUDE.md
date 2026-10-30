@@ -77,7 +77,7 @@ Every PyPI dependency in a `pyproject.toml` needs a floor and a ceiling. Interna
 
 `tests/unit/` (pure logic, no Qt, no files) and `tests/integration/` (Qt, HDF5, device mock, workflow). All pass without hardware; simulated instruments replace it. Use tolerances for floating-point assertions.
 
-Run everything with `python tools/run_tests_per_file.py` (one process per test file, several at a time; `--pattern "test_*lspri*.py"` narrows it). CI runs exactly that: a single process for all files took 3 to 5 hours because test windows pile up (`docs/test_platform_and_ci_failures_2026-10-18.md`, last section).
+Run everything with `python tools/run_tests_per_file.py` (one process per test file, several at a time; `--pattern "test_*lspri*.py"` narrows it). CI runs that, split over 3 runners (`--shard K/N`). A single process for all files took 3 to 5 hours because test windows piled up; `tests/__init__.py` now destroys the main windows a test created once it is over (`tests/_qt_cleanup.py`). Details: `docs/test_platform_and_ci_failures_2026-10-18.md`, last sections.
 
 ## Code-Quality Tools (advisory)
 
