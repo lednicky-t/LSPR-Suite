@@ -585,6 +585,9 @@ class SessionAutosaveDatasetWiringTest(unittest.TestCase):
         self.dataset.load_dataset(self.dataset_model)
         path = self._active_session_path()
         self.dataset.clear_dataset()
+        # Clearing hands the session's pending state to the background writer. If that write lands after the corrupt file below it
+        # replaces it with a valid session, the load succeeds, and nothing is logged (seen on CI, 2026-10-30: three runs in a row).
+        self.autosave.wait_until_written()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"schema_name": "something_else"}), encoding="utf-8")
         original = path.read_text(encoding="utf-8")
