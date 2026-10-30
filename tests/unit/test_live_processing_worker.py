@@ -24,6 +24,28 @@ from lspr_app.device.simulated import SimulationParameters
 from lspr_app.gui.workers import AcquisitionRequest, AcquisitionResult, LiveAcquisitionEvent, LiveAcquisitionWorker, LiveProcessingWorker
 
 
+# How long a test waits for a spawned child process to start and answer. The child imports the worker module first: about 2 s on an idle
+# machine, 20 s or more with every core busy (several test files at once). A wait ends the moment the answer arrives, so a long limit costs
+# nothing when the machine is fast. It was 5 s (8 s in one test), which failed whenever the run was loaded (2026-10-30).
+CHILD_TIMEOUT_S = 60.0
+
+
+def _queue(test: unittest.TestCase, ctx, maxsize: int):
+    """A multiprocessing queue that can never keep the test process from ending.
+
+    `put()` only hands the item to a feeder thread, which writes it into an OS pipe. If the child never read it (it was terminated, or had not
+    started yet) and the pipe is full, that thread blocks, and at interpreter exit the process waits for it for ever. This is what hung a
+    loaded run for 30 minutes (2026-10-30). `cancel_join_thread()` tells the process not to wait for unread items."""
+    q = ctx.Queue(maxsize=maxsize)
+    test.addCleanup(_discard_queue, q)
+    return q
+
+
+def _discard_queue(q) -> None:
+    q.cancel_join_thread()
+    q.close()
+
+
 def _build_test_spectrum() -> Spectrum:
     wavelengths = np.linspace(500.0, 700.0, 1001, dtype=np.float64)
     values = np.exp(-0.5 * ((wavelengths - 610.0) / 8.0) ** 2)
@@ -40,15 +62,15 @@ class LiveProcessingWorkerProcessTest(unittest.TestCase):
     def test_live_processing_worker_processes_one_event(self) -> None:
         ctx = mp.get_context("spawn")
         stop_event = ctx.Event()
-        result_queue = ctx.Queue(maxsize=4)
-        input_queue = ctx.Queue(maxsize=4)
+        result_queue = _queue(self, ctx, 4)
+        input_queue = _queue(self, ctx, 4)
         worker = LiveProcessingWorker(
             result_queue,
             input_queue,
             stop_event,
             ProcessingSettings(),
             debug_mode_enabled=False,
-            log_queue=ctx.Queue(maxsize=8),
+            log_queue=_queue(self, ctx, 8),
         )
 
         worker.start()
@@ -67,7 +89,7 @@ class LiveProcessingWorkerProcessTest(unittest.TestCase):
         )
 
         try:
-            event = result_queue.get(timeout=5.0)
+            event = result_queue.get(timeout=CHILD_TIMEOUT_S)
         finally:
             stop_event.set()
             worker.join(timeout=5.0)
@@ -84,9 +106,9 @@ class LiveProcessingWorkerProcessTest(unittest.TestCase):
     def test_live_processing_worker_relays_child_logs(self) -> None:
         ctx = mp.get_context("spawn")
         stop_event = ctx.Event()
-        result_queue = ctx.Queue(maxsize=4)
-        input_queue = ctx.Queue(maxsize=4)
-        log_queue = ctx.Queue(maxsize=8)
+        result_queue = _queue(self, ctx, 4)
+        input_queue = _queue(self, ctx, 4)
+        log_queue = _queue(self, ctx, 8)
         previous = os.environ.get("LSPR_PROCESSING_SLOW_LOG_MS")
         os.environ["LSPR_PROCESSING_SLOW_LOG_MS"] = "0"
         worker = LiveProcessingWorker(
@@ -114,7 +136,7 @@ class LiveProcessingWorkerProcessTest(unittest.TestCase):
         )
 
         try:
-            _ = result_queue.get(timeout=5.0)
+            _ = result_queue.get(timeout=CHILD_TIMEOUT_S)
             records: list[tuple[int, str, str]] = []
             while True:
                 try:
@@ -139,10 +161,10 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
     def test_live_acquisition_worker_processes_one_event(self) -> None:
         ctx = mp.get_context("spawn")
         stop_event = ctx.Event()
-        result_queue = ctx.Queue(maxsize=4)
-        processing_queue = ctx.Queue(maxsize=4)
-        recording_queue = ctx.Queue(maxsize=4)
-        log_queue = ctx.Queue(maxsize=8)
+        result_queue = _queue(self, ctx, 4)
+        processing_queue = _queue(self, ctx, 4)
+        recording_queue = _queue(self, ctx, 4)
+        log_queue = _queue(self, ctx, 8)
         worker = LiveAcquisitionWorker(
             AcquisitionRequest(
                 kind="sample",
@@ -169,9 +191,9 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
             # an async feeder thread. Stopping/terminating the process before
             # all three have been read can lose whichever puts hadn't finished
             # flushing yet, so read everything first and only then tear down.
-            event = result_queue.get(timeout=5.0)
-            processing_event = processing_queue.get(timeout=5.0)
-            recording_event = recording_queue.get(timeout=5.0)
+            event = result_queue.get(timeout=CHILD_TIMEOUT_S)
+            processing_event = processing_queue.get(timeout=CHILD_TIMEOUT_S)
+            recording_event = recording_queue.get(timeout=CHILD_TIMEOUT_S)
         finally:
             stop_event.set()
             worker.join(timeout=5.0)
@@ -191,10 +213,10 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
     def test_live_acquisition_worker_relays_child_logs(self) -> None:
         ctx = mp.get_context("spawn")
         stop_event = ctx.Event()
-        result_queue = ctx.Queue(maxsize=4)
-        processing_queue = ctx.Queue(maxsize=4)
-        recording_queue = ctx.Queue(maxsize=4)
-        log_queue = ctx.Queue(maxsize=8)
+        result_queue = _queue(self, ctx, 4)
+        processing_queue = _queue(self, ctx, 4)
+        recording_queue = _queue(self, ctx, 4)
+        log_queue = _queue(self, ctx, 8)
         worker = LiveAcquisitionWorker(
             AcquisitionRequest(
                 kind="sample",
@@ -215,7 +237,7 @@ class LiveAcquisitionWorkerProcessTest(unittest.TestCase):
         worker.start()
 
         try:
-            _ = result_queue.get(timeout=5.0)
+            _ = result_queue.get(timeout=CHILD_TIMEOUT_S)
         finally:
             stop_event.set()
             worker.join(timeout=5.0)
@@ -243,15 +265,15 @@ class LiveProcessingWorkerDrainTest(unittest.TestCase):
         collect all results."""
         ctx = mp.get_context("spawn")
         stop_event = ctx.Event()
-        result_queue = ctx.Queue(maxsize=n_frames + 4)
-        input_queue = ctx.Queue(maxsize=n_frames + 4)
+        result_queue = _queue(self, ctx, n_frames + 4)
+        input_queue = _queue(self, ctx, n_frames + 4)
         worker = LiveProcessingWorker(
             result_queue,
             input_queue,
             stop_event,
             ProcessingSettings(),
             debug_mode_enabled=False,
-            log_queue=ctx.Queue(maxsize=8),
+            log_queue=_queue(self, ctx, 8),
         )
 
         spectrum = _build_test_spectrum()
@@ -272,7 +294,7 @@ class LiveProcessingWorkerDrainTest(unittest.TestCase):
 
         worker.start()
         results = []
-        deadline = perf_counter() + 8.0
+        deadline = perf_counter() + CHILD_TIMEOUT_S
         try:
             # Collect at most n_frames results (may be fewer due to drain-skip).
             # Keep polling until the deadline — don't break on Empty, because
@@ -315,15 +337,15 @@ class LiveProcessingWorkerDrainTest(unittest.TestCase):
         # to how fast the child process happens to spawn.
         ctx = mp.get_context("spawn")
         stop_event = ctx.Event()
-        result_queue = ctx.Queue(maxsize=64)
-        input_queue = ctx.Queue(maxsize=64)
+        result_queue = _queue(self, ctx, 64)
+        input_queue = _queue(self, ctx, 64)
         worker = LiveProcessingWorker(
             result_queue,
             input_queue,
             stop_event,
             ProcessingSettings(),
             debug_mode_enabled=False,
-            log_queue=ctx.Queue(maxsize=8),
+            log_queue=_queue(self, ctx, 8),
         )
         worker.start()
 
@@ -331,6 +353,17 @@ class LiveProcessingWorkerDrainTest(unittest.TestCase):
         results = []
         frames_sent = 0
         try:
+            # Confirm the worker is running before the feed window starts: one frame in, its result out. Without this the 3 s window can
+            # pass while the child is still importing (loaded machine), and nothing was ever processed.
+            input_queue.put(
+                LiveAcquisitionEvent(
+                    result=AcquisitionResult(spectrum=spectrum, elapsed_ms=1.0, settings=AcquisitionSettings(), source_epoch=1),
+                    source_epoch=1,
+                    source_sample_index=-1,
+                    produced_at_perf=perf_counter(),
+                )
+            )
+            result_queue.get(timeout=CHILD_TIMEOUT_S)
             feed_deadline = perf_counter() + 3.0
             while perf_counter() < feed_deadline:
                 try:
