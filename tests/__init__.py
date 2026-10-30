@@ -6,8 +6,15 @@ another. The thresholds in those tests were measured headless, so that is where 
 
 `setdefault`: to look at the tests on a real display, set `QT_QPA_PLATFORM=windows` before running them.
 Headless Qt on Windows has no system fonts; a test that measures text calls `tests/_qt_fonts.py` `load_system_fonts()`.
+
+It also makes every test clean up after itself: the windows a test created are destroyed when it is over (`tests/_qt_cleanup.py`).
+Without that the windows of all earlier tests stay alive and every new one builds slower than the last.
 """
 
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from tests._qt_cleanup import install as _install_window_cleanup  # noqa: E402
+
+_install_window_cleanup()
