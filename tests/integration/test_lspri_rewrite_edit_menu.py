@@ -12,9 +12,9 @@ from __future__ import annotations
 import sys
 import unittest
 
-from PyQt6 import QtWidgets
+from PyQt6 import QtWidgets, sip
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QCoreApplication, QEvent, Qt
 from PyQt6.QtWidgets import QMainWindow, QMenu
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -62,7 +62,25 @@ class EditMenuTest(unittest.TestCase):
         self.counter = _Counter()
 
     def tearDown(self) -> None:
-        self.window.deleteLater()
+        if not sip.isdeleted(self.window):  # one test destroys it itself
+            self.window.deleteLater()
+
+    def test_a_destroyed_window_leaves_no_listener_on_the_undo_manager(self) -> None:
+        """The Undo / Redo refresh is a closure connected to the shared manager. Left connected after its window was destroyed, every later
+        change raised "wrapped C/C++ object of type QAction has been deleted": one such listener per window ever built (found 2026-10-30)."""
+        self.assertEqual(self.manager.receivers(self.manager.changed), 1)
+        raised: list[BaseException] = []
+        previous_hook = sys.excepthook
+        sys.excepthook = lambda kind, value, tb: raised.append(value)  # PyQt reports an exception in a slot here
+        try:
+            self.window.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # no event loop runs in a test: deliver the delete
+            self.assertTrue(sip.isdeleted(self.window))
+            self.assertEqual(self.manager.receivers(self.manager.changed), 0)
+            self.counter.push(self.manager, "After the window")  # emits `changed`
+        finally:
+            sys.excepthook = previous_hook
+        self.assertEqual(raised, [])
 
     def test_both_start_disabled_with_plain_labels(self) -> None:
         self.assertFalse(self.undo.isEnabled() or self.redo.isEnabled())
