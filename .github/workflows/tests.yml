@@ -7,6 +7,7 @@ on:
 jobs:
   unittest:
     runs-on: windows-latest
+    timeout-minutes: 120  # a guess for the first runs: 38 min here with 6 files at a time; tighten once a CI run has been measured
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -21,5 +22,6 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
+      # One process per test file (see the docstring of tools/run_tests_per_file.py): a single process for all files took 3 to 5 hours.
       - name: Run unit tests
-        run: python -m unittest discover -s tests -v
+        run: python tools/run_tests_per_file.py

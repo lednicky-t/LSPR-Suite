@@ -51,8 +51,11 @@ the default stays the generic stand-in ("Sans Serif"), so set the font on the wi
 ## Running the suite fast
 
 One process per file, 6 at a time, took 9.4 minutes for all 287 files (the single-process run takes over an hour).
-The script used lived in the session scratchpad (about 30 lines: `subprocess.run([python, "-m", "pytest", file, "-q"])` in a thread pool).
-It does not replace the CI run: it cannot see order dependencies between files.
+Since 2026-10-30 the script is in the repo: `tools/run_tests_per_file.py` (`python -m unittest` per file, no pytest; `--pattern`, `--jobs`, `--timeout`, `--list`), and CI runs it (`.github/workflows/tests.yml`).
+It cannot see order dependencies between files, by design: a test that needs a font or the app theme sets it up itself.
+
+First full run with it (2026-10-30, dev laptop, 8 cores, 6 files at a time, Python 3.14.5): 4602 tests in 295 files, 38.2 min wall time (227 min of work, 40 of them two files that hit a 20-minute limit). The earlier "9.4 minutes" no longer holds: the GUI files are slow even on their own (`workflow_dock_resizable` 14 min, `visual_settings_restore` 10 min, `rewrite_preferences` 7.5 min for 26 tests) because windows pile up inside a file too.
+Four files failed or timed out with six running at once and passed with fewer at a time: `lspri_analysis_warm_pool` (waits for 2 warm workers), `live_processing_worker` (gives a child process 5 s to start and answer; importing `lspr_app.gui.workers` alone takes about 2 s), `lspri_rewrite_histogram_panel` (reads a value a worker thread had not delivered yet), `lspri_rewrite_preferences` (reached the limit under load, 7.5 min alone). `live_processing_worker` even failed with three other files running. So the runner runs a file that failed or timed out once more on its own, and lists such a file under "passed alone" with its first failure instead of failing the run. Worth making those tests wait on an event instead of a fixed time.
 
 ## What CI itself still showed (read with `gh run view <id> --log-failed`, runs 96f88fe and 7dabc14)
 
@@ -67,3 +70,16 @@ CI (Python 3.12, windows-latest, headless since the pin, one process, 3610 tests
 Not a bug, accepted by the maintainer as cosmetic (2026-10-18): with the overlay cache on, group label text looks lighter (about 23 % less ink)
 and about a pixel off. Recorded in `overlay_cache.py`'s docstring and bounded by the new test. The way out, if it ever matters: draw the group
 labels outside the cached layer (they then repaint every frame).
+
+## CI check 2026-10-30 (runs 9644c04, 79aa22e; the 7db92bd run was still going)
+
+The `tests` workflow is not hung, it is slow: 79aa22e ran all 4697 tests in 10,531 s (2 h 55 min); 9644c04 took 18,575 s (5 h 10 min), 56e2c4c 7,739 s. On 2026-10-18 it was 3610 tests in 32 to 49 min, so 30 % more tests cost 4 to 6 times the time.
+
+- **Where the time goes** (gap between consecutive result lines, summed per file): 140 of 175 minutes are 8 GUI files (`workflow_dock_resizable` 47 min, `view_menu` 28, `workflow_panel_subsection_restore` 19, `rewrite_preferences` 16, `rewrite_visual_settings_restore` 15, `workflow_panel_stage_restore` 9, ...). Single tests: 1,848 s and 1,294 s. Locally these take seconds. Inside `view_menu` the tests took 99 s, 99 s, 192 s, then 1,294 s: each window build is slower than the one before.
+- **Cause (measured locally, mechanism not pinned down):** a test's `tearDown` calls `window.deleteLater()`, but no event loop runs afterwards, so the window is not destroyed. 15 `build_main_window()` calls in one process (probe script, scratchpad): build time 3.4, 7.6, 14, 24, 31, 57, 49, 37 s; live top-level widgets +121 per window; `undo_manager.changed` gains one listener per window. Suspect: every build re-polishes (theme / stylesheet) all windows still alive, so the cost grows with the number of earlier windows. A run of one process per file never gets there.
+- **Leaked undo listener (a real small bug, tests only see it):** `_wire_edit_menu` connects a closure `refresh` to the global `undo_manager.changed` and never disconnects it. Once the window's C++ object is gone, every later `changed` raises `RuntimeError: wrapped C/C++ object of type QAction has been deleted`: 57,535 tracebacks in the 79aa22e log (a quarter of its 236k lines).
+- **The three tests that failed in all three runs:**
+  - `RewriteImagePanelTest.test_the_top_ribbon_takes_all_the_room_the_bar_has_and_scrolls_only_when_the_panel_is_really_too_narrow`: `is_overflowing()` False at 700 px. The font / theme state left by earlier files (the leak described above, line 49).
+  - `SessionAutosaveDatasetWiringTest.test_an_unreadable_session_disables_saving_rather_than_overwriting_it`: `assertLogs` saw no ERROR from `session_load_task`. Cause not found; nothing in the repo disables logging.
+  - `BatchEqualsPerCubeTests.test_every_polynomial_setting_gives_the_reference_numbers` (centroid, order 6, window 560 nm): batch and per-cube differ by 1.5e-6 nm (2.6e-9 relative) against `TOLERANCE_NM = 1e-6`. Passed in run 9644c04, so it depends on the CPU the runner gets.
+- The six Workflow subsection-restore errors of 56e2c4c / 9644c04 were stale tests, repaired in 79aa22e.

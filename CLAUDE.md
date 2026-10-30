@@ -77,6 +77,8 @@ Every PyPI dependency in a `pyproject.toml` needs a floor and a ceiling. Interna
 
 `tests/unit/` (pure logic, no Qt, no files) and `tests/integration/` (Qt, HDF5, device mock, workflow). All pass without hardware; simulated instruments replace it. Use tolerances for floating-point assertions.
 
+Run everything with `python tools/run_tests_per_file.py` (one process per test file, several at a time; `--pattern "test_*lspri*.py"` narrows it). CI runs exactly that: a single process for all files took 3 to 5 hours because test windows pile up (`docs/test_platform_and_ci_failures_2026-10-18.md`, last section).
+
 ## Code-Quality Tools (advisory)
 
 Never run `radon`, `pytest-cov`, `vulture`, `import-linter`, or `mypy` on your own initiative. When a moment fits, name the tool and the reason, then wait for a go-ahead. Details: `docs/code_health_tools.md`.

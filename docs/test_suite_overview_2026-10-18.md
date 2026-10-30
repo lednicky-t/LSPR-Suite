@@ -22,7 +22,7 @@ full-window GUI tests. Slowest per test: `lspri_workflow_panel_subsection_restor
 
 - While editing: the test file(s) of the code you touched (seconds).
 - Before committing: every test file of the app you touched, one process per file, in parallel (LSPRi: 190 files, about 8 to 10 min).
-- Anything in `packages/`, several apps, or before a release: everything. CI runs everything in one process (about 1 hour).
+- Anything in `packages/`, several apps, or before a release: everything, with `python tools/run_tests_per_file.py` (one process per file, several at a time). A full run took 38 min here on 2026-10-30 (6 files at a time, 4602 tests). CI runs the same command since 2026-10-30; until then it ran everything in one process (1 hour in October, 3 to 5 hours by the end of the month).
 - The cheap, high-value ones to keep forever: pure-logic tests of the science and of data safety (NaN handling, atomic writes,
   cache poisoning, schemas, pump calibration, ROI maths).
 
