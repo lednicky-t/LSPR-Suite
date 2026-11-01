@@ -5,11 +5,14 @@ on:
   pull_request:
 
 jobs:
-  # Lint of LSPRi Evaluation with its own rule list (apps/LSPRi/eva/pyproject.toml, [tool.ruff.lint]): a few minutes' work for the
-  # runner, and it catches what the tests cannot (a silent `except Exception`, a loop variable captured by a closure, a dead `# noqa`).
-  # ruff is pinned to the version of the pre-commit hooks so a new release cannot turn the build red by itself.
+  # Lint of LSPRi Evaluation, two checks that catch what the tests cannot:
+  #  - ruff with the app's own rule list (apps/LSPRi/eva/pyproject.toml, [tool.ruff.lint]): a silent `except Exception`, a loop
+  #    variable captured by a closure, a dead `# noqa`. Pinned to the version of the pre-commit hooks so a new release cannot
+  #    turn the build red by itself.
+  #  - import-linter with the contracts in .importlinter: imports between the app's packages only point downwards (and the two
+  #    shared packages stay free of Qt). It reads the source files and imports nothing, so it needs no dependencies installed.
   lint:
-    name: ruff (LSPRi Evaluation)
+    name: lint (ruff, import layers)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -23,11 +26,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ruff
-        run: python -m pip install ruff==0.15.20
+      - name: Install ruff and import-linter
+        run: python -m pip install ruff==0.15.20 import-linter==2.13
 
       - name: Lint
         run: ruff check apps/LSPRi/eva/src apps/LSPRi/eva/tools
+
+      - name: Import layers
+        env:
+          PYTHONPATH: packages/lspr_core/src:packages/lspr_io/src:packages/lspr_ui/src:apps/LSPRi/eva/src
+        run: lint-imports
 
   unittest:
     name: unittest (shard ${{ matrix.shard }} of ${{ strategy.job-total }})

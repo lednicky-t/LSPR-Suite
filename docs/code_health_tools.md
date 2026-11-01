@@ -9,7 +9,7 @@ Five dev-only tools are installed by `requirements-dev.txt`. They are **not** wi
 - `radon`: complexity. Use `radon mi` to see whether a file's maintainability actually improved.
 - `pytest-cov`: test coverage.
 - `vulture`: dead code.
-- `import-linter`: layering rules. Reads `.importlinter`.
+- `import-linter`: layering rules. Reads `.importlinter`; run `lint-imports` from the repo root (about a second). Since 2026-11-02 it also holds the LSPRi Evaluation layers (`apps/LSPRi/eva/docs/import_layering_2026-11-02.md`) and CI runs it in the `lint` job of `tests.yml`.
 - `mypy`: type checks.
 
 Use each tool's standard command from `requirements-dev.txt`.
