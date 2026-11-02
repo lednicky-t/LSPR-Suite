@@ -46,6 +46,11 @@ Optional identity fields, present where relevant:
   (e.g. `"LSPR Acquisition"`), never a person.
 - `export_user` - OS login name (`getpass.getuser()`), written only into
   `/manifest`.
+- `software_doi` and `software_citation` - how to cite the software that wrote the file: the Zenodo DOI of LSPR Suite and a one-line
+  citation naming the app and its version (`lspr_core.citation`). Written on the root of every measurement file since 2026-11-02, so the
+  acknowledgement of the software travels with the data. Informational provenance: no reader interprets them, so they were added
+  **without a schema version change** (a compatible addition would normally be a minor bump - decision for the maintainer); absent on
+  older files.
 
 ## Compatibility Policy
 

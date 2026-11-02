@@ -20,7 +20,10 @@ If you use the Suite to acquire or evaluate data that appear in a publication, t
 - cite it (see [`CITATION.cff`](CITATION.cff), or the "Cite this repository" button on the GitHub page), and
 - name it in the acknowledgements or the methods, with the version you used.
 
-This is a request that rests on scientific practice, not a condition of the licence: the licence stays the plain MIT text.
+This is a request that rests on scientific practice, not a condition of the licence: the licence stays the plain MIT text. To make it
+easy, every app has an About dialog with the citation line to copy (Help -> About; in the launcher the About button), and the files the
+apps write carry the same information: `software_doi` and `software_citation` on the root of the HDF5 measurement files, and a
+`software` entry in the `lspr` attributes of the OME-Zarr exports of LSPRimaging Evaluation.
 
 ## Disclaimer for research use
 

@@ -56,6 +56,7 @@ from lspr_core import (
 from . import updater
 from .start_menu_shortcuts import refresh_start_menu_shortcuts
 from .targets import SUITE_ROOT, TARGETS, AppTarget
+from .notice import show_about, show_notice_if_needed
 from .version import APP_NAME, APP_VERSION
 
 
@@ -1151,6 +1152,12 @@ class MainWindow(QMainWindow):
         self.settings_button.setToolTip("Back up or reset saved settings for the suite's apps.")
         self.settings_button.clicked.connect(self._open_settings_dialog)
         title_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignRight)
+        self.about_button = QPushButton("About")
+        self.about_button.setObjectName("SettingsHeaderButton")
+        self.about_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.about_button.setToolTip("Version, how to cite LSPR Suite, license.")
+        self.about_button.clicked.connect(lambda: show_about(self))
+        title_row.addWidget(self.about_button, 0, Qt.AlignmentFlag.AlignRight)
         header_layout.addLayout(title_row)
 
         self.countdown_label = QLabel()
@@ -1947,6 +1954,8 @@ def main() -> None:
     window.grab()
     app.single_instance_server = _start_single_instance_server(window)
     window.show()
+    # The first-run notice (notice.py) comes once the window is up; closing it without the button is not recorded.
+    QTimer.singleShot(0, lambda: show_notice_if_needed(window.settings, window))
     sys.exit(app.exec())
 
 

@@ -30,6 +30,8 @@ try:
     import lspr_imaging_app.dataset.io as dio
     from lspr_imaging_app import plane_reader
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
+    from lspr_imaging_app.version import APP_VERSION
+    from lspr_core import SUITE_DOI
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -135,6 +137,13 @@ class ExportFrameTests(unittest.TestCase):
         attrs = self.lspr_attrs(destination)
         self.assertEqual((attrs["chunk_size_px"], attrs["chunk_shape_px"]), (16, [16, 16]))
         self.assertNotIn("export_frame", attrs)
+
+    def test_the_export_carries_how_to_cite_the_software_that_wrote_it(self) -> None:
+        destination = dio.export_ome_zarr_dataset(self.dataset, self.root / "cite.ome.zarr", chunk_size_px=16)
+        stamp = self.lspr_attrs(destination)["software"]
+        self.assertEqual(stamp["name"], "LSPR Suite - LSPRimaging Evaluation")
+        self.assertEqual((stamp["version"], stamp["doi"]), (APP_VERSION, SUITE_DOI))
+        self.assertIn(f"version {APP_VERSION}", stamp["citation"])
 
     def test_summary_round_trip_and_folder_name(self) -> None:
         frame = (-5, -3, W + 5, H + 3)

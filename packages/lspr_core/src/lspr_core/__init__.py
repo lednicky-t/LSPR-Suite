@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+from .citation import (
+    ACKNOWLEDGEMENT_REQUEST,
+    DISCLAIMER_POINTS,
+    LICENSE_NAME,
+    NOTICE_URL,
+    SUITE_DOI,
+    SUITE_NAME,
+    SUITE_URL,
+    citation_text,
+    doi_url,
+    software_stamp,
+)
 from .launch_profiles import (
     DEFAULT_LAUNCH_PROFILE,
     LAUNCH_PROFILE_CONTROL_EDITOR,
@@ -41,7 +53,17 @@ from .version import APP_NAME, APP_VERSION, __version__, version_string
 
 __all__ = [
     "APP_NAME",
+    "ACKNOWLEDGEMENT_REQUEST",
     "APP_VERSION",
+    "DISCLAIMER_POINTS",
+    "LICENSE_NAME",
+    "NOTICE_URL",
+    "SUITE_DOI",
+    "SUITE_NAME",
+    "SUITE_URL",
+    "citation_text",
+    "doi_url",
+    "software_stamp",
     "DEFAULT_LAUNCH_PROFILE",
     "LAUNCH_PROFILE_CONTROL_EDITOR",
     "LAUNCH_PROFILE_ENV_VAR",

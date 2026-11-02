@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .about_dialog import AboutDialog, show_about_dialog
 from .icons import (
     app_icon,
     available_tabler_icon_names,
@@ -50,6 +51,8 @@ from .windows_taskbar import (
 )
 
 __all__ = [
+    "AboutDialog",
+    "show_about_dialog",
     "APP_ID_LSPRI_EVALUATION",
     "APP_ID_SLSPR_ACQUISITION",
     "APP_ID_SLSPR_EVALUATION",

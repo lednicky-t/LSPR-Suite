@@ -12,7 +12,7 @@ from typing import Any
 import h5py
 import numpy as np
 
-from lspr_core import ExperimentPlan, SuiteIdentity, summarize_experiment_plan
+from lspr_core import ExperimentPlan, SuiteIdentity, software_stamp, summarize_experiment_plan
 from .schema import (
     LSPR_DEVICE_INVENTORY_FORMAT_NAME,
     LSPR_DEVICE_INVENTORY_FORMAT_VERSION,
@@ -106,6 +106,11 @@ def write_measurement_root_metadata(
     handle.attrs["started_at_utc"] = _iso_utc(started_at_utc)
     handle.attrs["app_name"] = app_name
     handle.attrs["app_version"] = app_version
+    # How to cite the software that wrote this file (docs/schemas/hdf_standard.md, "Optional identity fields"): informational, no reader
+    # interprets it, so the acknowledgement of the software travels with the data.
+    stamp = software_stamp(app_name, app_version)
+    handle.attrs["software_doi"] = stamp["doi"]
+    handle.attrs["software_citation"] = stamp["citation"]
     handle.attrs["experiment_name"] = str(experiment_name or "")
     # Who ran this measurement, picked from the app's own User field - not
     # to be confused with export_user below (the OS login name, captured

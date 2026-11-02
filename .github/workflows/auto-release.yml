@@ -57,9 +57,20 @@ jobs:
               (Get-Content $versionFile) -replace [regex]::Escape("APP_VERSION = `"$current`""), "APP_VERSION = `"$next`"" |
                   Set-Content $versionFile -Encoding utf8
 
+              # CITATION.cff (the "Cite this repository" button, Zenodo) follows the released version and date.
+              $citationFile = "CITATION.cff"
+              if (Test-Path $citationFile) {
+                  $released = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+                  (Get-Content $citationFile) `
+                      -replace '^version: ".*"$', "version: `"$next`"" `
+                      -replace '^date-released: ".*"$', "date-released: `"$released`"" |
+                      Set-Content $citationFile -Encoding utf8
+              }
+
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
               git add $versionFile
+              if (Test-Path $citationFile) { git add $citationFile }
               git commit -m "chore(release): auto-bump Suite Launcher to v$next [skip ci]"
               git push
               Write-Host "Auto-bumped v$current -> v$next"
