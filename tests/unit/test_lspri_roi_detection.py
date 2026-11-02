@@ -32,9 +32,9 @@ from lspr_imaging_app.roi.detection import (
     _refine_detected_roi,
     _roi_circular_contrast_score,
     detect_rois,
-    ignored_pixel_mask,
 )
-from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings
+from lspr_imaging_app.domain.ignored_pixels import ignored_pixel_mask
+from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
 
 
 def _disks_image(

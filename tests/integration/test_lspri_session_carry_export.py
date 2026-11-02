@@ -32,7 +32,7 @@ if str(APP_SRC) not in sys.path:
 try:
     from PyQt6.QtCore import QCoreApplication, QObject
 
-    from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.dataset.io import export_ome_zarr_dataset, load_image_array, load_ome_zarr_dataset
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
     from lspr_imaging_app.image_tools.geometry.model import CropDefinition, GeometrySettings
@@ -40,7 +40,7 @@ try:
     from lspr_imaging_app.image_tools.mask.mask_pointers_state import MaskPointer, MaskPointersState
     from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, ContourMask, TransientEvent
-    from lspr_imaging_app.roi.model import AreaRoi
+    from lspr_imaging_app.domain.roi_model import AreaRoi
     from lspr_imaging_app.storage import session_carry as carry
     from lspr_imaging_app.storage import session_index
     from lspr_imaging_app.storage.session import SessionState, load_session
@@ -213,7 +213,7 @@ class SessionCarryExportTests(unittest.TestCase):
         self.assertEqual(origin["carried"]["rois"], 1)
 
     def test_the_exports_numbers_come_along_with_the_carried_session(self) -> None:
-        from lspr_imaging_app.dataset.export_stats import ExportStats
+        from lspr_imaging_app.export_stats import ExportStats
 
         carrier = SessionCarry(capture=lambda: self.state, naming=lambda: self.naming, source=lambda: (self.root / "src", None))
         carrier.prepare(self.transform)

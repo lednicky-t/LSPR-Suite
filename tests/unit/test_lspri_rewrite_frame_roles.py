@@ -26,7 +26,7 @@ try:
     from lspr_imaging_app.selection.frame_roles_module import (
         ROLE_DARK, ROLE_IGNORED, ROLE_NORMAL, ROLE_REFERENCE, FrameRolesModule,
     )
-    from lspr_imaging_app.selection.frame_roles_state import FrameRolesState
+    from lspr_imaging_app.frame_roles_state import FrameRolesState
     from lspr_imaging_app.selection.reference_frame_module import ReferenceFrameModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -172,7 +172,7 @@ class SessionFileTest(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+        from lspr_imaging_app.frame_naming import FrameNamingScheme
         from lspr_imaging_app.storage.session import SessionState, load_session, save_session, session_path
 
         state = SessionState(frame_roles=FrameRolesState(

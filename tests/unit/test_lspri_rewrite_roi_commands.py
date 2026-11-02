@@ -25,7 +25,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_model import AreaRoiDetectionSettings
     from lspr_imaging_app.roi.ordering import move_block, renumbering
     from lspr_imaging_app.roi.palette import (
         GROUP_BASE_COLORS,

@@ -33,7 +33,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app.dataset import io as dataset_io
-    from lspr_imaging_app.dataset.export_stats import ExportStats, format_bytes, format_duration
+    from lspr_imaging_app.export_stats import ExportStats, format_bytes, format_duration
     from lspr_imaging_app.image_tools.geometry import transform
     from lspr_imaging_app.image_tools.geometry.model import CropDefinition, GeometrySettings
     from lspr_imaging_app.io import _zarr_export_worker as worker

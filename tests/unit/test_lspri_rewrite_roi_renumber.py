@@ -29,7 +29,7 @@ try:
     )
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)

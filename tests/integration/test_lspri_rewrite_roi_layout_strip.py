@@ -47,7 +47,7 @@ try:
     from lspr_imaging_app.panels.image.slideshow import MODE_ALL, MODE_ONE_WAVELENGTH, MODE_ROI_STATES
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.roi.model import SCOPE_INDIVIDUAL, SCOPE_PERSISTENT
+    from lspr_imaging_app.domain.roi_model import SCOPE_INDIVIDUAL, SCOPE_PERSISTENT
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 

@@ -31,7 +31,7 @@ try:
     from lspr_imaging_app.image_tools.background.apply import apply_background
     from lspr_imaging_app.image_tools.background.estimate import estimate_background_profile, flatten_background
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings, max_binning_for_sigma
-    from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_model import AreaRoiDetectionSettings
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise

@@ -45,11 +45,11 @@ try:
         MaskScopeModule,
     )
     from lspr_imaging_app.image_tools.mask_scope import MaskScope
-    from lspr_imaging_app.image_tools.roi_feature_task import RoiFeatureTask
+    from lspr_imaging_app.panels.roi_feature_task import RoiFeatureTask
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_model import AreaRoiDetectionSettings
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from tests.unit.test_lspri_roi_features import _grid_centres, build_image
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch

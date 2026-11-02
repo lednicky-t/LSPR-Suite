@@ -42,7 +42,7 @@ try:
         apply_spatial_preprocessing,
         remap_point_for_geometry_change,
     )
-    from lspr_imaging_app.roi.model import AreaRoi
+    from lspr_imaging_app.domain.roi_model import AreaRoi
     from lspr_imaging_app.roi.rasterize import crop_mask, expand_mask, remap_roi_mask
     from lspr_imaging_app.roi.toolbox import _remap_roi_shape
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch

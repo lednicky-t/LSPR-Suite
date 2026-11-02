@@ -51,7 +51,7 @@ try:
         step_target_index,
         to_display,
     )
-    from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings, AreaRoiGroup
+    from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings, AreaRoiGroup
     from lspr_imaging_app.roi.palette import DEFAULT_ROI_COLOR_HEX
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)

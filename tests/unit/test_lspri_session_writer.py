@@ -25,9 +25,9 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.image_tools.mask.model import MaskChange
-    from lspr_imaging_app.roi.model import AreaRoi
+    from lspr_imaging_app.domain.roi_model import AreaRoi
     from lspr_imaging_app.storage import session as session_module
     from lspr_imaging_app.storage.session import (
         SessionState,

@@ -41,8 +41,9 @@ try:
     from lspr_imaging_app.image_tools.preprocess import apply_preprocessing
     from lspr_imaging_app.panels.histogram.compute import excluded_pixel_text, population_counts, histogram_edges
     from lspr_imaging_app.panels.image.no_data import format_pixel_value, no_data_overlay_rgba
-    from lspr_imaging_app.roi.detection import detect_rois, ignored_pixel_mask
-    from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.ignored_pixels import ignored_pixel_mask
+    from lspr_imaging_app.roi.detection import detect_rois
+    from lspr_imaging_app.domain.roi_model import AreaRoiDetectionSettings
     from lspr_imaging_app.storage.session import _decode_settings
     from lspr_imaging_app.image_tools.geometry.model import CropDefinition
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch

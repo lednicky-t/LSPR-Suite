@@ -20,7 +20,7 @@ try:
     from lspr_imaging_app.analysis import frame_reduce as fr
     from lspr_imaging_app.analysis import roi_tuning as rt
     from lspr_imaging_app.analysis.settings import StatisticsSettings
-    from lspr_imaging_app.roi.model import AreaRoi, RoiMask
+    from lspr_imaging_app.domain.roi_model import AreaRoi, RoiMask
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise

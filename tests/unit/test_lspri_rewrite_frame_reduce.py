@@ -46,7 +46,7 @@ try:
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.image_tools.preprocess import apply_preprocessing, apply_preprocessing_at
     from lspr_imaging_app.roi import rasterize as rz
-    from lspr_imaging_app.roi.model import AreaRoi, RoiMask
+    from lspr_imaging_app.domain.roi_model import AreaRoi, RoiMask
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -430,7 +430,7 @@ class BackgroundCacheAndPixelsTests(unittest.TestCase):
 
 
 def _detection_settings():
-    from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_model import AreaRoiDetectionSettings
 
     return AreaRoiDetectionSettings(ignore_marked_pixels=True)
 

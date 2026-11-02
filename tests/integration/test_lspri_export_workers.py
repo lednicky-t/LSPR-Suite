@@ -30,7 +30,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_core.perf import PerfPreferences, PerfRuntime, ProfileStore, SystemProfile, set_runtime
-    from lspr_imaging_app.dataset.export_stats import ExportStats
+    from lspr_imaging_app.export_stats import ExportStats
     from lspr_imaging_app.dataset.io import export_ome_zarr_dataset
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch

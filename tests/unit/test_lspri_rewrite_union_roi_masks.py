@@ -20,7 +20,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 from lspr_imaging_app.image_tools.chromatic.affine import identity_affine_matrix
-from lspr_imaging_app.roi.model import AreaRoi
+from lspr_imaging_app.domain.roi_model import AreaRoi
 from lspr_imaging_app.roi.rasterize import crop_mask, rasterize_reference, rasterize_sample, union_roi_masks
 
 _SHAPE = (300, 400)

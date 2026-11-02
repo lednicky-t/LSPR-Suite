@@ -51,7 +51,7 @@ try:
     from lspr_imaging_app.panels.image import render as render_module
     from lspr_imaging_app.panels.image.prefetch import prefetch_order
     from lspr_imaging_app.panels.image.render import ImageRenderer, RenderRequest
-    from lspr_imaging_app.roi.model import AreaRoi
+    from lspr_imaging_app.domain.roi_model import AreaRoi
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -326,7 +326,7 @@ class TestRendererFlattenCaches(unittest.TestCase):
             np.testing.assert_array_equal(result.image, self._uncached(resized))
 
     def test_a_different_ignore_mask_never_reuses_the_weights_of_another(self) -> None:
-        from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+        from lspr_imaging_app.domain.roi_model import AreaRoiDetectionSettings
 
         background = replace(self.background, flatten_background_exclude_mask=True)
         detection = AreaRoiDetectionSettings(ignore_marked_pixels=True)

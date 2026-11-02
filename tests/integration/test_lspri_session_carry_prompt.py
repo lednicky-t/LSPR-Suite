@@ -25,7 +25,7 @@ try:
     from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
     from lspr_imaging_app.app_rewrite import _wire_session_carry_prompt
-    from lspr_imaging_app.dataset.export_stats import ExportStats
+    from lspr_imaging_app.export_stats import ExportStats
     from lspr_imaging_app.storage.session_carry import CarryReport
     from lspr_imaging_app.storage.session_carry_task import CarriedResult, SessionCarry
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch

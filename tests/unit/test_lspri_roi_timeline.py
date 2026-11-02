@@ -11,7 +11,7 @@ import unittest
 import numpy as np
 
 from lspr_imaging_app.roi import RoiToolbox
-from lspr_imaging_app.roi.model import (
+from lspr_imaging_app.domain.roi_model import (
     SCOPE_INDIVIDUAL,
     SCOPE_PERSISTENT,
     AreaRoi,

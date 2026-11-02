@@ -40,7 +40,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.data_axis_slider import axis_track, axis_x
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.roi.model import SCOPE_PERSISTENT
+    from lspr_imaging_app.domain.roi_model import SCOPE_PERSISTENT
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 

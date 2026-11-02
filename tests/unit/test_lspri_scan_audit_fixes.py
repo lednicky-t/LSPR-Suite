@@ -34,7 +34,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app import progress, thread_priority
-    from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.image_tools.chromatic.warp import warp_boolean_mask_affine
     from lspr_imaging_app.image_tools.mask import model as mask_model
     from lspr_imaging_app.image_tools.mask import transient_detection as td

@@ -31,7 +31,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.analysis.tasks import (
         COVERAGE_FLAG_INSUFFICIENT,
         CoverageThresholds,
@@ -45,7 +45,7 @@ try:
         apply_spatial_preprocessing,
         apply_spatial_preprocessing_export,
     )
-    from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise

@@ -53,49 +53,29 @@ layers =
     image_tools
     plan
     threaded_task | diagnostics | gil_tuning | version
-    progress | applog | format_versions | undo | thread_priority | shortcuts | change_events | wavelength_color | image_features | domain | processing
-# KNOWN EXCEPTIONS (16 imports that point upwards today). They are the debt, not the rule: every line
+    progress | applog | format_versions | frame_naming | export_stats | frame_roles_state | undo | thread_priority | shortcuts | change_events | wavelength_color | image_features | domain | processing
+# KNOWN EXCEPTIONS (4 imports that point upwards today). They are the debt, not the rule: every line
 # below is a fix waiting to be done. When one is fixed, delete its line (import-linter FAILS on a line
 # that no longer matches an import, so the list can only shrink).
 ignore_imports =
-# ROI data (roi/model.py: AreaRoi, AreaRoiDetectionSettings) and ignored_pixel_mask (roi/detection.py)
-# sit above image_tools but are used by it. Fix: move the plain ROI data classes and that one helper
-# below image_tools (the ROI code that really needs image_tools, rasterize/toolbox, stays above).
-    lspr_imaging_app.image_tools.preprocess -> lspr_imaging_app.roi.model
-    lspr_imaging_app.image_tools.chromatic.affine -> lspr_imaging_app.roi.model
-    lspr_imaging_app.image_tools.background.estimate -> lspr_imaging_app.roi.model
-    lspr_imaging_app.image_tools.background.estimate -> lspr_imaging_app.roi.detection
-# roi_feature_task.py is ROI-feature orchestration (dataset + three roi modules) living in image_tools.
-# Fix: move it up to roi/ (or panels/), where it is not an upward import.
-    lspr_imaging_app.image_tools.roi_feature_task -> lspr_imaging_app.dataset
-    lspr_imaging_app.image_tools.roi_feature_task -> lspr_imaging_app.roi.model
-    lspr_imaging_app.image_tools.roi_feature_task -> lspr_imaging_app.roi.rasterize
-    lspr_imaging_app.image_tools.roi_feature_task -> lspr_imaging_app.roi.toolbox
-# Mask export needs FrameNamingScheme (a small file-naming class) from analysis/provenance.py.
-# Fix: move FrameNamingScheme to a layer below image_tools. This is also the only thing that makes
-# the four image tools look dependent on each other (see the independence contract below).
-    lspr_imaging_app.image_tools.mask.export -> lspr_imaging_app.analysis.provenance
-    lspr_imaging_app.image_tools.mask_export_task -> lspr_imaging_app.analysis.provenance
 # The scan reads planes with dataset/io.py's load_image_array_uncached, while dataset sits above analysis
 # (dataset/module.py uses AnalysisWorker from analysis/worker.py; dataset/io.py uses storage/workspace.py).
 # Fix, simplest first: pass the plane loader into the scan as a callable (ScanSource already carries
 # callables); or move worker.py and storage/workspace.py down so that analysis can sit above dataset.
     lspr_imaging_app.analysis.scan -> lspr_imaging_app.dataset.io
-# The Zarr export worker process calls dataset/io.py's private helper _ome_zarr_root. Fix: move that
-# helper down into io/ (or pass the root in).
+# The Zarr export worker process (it runs in its own process) reads source planes with three readers that
+# live in dataset/io.py (_ome_zarr_root, _read_ome_zarr_plane_by_path, the fast TIFF decoder), while
+# dataset/io.py starts the worker. Fix: extract those readers from the 2,300-line dataset/io.py into a
+# module below dataset (hot path: measure plane-read time before and after).
     lspr_imaging_app.io._zarr_export_worker -> lspr_imaging_app.dataset.io
 # PlanModule (a Qt module) needs the dataset and the step statistics, while other plan files are
 # data-only and used from below. Fix: split plan/ into plan data (low) and PlanModule (high).
     lspr_imaging_app.plan.module -> lspr_imaging_app.analysis.step_stats
     lspr_imaging_app.plan.module -> lspr_imaging_app.dataset.module
-# Session writing needs two small data classes from layers above it (ExportStats, FrameRolesState).
-# Fix: move them down next to storage, or pass the values in as arguments.
-    lspr_imaging_app.storage.session_carry_task -> lspr_imaging_app.dataset.export_stats
-    lspr_imaging_app.storage.session -> lspr_imaging_app.selection.frame_roles_state
 
 # The four image tools are documented as independent modules (apps/LSPRi/eva/CLAUDE.md, "Module
-# boundaries"). They are, apart from one indirect chain through analysis/provenance.py (the FrameNamingScheme
-# exception above), independent.
+# boundaries"). They are independent (the one chain between them, through FrameNamingScheme in
+# analysis/provenance.py, was removed on 2026-11-02 by moving it to frame_naming.py).
 [importlinter:contract:lspri-image-tools-independent]
 name = LSPRi Evaluation: geometry, mask, chromatic and background do not import each other
 type = independence
@@ -104,5 +84,3 @@ modules =
     lspr_imaging_app.image_tools.mask
     lspr_imaging_app.image_tools.chromatic
     lspr_imaging_app.image_tools.background
-ignore_imports =
-    lspr_imaging_app.image_tools.mask.export -> lspr_imaging_app.analysis.provenance

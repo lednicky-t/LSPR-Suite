@@ -23,7 +23,7 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_imaging_app.image_tools.chromatic.affine import identity_affine_matrix
 from lspr_imaging_app.roi import RoiToolbox
-from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings
+from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
 from lspr_imaging_app.roi.rasterize import (
     effective_reference_diameters,
     rasterize_reference,

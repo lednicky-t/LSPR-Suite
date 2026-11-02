@@ -40,7 +40,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app.analysis import AnalysisSettingsModule
-    from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.app_rewrite import _build_session_autosave, _cached_frame_naming, _wire_session_coordinator
     from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord

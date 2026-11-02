@@ -45,7 +45,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app.analysis import AnalysisSettingsModule
-    from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.analysis.settings import MetricSettings, StatisticsSettings
     from lspr_imaging_app.app_rewrite import apply_session, capture_session
     from lspr_imaging_app.image_tools import (
@@ -59,7 +59,7 @@ try:
         ChromaticTransformModel,
     )
     from lspr_imaging_app.roi import RoiToolbox
-    from lspr_imaging_app.roi.model import RoiMask
+    from lspr_imaging_app.domain.roi_model import RoiMask
     from lspr_imaging_app.selection import SelectionModule
     from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.storage.session import (

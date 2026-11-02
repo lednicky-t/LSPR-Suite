@@ -27,7 +27,7 @@ if str(APP_SRC) not in sys.path:
 import numpy as np
 
 from lspr_imaging_app.roi.detection import refresh_roi_metrics
-from lspr_imaging_app.roi.model import AreaRoi, AreaRoiDetectionSettings
+from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
 
 
 def _bright_disk_image(size: int = 80, center: tuple[float, float] = (40.0, 40.0), radius: float = 8.0) -> np.ndarray:

@@ -37,7 +37,7 @@ try:
     from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.image_tools.mask.transient_detection import KIND_GLOBAL, KIND_PARTICLE, ContourMask, TransientEvent
     from lspr_imaging_app.progress import Cancelled
-    from lspr_imaging_app.roi.model import AreaRoi, AreaRoiGroup, RoiArrayGroup, RoiGeometry, RoiMask, RoiTimeline
+    from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiGroup, RoiArrayGroup, RoiGeometry, RoiMask, RoiTimeline
     from lspr_imaging_app.storage import session_carry as carry
     from lspr_imaging_app.storage.session import SessionState
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -289,7 +289,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_settings_that_do_not_depend_on_position_are_copied(self) -> None:
         from lspr_imaging_app.image_tools.background.model import BackgroundSettings
-        from lspr_imaging_app.selection.frame_roles_state import FrameRolesState
+        from lspr_imaging_app.frame_roles_state import FrameRolesState
 
         background = BackgroundSettings(flatten_background_enabled=True, flatten_background_sigma_px=40.0, flatten_background_binning=4)
         roles = FrameRolesState(dark_wavelength_nm=0.0, dark_user_set=True, ignored_cubes=(3, 4))

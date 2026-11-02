@@ -26,7 +26,7 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_imaging_app.image_tools.chromatic.affine import identity_affine_matrix
 from lspr_imaging_app.roi import RoiToolbox
-from lspr_imaging_app.roi.model import AreaRoiDetectionSettings
+from lspr_imaging_app.domain.roi_model import AreaRoiDetectionSettings
 from lspr_imaging_app.roi.overlay_geometry import DEFAULT_CIRCLE_POINTS, circle_outlines
 from lspr_imaging_app.roi.rasterize import rasterize_sample, transformed_circle_points
 

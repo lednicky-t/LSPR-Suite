@@ -27,7 +27,7 @@ try:
     from PyQt6.QtCore import QObject, pyqtSignal
 
     from lspr_core import ImagingAcquisitionMetadata, ImagingPlan, ImagingPlanStep
-    from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.plan.module import ExperimentPlanModule
     from lspr_imaging_app.plan.state import PlanEdit, PlanEditsState
     from lspr_imaging_app.storage.session import SESSION_SCHEMA_VERSION, SessionState, load_session, save_session, session_path

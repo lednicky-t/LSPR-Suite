@@ -23,7 +23,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis.provenance import FrameNamingScheme
+    from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.image_tools.mask import export
     from lspr_imaging_app.image_tools.mask.io import read_mask_image
     from lspr_imaging_app.image_tools.mask.model import MaskChange
