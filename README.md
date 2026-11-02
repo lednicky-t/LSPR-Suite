@@ -102,8 +102,16 @@ When you work in this checkout:
 - commit app changes in the app repo first, then update the suite submodule
   pointer in this umbrella repo
 
-## Citing this software
+## License, citation and disclaimer
 
-If you use LSPR Suite, or code derived from it, to produce results in a
-publication, please cite it — see the "Cite this repository" button on this
-repo's GitHub page, or [`CITATION.cff`](CITATION.cff) directly.
+LSPR Suite is released under the [MIT License](LICENSE) (Copyright (c) 2026 Tomáš Lednický): free to use, also commercially, to modify and to
+redistribute, as long as the copyright and permission notice stay with the copies.
+
+**Please acknowledge it.** If you use LSPR Suite, or code derived from it, to produce results in a publication, thesis or report, please cite
+it and name it in the acknowledgements or the methods, with the version you used — see the "Cite this repository" button on this repo's
+GitHub page, or [`CITATION.cff`](CITATION.cff) directly. This is a request, not a condition of the licence.
+
+**Research software, no warranty.** It is provided "as is". Check results on a measurement with a known answer, keep backups of your raw data,
+and do not use it for diagnostic or clinical decisions: it has not been validated for that. [`NOTICE.md`](NOTICE.md) has the full disclaimer, the
+licences of the third-party software it uses (PyQt6 is GPL v3, AMFTools is proprietary) and the rules for names. Contributions: see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).

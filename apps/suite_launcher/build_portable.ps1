@@ -181,4 +181,13 @@ if ($LASTEXITCODE -ne 0) {
     Write-Warning "Could not install AMFTools into the bundled Python runtime - M-Switch support will be unavailable in this build. Continuing without it."
 }
 
+# The bundle redistributes everything installed above (PyQt6 under the GPL, numpy, ..., AMFTools under its own licence): the licence texts
+# travel with it, next to the Suite's own LICENSE and NOTICE (see NOTICE.md, "Third-party software").
+& $bundlePython (Join-Path $scriptDir "collect_third_party_licenses.py") (Join-Path $bundleRoot "THIRD_PARTY_LICENSES")
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to collect the third-party licence texts."
+}
+Copy-Item (Join-Path $suiteRoot "LICENSE") (Join-Path $bundleRoot "LICENSE") -Force
+Copy-Item (Join-Path $suiteRoot "NOTICE.md") (Join-Path $bundleRoot "NOTICE.md") -Force
+
 Write-Host "Portable launcher bundle created at $bundleRoot"

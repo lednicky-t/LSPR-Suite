@@ -37,3 +37,10 @@ Use the shared packages in `packages/` for logic that is reused across apps:
 - This repo keeps the umbrella structure only.
 - The app histories stay in their own repositories.
 - Submodule updates should stay small and intentional.
+
+## License of contributions
+
+- By submitting a contribution you agree that it is released under the project's [MIT License](LICENSE), and that you have the right to
+  submit it (it is your own work, or you may pass it on under that licence). Do not copy in code with an incompatible licence.
+- Keep the copyright and license notices in files you change.
+- If you add a new third-party dependency, say which licence it has in the pull request, so that [`NOTICE.md`](NOTICE.md) can be updated.
