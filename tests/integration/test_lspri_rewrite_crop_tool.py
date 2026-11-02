@@ -584,7 +584,7 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
     def test_size_controls_show_the_full_prefilled_size_on_first_activation(self) -> None:
         """Regression: the spin boxes start life range-limited to [1, 1]
         (crop_size_controls.py's construction-time default) - if
-        `_on_crop_tool_changed` ever pushed the size before the max on a
+        `CropMeasureControls.on_crop_tool_changed` ever pushed the size before the max on a
         *pre-filled* activation (a real crop already applied, frame size
         already known from an earlier render - the common case, not the
         empty-rectangle one the previous test drags out by hand), Qt's own

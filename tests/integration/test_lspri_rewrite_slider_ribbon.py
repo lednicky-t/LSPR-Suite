@@ -191,18 +191,18 @@ class SliderRibbonTest(unittest.TestCase):
     def test_dock_role_field_names_a_reference_dark_or_ignored_frame_in_its_slider_colour(self) -> None:
         colors = self.panel._slider_colors
         self.reference.set_manual_frame(1, 600.0)
-        self.panel._show_frame_status(1, 600.0)
+        self.panel._frame_text.show_frame(1, 600.0)
         role = self.panel.frame_columns()[4]
         self.assertEqual((role.text, role.color), ("Reference", colors.color("reference")))
-        self.panel._show_frame_status(0, 500.0)
+        self.panel._frame_text.show_frame(0, 500.0)
         self.assertEqual(self.panel.frame_columns()[4].text, "")  # a plain frame: the field is empty, not gone
         self.assertIsNone(self.panel.frame_columns()[4].color)
         self.roles.set_wavelength_ignored(500.0, True)
-        self.panel._show_frame_status(0, 500.0)
+        self.panel._frame_text.show_frame(0, 500.0)
         role = self.panel.frame_columns()[4]
         self.assertEqual((role.text, role.color), ("Ignored", colors.color("ignored")))
         self.roles.set_dark(550.0)
-        self.panel._show_frame_status(0, 550.0)
+        self.panel._frame_text.show_frame(0, 550.0)
         role = self.panel.frame_columns()[4]
         self.assertEqual((role.text, role.color), ("Dark background", colors.color("dark")))
 

@@ -237,7 +237,7 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(0.0, 0.0)
         self._move(60.0, 0.0)  # never clicked - just hovering
-        self.panel._on_measure_apply_requested(50.0, 0.0)
+        self.panel._crop_measure.on_measure_apply_requested(50.0, 0.0)
         settings = self.geometry.settings()
         self.assertTrue(settings.calibration_enabled)
         self.assertAlmostEqual(settings.microns_per_pixel_x, 50.0 / 60.0)
@@ -414,7 +414,7 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(0.0, 0.0)
         self._click(60.0, 0.0)  # dx_px = 60
-        self.panel._on_measure_apply_requested(50.0, 0.0)  # 50 um over 60 px
+        self.panel._crop_measure.on_measure_apply_requested(50.0, 0.0)  # 50 um over 60 px
         settings = self.geometry.settings()
         self.assertTrue(settings.calibration_enabled)
         self.assertAlmostEqual(settings.microns_per_pixel_x, 50.0 / 60.0)
@@ -427,7 +427,7 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(0.0, 0.0)
         self._click(60.0, 0.0)
-        self.panel._on_measure_apply_requested(0.0, 0.0)
+        self.panel._crop_measure.on_measure_apply_requested(0.0, 0.0)
         self.assertFalse(self.geometry.settings().calibration_enabled)
         self.assertIn("Enter a real dx", self.status_messages[-1])
 
@@ -435,7 +435,7 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(0.0, 0.0)
         self._click(60.0, 0.0)
-        self.panel._on_measure_apply_requested(50.0, 0.0)
+        self.panel._crop_measure.on_measure_apply_requested(50.0, 0.0)
         self.assertEqual(self.geometry.settings().display_units, "um")
 
     def test_apply_exits_measure_mode(self) -> None:
@@ -445,7 +445,7 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(0.0, 0.0)
         self._click(60.0, 0.0)
-        self.panel._on_measure_apply_requested(50.0, 0.0)
+        self.panel._crop_measure.on_measure_apply_requested(50.0, 0.0)
         self.assertIsNone(self.active_tool.active())
         self.assertFalse(self.controls.isVisible())
 
@@ -453,7 +453,7 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(0.0, 0.0)
         self._click(60.0, 0.0)
-        self.panel._on_measure_apply_requested(0.0, 0.0)  # rejected - no real distance
+        self.panel._crop_measure.on_measure_apply_requested(0.0, 0.0)  # rejected - no real distance
         self.assertIs(self.active_tool.active(), ImageTool.MEASURE)
 
     # -- absolute values ----------------------------------------------------

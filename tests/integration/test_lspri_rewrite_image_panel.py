@@ -234,7 +234,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_empty_before_a_dataset_is_loaded(self) -> None:
         self.assertFalse(self.panel._cube_slider.isEnabled())
-        self.assertIn("No dataset", self.panel._frame_status)
+        self.assertIn("No dataset", self.panel._frame_text.status)
 
     def test_renders_a_real_image_after_load(self) -> None:
         self._load()
@@ -260,7 +260,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertIsNone(self.panel._image_item.image)
         self.assertFalse(self.panel._cube_slider.isEnabled())
-        self.assertIn("No dataset", self.panel._frame_status)
+        self.assertIn("No dataset", self.panel._frame_text.status)
 
     # -- geometry -------------------------------------------------------
 
@@ -522,7 +522,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         """"Latest request wins": a frame superseded while in flight must
         not overwrite the newer one that already arrived."""
         self._load()
-        before = self.panel._frame_status
+        before = self.panel._frame_text.status
         stale = RenderRequest(
             cube_index=0, wavelength_nm=500.0,
             geometry=self.geometry.settings(), background=self.background.settings(),
@@ -531,7 +531,7 @@ class RewriteImagePanelTest(unittest.TestCase):
             serial=self.panel._latest_serial - 1,
         )
         self.panel._on_rendered(RenderResult(request=stale, image=np.zeros((4, 4), dtype=np.float32)))
-        self.assertEqual(self.panel._frame_status, before)
+        self.assertEqual(self.panel._frame_text.status, before)
 
     # -- ready-made picture from the render thread (2026-10-14) ----------------------------
 
@@ -991,7 +991,7 @@ class RewriteImagePanelTest(unittest.TestCase):
     def test_frame_status_reports_cube_and_wavelength_with_no_decimal(self) -> None:
         self._load()
         # No acquisition metadata in this dataset: not linked to experiment data, shown as N/A.
-        self.assertEqual(self.panel._frame_status, "Cube 0, 500 nm | N/A")
+        self.assertEqual(self.panel._frame_text.status, "Cube 0, 500 nm | N/A")
 
     def test_frame_status_signal_fires_on_navigation(self) -> None:
         self._load()
@@ -1044,8 +1044,8 @@ class RewriteImagePanelTest(unittest.TestCase):
             (1, 600.0): "Cube 1, 600 nm | N/A",  # no timing: no time shown
         }
         for (cube, wavelength), text in expected.items():
-            self.panel._show_frame_status(cube, wavelength)
-            self.assertEqual(self.panel._frame_status, text)
+            self.panel._frame_text.show_frame(cube, wavelength)
+            self.assertEqual(self.panel._frame_text.status, text)
 
     def test_the_dock_fields_have_fixed_widths_and_the_comment_takes_the_rest(self) -> None:
         """2026-10-16, maintainer request: the dock's status is five left-aligned fields (role, cube,
@@ -1066,9 +1066,9 @@ class RewriteImagePanelTest(unittest.TestCase):
         )
         emitted: list[tuple] = []
         self.panel.frame_columns_changed.connect(emitted.append)
-        self.panel._show_frame_status(0, 550.0)
+        self.panel._frame_text.show_frame(0, 550.0)
         with_everything = self.panel.frame_columns()
-        self.panel._show_frame_status(1, 600.0)
+        self.panel._frame_text.show_frame(1, 600.0)
         without_time = self.panel.frame_columns()
         self.assertEqual(emitted, [with_everything, without_time])
         self.assertEqual([c.text for c in with_everything], ["Cube 0", "550 nm", "0:03.24", "buffer", ""])
@@ -1083,7 +1083,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertIn("not linked to experiment data", without_time[3].tooltip)  # no timing for this frame
         self.assertEqual(with_everything[3].tooltip, "buffer")
         # A change of the cube unit re-measures the cube field (a start time is wider than a number).
-        self.panel._frame_widest = ("stale", "stale")
+        self.panel._frame_text._widest = ("stale", "stale")
         self.panel._on_cube_display_changed("cube")
         self.assertEqual(self.panel.frame_columns()[0].widest, "Cube 1")
 

@@ -270,12 +270,12 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
     def test_cursor_readout_text_goes_to_the_canvas_not_the_button(self) -> None:
         overlay = self.image_panel._cursor_overlay
         overlay.toggle()
-        self.image_panel._set_cursor_readout("(3, 4) = 150")
-        self.assertEqual(self.image_panel._cursor_readout.text(), "(3, 4) = 150")
-        self.assertFalse(self.image_panel._cursor_readout.isHidden())
+        self.image_panel._cursor_readout.set_text("(3, 4) = 150")
+        self.assertEqual(self.image_panel._cursor_readout.label.text(), "(3, 4) = 150")
+        self.assertFalse(self.image_panel._cursor_readout.label.isHidden())
         self.assertEqual(overlay.icon_label.text(), "")
         overlay.toggle()
-        self.assertTrue(self.image_panel._cursor_readout.isHidden())
+        self.assertTrue(self.image_panel._cursor_readout.label.isHidden())
 
     def _open_tab(self, name: str) -> None:
         """Click the ribbon tab by its name: the tab order has changed before and will again."""
