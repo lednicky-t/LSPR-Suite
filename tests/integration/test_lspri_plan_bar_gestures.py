@@ -40,7 +40,7 @@ try:
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.plan import bar_model as bm
     from lspr_imaging_app.plan.axis_map import AxisMap
-    from lspr_imaging_app.plan.module import ExperimentPlanModule
+    from lspr_imaging_app.selection.experiment_plan_module import ExperimentPlanModule
     from lspr_imaging_app.selection.cube_display_module import MODE_CUBE
     from lspr_imaging_app.undo import undo_manager
     from tests._qt_fonts import load_system_fonts

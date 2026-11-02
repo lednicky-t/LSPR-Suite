@@ -30,9 +30,10 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-import lspr_imaging_app.dataset.io as dataset_module  # noqa: E402
+from lspr_imaging_app import plane_reader  # noqa: E402
 from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord  # noqa: E402
-from lspr_imaging_app.dataset.io import OME_ZARR_ARRAY_DIRNAME, export_ome_zarr_dataset  # noqa: E402
+from lspr_imaging_app.dataset.io import export_ome_zarr_dataset  # noqa: E402
+from lspr_imaging_app.plane_reader import OME_ZARR_ARRAY_DIRNAME  # noqa: E402
 
 IMAGE_SIZE = 16  # matches chunk_size_px below -> exactly one inner chunk per plane
 WAVELENGTHS_NM = [450.0, 500.0]
@@ -64,14 +65,14 @@ class TestFastShardReaderVerifiesCrc(unittest.TestCase):
         self.destination = export_ome_zarr_dataset(
             dataset, self.root / "export.ome.zarr", chunk_size_px=IMAGE_SIZE, compression_enabled=False
         )
-        self.meta = dataset_module._ome_zarr_fast_read_metadata(str(self.destination))
+        self.meta = plane_reader._ome_zarr_fast_read_metadata(str(self.destination))
         self.assertIsNotNone(self.meta)
 
         self.shard_path = self.destination / OME_ZARR_ARRAY_DIRNAME / "c" / "0" / "0" / "0" / "0"
         self.assertTrue(self.shard_path.exists())
 
     def test_fast_path_reads_correct_data_before_corruption(self) -> None:
-        plane = dataset_module._fast_read_zarr_plane(self.meta, 0, 0)
+        plane = plane_reader._fast_read_zarr_plane(self.meta, 0, 0)
         self.assertIsNotNone(plane)
         np.testing.assert_array_equal(plane.astype(np.uint16), self.known[(0, WAVELENGTHS_NM[0])])
 
@@ -86,7 +87,7 @@ class TestFastShardReaderVerifiesCrc(unittest.TestCase):
         data[corrupt_at] ^= 0xFF
         self.shard_path.write_bytes(bytes(data))
 
-        plane = dataset_module._fast_read_zarr_plane(self.meta, 0, 0)
+        plane = plane_reader._fast_read_zarr_plane(self.meta, 0, 0)
         self.assertIsNone(plane, "a shard with a corrupted index must be rejected, not silently misread")
 
 

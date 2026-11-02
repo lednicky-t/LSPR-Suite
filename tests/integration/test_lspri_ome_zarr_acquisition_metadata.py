@@ -37,6 +37,7 @@ from lspr_core import (  # noqa: E402
 )
 
 import lspr_imaging_app.dataset.io as dataset_module  # noqa: E402
+from lspr_imaging_app import plane_reader  # noqa: E402
 from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord  # noqa: E402
 from lspr_imaging_app.dataset.io import export_ome_zarr_dataset, load_ome_zarr_dataset  # noqa: E402
 
@@ -127,7 +128,7 @@ class OmeZarrAcquisitionMetadataTests(unittest.TestCase):
         reloaded = load_ome_zarr_dataset(destination)
 
         self.assertIsNone(reloaded.acquisition_metadata)
-        zarr_group = dataset_module._ome_zarr_group_cached(str(destination))
+        zarr_group = plane_reader._ome_zarr_group_cached(str(destination))
         attrs = dict(zarr_group.attrs.asdict() if hasattr(zarr_group.attrs, "asdict") else dict(zarr_group.attrs))
         self.assertNotIn(dataset_module.OME_ZARR_ACQUISITION_METADATA_KEY, attrs)
 
@@ -141,8 +142,8 @@ class OmeZarrAcquisitionMetadataTests(unittest.TestCase):
         payload = json.loads(zarr_json_path.read_text(encoding="utf-8"))
         payload["attributes"][dataset_module.OME_ZARR_ACQUISITION_METADATA_KEY] = {"not": "a valid payload"}
         zarr_json_path.write_text(json.dumps(payload), encoding="utf-8")
-        dataset_module._ome_zarr_group_cached.cache_clear()
-        self.addCleanup(dataset_module._ome_zarr_group_cached.cache_clear)
+        plane_reader._ome_zarr_group_cached.cache_clear()
+        self.addCleanup(plane_reader._ome_zarr_group_cached.cache_clear)
 
         reloaded = load_ome_zarr_dataset(destination)
         self.assertIsNone(reloaded.acquisition_metadata)

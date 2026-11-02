@@ -28,7 +28,7 @@ try:
 
     from lspr_core import ImagingAcquisitionMetadata, ImagingPlan, ImagingPlanStep
     from lspr_imaging_app.frame_naming import FrameNamingScheme
-    from lspr_imaging_app.plan.module import ExperimentPlanModule
+    from lspr_imaging_app.selection.experiment_plan_module import ExperimentPlanModule
     from lspr_imaging_app.plan.state import PlanEdit, PlanEditsState
     from lspr_imaging_app.storage.session import SESSION_SCHEMA_VERSION, SessionState, load_session, save_session, session_path
     from lspr_imaging_app.undo import undo_manager
@@ -188,7 +188,7 @@ class ModuleTest(unittest.TestCase):
 
     def test_an_edit_that_does_not_match_this_dataset_is_reported_and_not_applied(self) -> None:
         stale = PlanEdit(step=1, measured_start_unix_ms=10_000, measured_label="another note", label="Water")
-        with self.assertLogs("lspr_imaging_app.plan.module", level="WARNING"):
+        with self.assertLogs("lspr_imaging_app.selection.experiment_plan_module", level="WARNING"):
             self.module.restore_state(PlanEditsState(edits=(stale,)))
         self.assertEqual(self.module.steps()[0].label, NOTE)
         self.assertEqual(len(self.module.warnings()), 1)

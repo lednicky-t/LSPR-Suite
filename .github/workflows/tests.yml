@@ -9,8 +9,8 @@ jobs:
   #  - ruff with the app's own rule list (apps/LSPRi/eva/pyproject.toml, [tool.ruff.lint]): a silent `except Exception`, a loop
   #    variable captured by a closure, a dead `# noqa`. Pinned to the version of the pre-commit hooks so a new release cannot
   #    turn the build red by itself.
-  #  - import-linter with the contracts in .importlinter: imports between the app's packages only point downwards (and the two
-  #    shared packages stay free of Qt). It reads the source files and imports nothing, so it needs no dependencies installed.
+  #  - import-linter with the contracts in .importlinter: imports between the app's packages only point downwards, the two
+  #    shared packages and the pure-science modules of LSPRi Evaluation stay free of Qt. It reads the source files and imports nothing, so it needs no dependencies installed.
   lint:
     name: lint (ruff, import layers)
     runs-on: ubuntu-latest

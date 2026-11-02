@@ -29,7 +29,7 @@ try:
 
     from lspr_core import ImagingAcquisitionMetadata, ImagingPlan, ImagingPlanStep
     from lspr_imaging_app.frame_naming import FrameNamingScheme
-    from lspr_imaging_app.plan.module import ExperimentPlanModule
+    from lspr_imaging_app.selection.experiment_plan_module import ExperimentPlanModule
     from lspr_imaging_app.plan.state import EvalPair, added_ref, measured_ref
     from lspr_imaging_app.storage.session import SESSION_SCHEMA_VERSION, SessionState, load_session, save_session, session_path
     from lspr_imaging_app.undo import undo_manager

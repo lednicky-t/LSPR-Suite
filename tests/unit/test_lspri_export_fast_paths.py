@@ -32,7 +32,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.dataset import io as dataset_io
+    from lspr_imaging_app import plane_reader
     from lspr_imaging_app.export_stats import ExportStats, format_bytes, format_duration
     from lspr_imaging_app.image_tools.geometry import transform
     from lspr_imaging_app.image_tools.geometry.model import CropDefinition, GeometrySettings
@@ -144,20 +144,20 @@ class FastDecodeAndShardTests(unittest.TestCase):
         self.path = self.root / "plane.tif"
         tifffile.imwrite(str(self.path), self.image, compression="lzw", rowsperstrip=3)  # like the maintainer's files
         # each test starts as a fresh process would: nothing verified yet, the decoder not switched off
-        self._saved = (dataset_io._fast_tiff_verified, dataset_io._fast_tiff_disabled)
-        dataset_io._fast_tiff_verified, dataset_io._fast_tiff_disabled = 0, False
-        self.addCleanup(lambda: setattr(dataset_io, "_fast_tiff_verified", self._saved[0]))
-        self.addCleanup(lambda: setattr(dataset_io, "_fast_tiff_disabled", self._saved[1]))
+        self._saved = (plane_reader._fast_tiff_verified, plane_reader._fast_tiff_disabled)
+        plane_reader._fast_tiff_verified, plane_reader._fast_tiff_disabled = 0, False
+        self.addCleanup(lambda: setattr(plane_reader, "_fast_tiff_verified", self._saved[0]))
+        self.addCleanup(lambda: setattr(plane_reader, "_fast_tiff_disabled", self._saved[1]))
 
     def test_the_fast_decode_reads_the_same_pixels_as_tifffile(self) -> None:
         got = worker._load_image(str(self.path))
         np.testing.assert_array_equal(got, tifffile.imread(str(self.path)))
         self.assertEqual(got.dtype, np.uint16)
-        self.assertTrue(dataset_io.fast_tiff_decoder_active())  # it really went through the opt-in path
+        self.assertTrue(plane_reader.fast_tiff_decoder_active())  # it really went through the opt-in path
 
     def test_it_falls_back_to_tifffile_when_switched_off(self) -> None:
-        dataset_io._fast_tiff_disabled = True
-        with mock.patch.object(dataset_io, "_read_tiff_fast", side_effect=AssertionError("must not be called")):
+        plane_reader._fast_tiff_disabled = True
+        with mock.patch.object(plane_reader, "_read_tiff_fast", side_effect=AssertionError("must not be called")):
             got = worker._load_image(str(self.path))
         np.testing.assert_array_equal(got, self.image)
 
@@ -181,7 +181,7 @@ class FastDecodeAndShardTests(unittest.TestCase):
         fast = worker.write_shard(self._spec("fast", geometry))
         self.assertEqual(fast.off_step_planes, 0)
         # the general route: no fused shortcut, and tifffile for the decode
-        dataset_io._fast_tiff_disabled = True
+        plane_reader._fast_tiff_disabled = True
         with mock.patch.object(transform, "apply_spatial_preprocessing_export_stored", return_value=None):
             general = worker.write_shard(self._spec("general", geometry))
         self.assertEqual(general.off_step_planes, 0)

@@ -53,7 +53,7 @@ try:
     from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, TransientEvent
     from lspr_imaging_app.image_tools.mask.mask_pointers import MaskPointersModule
     from lspr_imaging_app.image_tools.mask.transient_scan import ScanParams, ScanResult
-    from lspr_imaging_app.plan.module import ExperimentPlanModule
+    from lspr_imaging_app.selection.experiment_plan_module import ExperimentPlanModule
     from lspr_imaging_app.plan.state import PlanEdit, PlanEditsState
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import SelectionModule

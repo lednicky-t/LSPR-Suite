@@ -565,12 +565,13 @@ class UncachedReadTests(unittest.TestCase):
         import tifffile
 
         from lspr_imaging_app.dataset import io
+        from lspr_imaging_app import plane_reader
 
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             path = Path(folder) / "plane.tif"
             tifffile.imwrite(str(path), np.arange(60, dtype=np.uint16).reshape(6, 10))
             before = io._load_image_array_cached.cache_info().currsize
-            plain = io.load_image_array_uncached(str(path))
+            plain = plane_reader.load_image_array_uncached(str(path))
             self.assertEqual(io._load_image_array_cached.cache_info().currsize, before)
             cached = io.load_image_array(str(path))
             np.testing.assert_array_equal(plain, cached)

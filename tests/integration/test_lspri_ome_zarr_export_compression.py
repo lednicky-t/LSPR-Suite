@@ -25,9 +25,10 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
-import lspr_imaging_app.dataset.io as dataset_module  # noqa: E402
+from lspr_imaging_app import plane_reader  # noqa: E402
 from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord  # noqa: E402
-from lspr_imaging_app.dataset.io import OME_ZARR_ARRAY_DIRNAME, export_ome_zarr_dataset  # noqa: E402
+from lspr_imaging_app.dataset.io import export_ome_zarr_dataset  # noqa: E402
+from lspr_imaging_app.plane_reader import OME_ZARR_ARRAY_DIRNAME  # noqa: E402
 
 SIZE = 64
 CHUNK = 32  # 1024 pixels per chunk: a multiple of 8, as bit-shuffle needs
@@ -67,11 +68,11 @@ class TestExportCompresses(unittest.TestCase):
         import zarr
 
         array = zarr.open_array(self.destination / OME_ZARR_ARRAY_DIRNAME, mode="r")
-        meta = dataset_module._ome_zarr_fast_read_metadata(str(self.destination))
+        meta = plane_reader._ome_zarr_fast_read_metadata(str(self.destination))
         self.assertIsNotNone(meta)
         for wi, wavelength in enumerate(WAVELENGTHS_NM):
             np.testing.assert_array_equal(np.asarray(array[0, wi]), self.known[wavelength])
-            fast = dataset_module._fast_read_zarr_plane(meta, 0, wi)
+            fast = plane_reader._fast_read_zarr_plane(meta, 0, wi)
             self.assertIsNotNone(fast)
             np.testing.assert_array_equal(fast.astype(np.uint16), self.known[wavelength])
 

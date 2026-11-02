@@ -35,6 +35,7 @@ try:
     from PyQt6 import QtWidgets
 
     import lspr_imaging_app.dataset.io as dio
+    from lspr_imaging_app import plane_reader
     from lspr_imaging_app.analysis.scan import PARTIAL_READ_MAX_SHARE, scan_cubes
     from lspr_imaging_app.analysis.scan_jobs import ScanSource, build_scan_plan, snapshot_source
     from lspr_imaging_app.analysis.scan_task import ScanTask
@@ -100,7 +101,7 @@ def _plane_paths(export: Path) -> list[str]:
     return [str(record.path) for record in dio.load_ome_zarr_dataset(export).records]
 
 
-def _pixel_sets(grid: dio.ZarrPlaneGrid) -> list[np.ndarray]:
+def _pixel_sets(grid: plane_reader.ZarrPlaneGrid) -> list[np.ndarray]:
     rng = np.random.default_rng(5)
     n = grid.height * grid.width
     corner = np.arange(grid.height * grid.width).reshape(grid.height, grid.width)[:6, :6].ravel()
@@ -123,33 +124,33 @@ class ChunkReaderTests(unittest.TestCase):
     def test_every_pixel_set_equals_the_whole_plane_read_bit_for_bit(self) -> None:
         for name, export in self.made.exports.items():
             for path in _plane_paths(export):
-                grid = dio.ome_zarr_plane_grid(path)
+                grid = plane_reader.ome_zarr_plane_grid(path)
                 self.assertIsNotNone(grid, name)
-                whole = dio.load_image_array_uncached(path).reshape(-1)
+                whole = plane_reader.load_image_array_uncached(path).reshape(-1)
                 for flat in _pixel_sets(grid):
                     with self.subTest(export=name, plane=Path(path).name, pixels=int(flat.size)):
-                        plan = dio.partial_read_plan(grid, flat)
-                        values = dio.read_plane_pixels(path, plan)
+                        plan = plane_reader.partial_read_plan(grid, flat)
+                        values = plane_reader.read_plane_pixels(path, plan)
                         self.assertIsNotNone(values)
                         self.assertEqual(values.dtype, np.float32)
                         np.testing.assert_array_equal(values, whole[flat])  # NaN counts as equal: the valid mask is part of the contract
 
     def test_the_rotated_export_has_nan_pixels_and_the_chunk_read_returns_them(self) -> None:
         path = _plane_paths(self.made.exports["rotated"])[0]
-        grid = dio.ome_zarr_plane_grid(path)
-        values = dio.read_plane_pixels(path, dio.partial_read_plan(grid, np.arange(grid.height * grid.width)))
+        grid = plane_reader.ome_zarr_plane_grid(path)
+        values = plane_reader.read_plane_pixels(path, plane_reader.partial_read_plan(grid, np.arange(grid.height * grid.width)))
         self.assertTrue(np.isnan(values).any())
         self.assertTrue(np.isfinite(values).any())
 
     def test_a_chunk_read_decodes_only_the_chunks_it_was_asked_for(self) -> None:
         path = _plane_paths(self.made.exports["cube_lz4"])[1]
-        grid = dio.ome_zarr_plane_grid(path)
+        grid = plane_reader.ome_zarr_plane_grid(path)
         flat = np.arange(grid.height * grid.width).reshape(grid.height, grid.width)[20:30, 20:30].ravel()  # rows and columns 20-29: inside chunk (1, 1)
-        plan = dio.partial_read_plan(grid, flat)
+        plan = plane_reader.partial_read_plan(grid, flat)
         self.assertEqual(plan.chunk_ids.tolist(), [grid.n_cx + 1])
-        dio.read_plane_pixels(path, plan)  # fills the codec cache
+        plane_reader.read_plane_pixels(path, plan)  # fills the codec cache
         decoded: list[int] = []
-        real = dict(dio._blosc_codecs)
+        real = dict(plane_reader._blosc_codecs)
 
         class _Counting:
             def __init__(self, codec):
@@ -159,58 +160,58 @@ class ChunkReaderTests(unittest.TestCase):
                 decoded.append(1)
                 return self._codec.decode(buf)
 
-        dio._blosc_codecs.update({name: _Counting(codec) for name, codec in real.items()})
+        plane_reader._blosc_codecs.update({name: _Counting(codec) for name, codec in real.items()})
         try:
-            dio.read_plane_pixels(path, plan)
+            plane_reader.read_plane_pixels(path, plan)
         finally:
-            dio._blosc_codecs.update(real)
+            plane_reader._blosc_codecs.update(real)
         self.assertEqual(len(decoded), plan.chunk_ids.size)
         self.assertLess(plan.chunk_ids.size, grid.n_chunks // 4)
 
     def test_too_many_chunks_gives_no_plan_and_a_pixel_outside_the_plane_is_an_error(self) -> None:
-        grid = dio.ome_zarr_plane_grid(_plane_paths(self.made.exports["cube_lz4"])[0])
+        grid = plane_reader.ome_zarr_plane_grid(_plane_paths(self.made.exports["cube_lz4"])[0])
         everything = np.arange(grid.height * grid.width)
-        self.assertIsNone(dio.partial_read_plan(grid, everything, max_share=0.5))
-        self.assertIsNotNone(dio.partial_read_plan(grid, everything, max_share=1.0))
+        self.assertIsNone(plane_reader.partial_read_plan(grid, everything, max_share=0.5))
+        self.assertIsNotNone(plane_reader.partial_read_plan(grid, everything, max_share=1.0))
         with self.assertRaises(ValueError):
-            dio.partial_read_plan(grid, np.array([grid.height * grid.width]))
+            plane_reader.partial_read_plan(grid, np.array([grid.height * grid.width]))
         with self.assertRaises(ValueError):
-            dio.partial_read_plan(grid, np.array([-1]))
+            plane_reader.partial_read_plan(grid, np.array([-1]))
 
     def test_a_tiff_path_has_no_grid(self) -> None:
-        self.assertIsNone(dio.ome_zarr_plane_grid(str(self.made.dataset.records[0].path)))
+        self.assertIsNone(plane_reader.ome_zarr_plane_grid(str(self.made.dataset.records[0].path)))
 
     def test_a_damaged_shard_index_gives_none_so_the_caller_reads_the_whole_plane(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             copy = Path(tmp) / "copy.ome.zarr"
             shutil.copytree(self.made.exports["image_lz4"], copy)
             path = _plane_paths(copy)[0]
-            grid = dio.ome_zarr_plane_grid(path)
-            plan = dio.partial_read_plan(grid, np.array([5, 900]))
-            self.assertIsNotNone(dio.read_plane_pixels(path, plan))
-            meta = dio._ome_zarr_fast_read_metadata(str(copy))
-            shard, _, _ = dio._shard_location(meta, 0, 0)
+            grid = plane_reader.ome_zarr_plane_grid(path)
+            plan = plane_reader.partial_read_plan(grid, np.array([5, 900]))
+            self.assertIsNotNone(plane_reader.read_plane_pixels(path, plan))
+            meta = plane_reader._ome_zarr_fast_read_metadata(str(copy))
+            shard, _, _ = plane_reader._shard_location(meta, 0, 0)
             data = bytearray(shard.read_bytes())
             data[-1] ^= 0xFF  # the CRC of the index
             shard.write_bytes(bytes(data))
-            self.assertIsNone(dio.read_plane_pixels(path, plan))
+            self.assertIsNone(plane_reader.read_plane_pixels(path, plan))
 
     def test_a_shard_that_was_rewritten_is_read_again_not_taken_from_the_cache(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             copy = Path(tmp) / "copy.ome.zarr"
             shutil.copytree(self.made.exports["image_lz4"], copy)
             paths = _plane_paths(copy)
-            grid = dio.ome_zarr_plane_grid(paths[0])
+            grid = plane_reader.ome_zarr_plane_grid(paths[0])
             flat = np.arange(0, grid.height * grid.width, 37)
-            plan = dio.partial_read_plan(grid, flat)
-            dio.read_plane_pixels(paths[0], plan)  # now cached
-            meta = dio._ome_zarr_fast_read_metadata(str(copy))
-            first, _, _ = dio._shard_location(meta, 0, 0)
-            second, _, _ = dio._shard_location(meta, 0, 1)
+            plan = plane_reader.partial_read_plan(grid, flat)
+            plane_reader.read_plane_pixels(paths[0], plan)  # now cached
+            meta = plane_reader._ome_zarr_fast_read_metadata(str(copy))
+            first, _, _ = plane_reader._shard_location(meta, 0, 0)
+            second, _, _ = plane_reader._shard_location(meta, 0, 1)
             time.sleep(0.05)
             shutil.copyfile(second, first)  # plane (0, 0) now holds what plane (0, 1) held
-            expected = dio.load_image_array_uncached(paths[1]).reshape(-1)[flat]
-            np.testing.assert_array_equal(dio.read_plane_pixels(paths[0], plan), expected)
+            expected = plane_reader.load_image_array_uncached(paths[1]).reshape(-1)[flat]
+            np.testing.assert_array_equal(plane_reader.read_plane_pixels(paths[0], plan), expected)
 
 
 class Crc32cTests(unittest.TestCase):
@@ -219,7 +220,7 @@ class Crc32cTests(unittest.TestCase):
     def test_the_standard_check_value_and_the_pure_python_fallback_equal_the_library(self) -> None:
         import os
 
-        from lspr_imaging_app.io import _zarr_export_worker as worker
+        from lspr_imaging_app import shard_crc as worker
 
         self.assertEqual(worker._crc32c(b"123456789"), 0xE3069283)  # CRC-32C (Castagnoli) check value of the standard
         data = os.urandom(5000)
@@ -290,16 +291,16 @@ class ScanChunkReadTests(unittest.TestCase):
 
     def test_the_time_for_the_shard_index_is_recorded_once_per_shard(self) -> None:
         """The known bottleneck of scanning an OME-Zarr (dataset/io.py): its time must be visible, and paid once per shard, not per frame."""
-        dio._shard_index_cache.clear()
+        plane_reader._shard_index_cache.clear()
         first = self._scan("cube_lz4", subset=(0,))
         self.assertTrue(all(r.index_seconds > 0.0 for r in first))  # one shard per cube, read and checked
         self.assertTrue(all(0.0 < r.crc_seconds <= r.index_seconds for r in first))
         again = self._scan("cube_lz4", subset=(0,))  # the two shards are still remembered
         self.assertEqual([r.index_seconds for r in again], [0.0, 0.0])
-        before = dio.shard_index_seconds()
-        dio._shard_index_cache.clear()
+        before = plane_reader.shard_index_seconds()
+        plane_reader._shard_index_cache.clear()
         self._scan("cube_lz4", subset=(0,))
-        after = dio.shard_index_seconds()
+        after = plane_reader.shard_index_seconds()
         self.assertGreater(after[0], before[0])
         self.assertGreaterEqual(after[0], after[1])
 
@@ -344,7 +345,7 @@ class ScanChunkReadTests(unittest.TestCase):
 
     def test_a_reader_that_returns_nothing_falls_back_to_the_whole_plane_with_the_same_cells(self) -> None:
         reference = self._scan("cube_lz4", subset=(1,), partial=False)
-        with mock.patch.object(dio, "read_plane_pixels", return_value=None):
+        with mock.patch.object(plane_reader, "read_plane_pixels", return_value=None):
             fallback = self._scan("cube_lz4", subset=(1,))
         self.assertEqual([r.partial_frames for r in fallback], [0, 0])
         for a, b in zip(fallback, reference):

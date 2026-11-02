@@ -28,6 +28,7 @@ if str(APP_SRC) not in sys.path:
 
 try:
     import lspr_imaging_app.dataset.io as dio
+    from lspr_imaging_app import plane_reader
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -79,14 +80,14 @@ class ExportFrameTests(unittest.TestCase):
     def stored_planes(self, destination: Path) -> list[np.ndarray]:
         import zarr
 
-        array = zarr.open_array(destination / dio.OME_ZARR_ARRAY_DIRNAME, mode="r")
+        array = zarr.open_array(destination / plane_reader.OME_ZARR_ARRAY_DIRNAME, mode="r")
         self.assertEqual(tuple(array.chunks[2:]), CHUNK)
         planes = [np.asarray(array[0, wi]) for wi in range(len(WAVELENGTHS_NM))]
-        dio._ome_zarr_fast_read_metadata.cache_clear()
-        meta = dio._ome_zarr_fast_read_metadata(str(destination))
+        plane_reader._ome_zarr_fast_read_metadata.cache_clear()
+        meta = plane_reader._ome_zarr_fast_read_metadata(str(destination))
         self.assertIsNotNone(meta, "the fast reader must accept rectangular chunks")
         for wi, plane in enumerate(planes):
-            fast = dio._fast_read_zarr_plane(meta, 0, wi)
+            fast = plane_reader._fast_read_zarr_plane(meta, 0, wi)
             self.assertIsNotNone(fast)
             np.testing.assert_array_equal(fast.astype(plane.dtype), plane)
         return planes
@@ -94,7 +95,7 @@ class ExportFrameTests(unittest.TestCase):
     def lspr_attrs(self, destination: Path) -> dict:
         import zarr
 
-        return dict(zarr.open_group(str(destination), mode="r").attrs[dio.OME_ZARR_LSPR_KEY])
+        return dict(zarr.open_group(str(destination), mode="r").attrs[plane_reader.OME_ZARR_LSPR_KEY])
 
     def test_lossless_padding_keeps_every_pixel(self) -> None:
         destination = self.export("lossless", (-5, -3, W + 5, H + 3))
