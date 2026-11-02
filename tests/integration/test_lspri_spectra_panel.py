@@ -32,6 +32,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
+    from lspr_imaging_app.change_events import RoiCosmeticChange
     from lspr_imaging_app import app_rewrite
     from lspr_imaging_app.panels.image.mark_colors import wavelength_color
     from lspr_imaging_app.analysis import scan_store
@@ -85,13 +86,15 @@ class SpectraPanelTests(unittest.TestCase):
         self.finished: list[tuple] = []
         self.m.analysis_scan.task_finished.connect(lambda *args: self.finished.append(args))
         self.compute_threads: list[threading.Thread] = []
+        self.computed_requests: list = []
         self._real_compute = spectra_module.compute_spectra
 
-        def spy(stored, request):
+        def spy(stored, request, **kwargs):
             self.compute_threads.append(threading.current_thread())
+            self.computed_requests.append(request)
             if getattr(self, "slow", 0.0):
                 time.sleep(self.slow)
-            return self._real_compute(stored, request)
+            return self._real_compute(stored, request, **kwargs)
 
         spectra_module.compute_spectra = spy
 
@@ -146,7 +149,7 @@ class SpectraPanelTests(unittest.TestCase):
         self.m.selection.set_roi_selection({1, 2})
         self._wait_drawn(2)
         self.assertTrue(self.compute_threads and all(t is not threading.main_thread() for t in self.compute_threads))
-        self.assertEqual(self._items(), 2 * 3)  # per ROI: points, fit curve, metric marker
+        self.assertEqual(self._items(), 2 * 2 + 1)  # per ROI: points, fit curve; then one item with every ROI's metric marker
         spectra = self.panel._last[1]
         self.assertEqual([s.roi_id for s in spectra], [1, 2])
         stored = self.m.scan_results.stored()
@@ -165,6 +168,39 @@ class SpectraPanelTests(unittest.TestCase):
         self.m.selection.set_cube(2)
         self.assertTrue(_pump(lambda: self.panel._last[0].request.cube == 2 and not self.panel._busy))
         self.assertFalse(np.array_equal(first, self.panel._last[1][0].values))
+
+    def test_spectra_computed_before_are_reused_and_dropped_with_the_scan(self) -> None:
+        """Back to a cube already drawn: no computation; one more ROI selected: only that ROI is computed; a new scan empties the cache."""
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self.m.selection.set_cube(0)
+        self._wait_drawn(1)
+        first = self.panel._last[1][0]
+        self.m.selection.set_cube(2)
+        self.assertTrue(_pump(lambda: self.panel._last[0].request.cube == 2 and not self.panel._busy))
+        computed = len(self.computed_requests)
+        self.m.selection.set_cube(0)
+        self.assertTrue(_pump(lambda: self.panel._last[0].request.cube == 0 and not self.panel._busy))
+        self.assertEqual(len(self.computed_requests), computed, "a cube drawn before must not be computed again")
+        self.assertIs(self.panel._last[1][0], first)
+        self.m.selection.set_roi_selection({1, 2})
+        self._wait_drawn(2)
+        self.assertEqual(self.computed_requests[-1].roi_ids, (2,))  # only the new ROI
+        self.assertEqual([s.roi_id for s in self.panel._last[1]], [1, 2])
+        self.m.scan_results.results_changed.emit()
+        self.assertEqual(len(self.panel._cache), 0)
+
+    def test_a_colour_change_redraws_without_computing(self) -> None:
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        computed = len(self.computed_requests)
+        roi = next(r for r in self.m.roi_toolbox.rois() if r.area_roi_id == 1)
+        roi.sample_color_hex = "#123456"
+        self.m.roi_toolbox.cosmetic_changed.emit(RoiCosmeticChange(roi_ids=(1,), reason="recolor"))
+        _pump(lambda: False, 0.3)
+        self.assertEqual(len(self.computed_requests), computed)
+        self.assertEqual(self.panel._plot._items[0].opts["symbolBrush"].color().name(), "#123456")
 
     def test_the_cursor_follows_the_wavelength_slider_and_its_circle_sets_the_wavelength(self) -> None:
         self._open_and_scan()

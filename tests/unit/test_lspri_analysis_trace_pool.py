@@ -190,5 +190,88 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual(len(done), 2)
 
 
+def _stored_scan(n_cube: int = 10, n_roi: int = 4):
+    """A small scan with a band that shifts over the cubes (as in the template-shift tests)."""
+    from lspr_imaging_app.analysis.scan_store import StoredScan
+    from tests.unit.test_lspri_analysis_template_shift import WL, band
+
+    rng = np.random.default_rng(5)
+    shifts = np.r_[np.zeros(5), np.linspace(0.0, 6.0, n_cube - 5)]
+    mean = np.zeros((n_cube, n_roi, WL.size, 2))
+    for r in range(n_roi):
+        a = band(WL[None, :], 580.0 + shifts[:, None] * (1 + 0.2 * r)) * (1 + 0.1 * r) + rng.normal(0.0, 0.002, (n_cube, WL.size))
+        mean[:, r, :, 1] = 1000.0
+        mean[:, r, :, 0] = 1000.0 * 10.0 ** (-a)
+    shape = (n_cube, n_roi, WL.size, 2)
+    return StoredScan(
+        path=None, attrs={}, cube_indices=tuple(range(n_cube)), roi_ids=tuple(range(1, n_roi + 1)), wavelength_nm=tuple(WL),
+        acquired_at_unix_ms=np.zeros(n_cube), values={"mean": mean}, std=np.full(shape, 5.0), n_valid=np.full(shape, 100, dtype=np.int32),
+        n_nominal=np.full(shape, 110, dtype=np.int32), n_masked=np.zeros(shape, dtype=np.int32), cell_hash=np.ones((n_cube, n_roi), dtype=np.uint64),
+        recipe_id=np.zeros((n_cube, n_roi), dtype=np.int32), layout_id=np.zeros((n_cube, n_roi), dtype=np.int32),
+    )
+
+
+def _assert_same_spectra(case: unittest.TestCase, got, want) -> None:
+    case.assertEqual(len(got), len(want))
+    for a, b in zip(got, want):
+        case.assertEqual((a.roi_id, a.note, a.n_missing, a.metric_wavelength_nm, a.metric_value, a.shift_nm, a.scale, a.tilt),
+                         (b.roi_id, b.note, b.n_missing, b.metric_wavelength_nm, b.metric_value, b.shift_nm, b.scale, b.tilt))
+        for name in ("wavelengths_nm", "values", "errors", "fit_wavelengths_nm", "fit_values"):
+            np.testing.assert_array_equal(getattr(a, name), getattr(b, name), err_msg=name)
+
+
+class SpectraInProcessTests(unittest.TestCase):
+    """The Spectra panel's fits in the helper process (2026-11-02): the same numbers as in the thread, bit for bit; the cached reference spectra
+    (template shift) change nothing; a pool that is not started yet or busy with a Sensorgram run answers in the calling thread."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.pool = trace_pool.TracePool()
+        cls.pool.warm_up()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.pool.shutdown()
+
+    def test_the_process_and_the_template_cache_give_the_same_spectra(self) -> None:
+        from lspr_imaging_app.analysis.scan_view import SpectraRequest, compute_spectra
+        from tests.unit.test_lspri_analysis_template_shift import TEMPLATE_METRIC
+
+        stored = _stored_scan()
+        metrics = (
+            MetricSettings(fit_method="polynomial", poly_order=4, metric_key="maximum"),
+            MetricSettings(fit_method="gaussian", metric_key="centroid"),
+            TEMPLATE_METRIC,
+        )
+        for metric in metrics:
+            templates: dict = {}
+            for cube in (0, 3, 7, 9):
+                request = SpectraRequest((1, 2, 3, 4, 99), cube, "absorbance", metric)  # 99: not in the file (a note, no fit)
+                want = compute_spectra(stored, request)
+                got = compute_spectra(stored, request, templates=templates, fit_runner=self.pool.run_spectra)
+                _assert_same_spectra(self, got, want)
+            if metric.uses_template:
+                self.assertEqual(len(templates), 4)  # built once per ROI, reused for the other cubes
+
+    def test_a_busy_or_unstarted_pool_answers_in_this_thread(self) -> None:
+        from lspr_imaging_app.analysis.scan_view import SpectraRequest, compute_spectra
+
+        stored = _stored_scan()
+        request = SpectraRequest((1, 2), 6, "absorbance", MetricSettings(fit_method="polynomial", poly_order=3))
+        want = compute_spectra(stored, request)
+        fresh = trace_pool.TracePool()
+        try:
+            with mock.patch.object(fresh, "warm_up"):  # not started: no wait for the process, computed here
+                _assert_same_spectra(self, compute_spectra(stored, request, fit_runner=fresh.run_spectra), want)
+        finally:
+            fresh.shutdown()
+        self.pool._trace_runs += 1  # a Sensorgram run in progress
+        try:
+            with mock.patch.object(trace_pool.ProcessPoolExecutor, "submit", side_effect=AssertionError("must not use the process")):
+                _assert_same_spectra(self, compute_spectra(stored, request, fit_runner=self.pool.run_spectra), want)
+        finally:
+            self.pool._trace_runs -= 1
+
+
 if __name__ == "__main__":
     unittest.main()
