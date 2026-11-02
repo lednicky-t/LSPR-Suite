@@ -17,9 +17,10 @@ from tests._paths import REPO_ROOT
 
 PANEL = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src" / "lspr_imaging_app" / "panels" / "image" / "panel.py"
 
-# Measured 2026-11-02: 3,492 lines in the file, 178 methods in `ImagePanel`. About 3 % of room, so a small fix needs no ceremony.
-MAX_FILE_LINES = 3600
-MAX_IMAGE_PANEL_METHODS = 185
+# Measured 2026-11-02 after split batch 1 (tint and decoration overlays moved out): 3,232 lines in the file, 158 methods in `ImagePanel`
+# (before: 3,492 and 178). About 3 % of room, so a small fix needs no ceremony.
+MAX_FILE_LINES = 3330
+MAX_IMAGE_PANEL_METHODS = 163
 
 
 @unittest.skipUnless(PANEL.is_file(), "LSPRi Evaluation is not in this checkout")

@@ -219,13 +219,13 @@ class RewriteImagePanelTest(unittest.TestCase):
 
         for name, rng in (("covers all", (low - 1, high + 1)), ("exactly all", (low, high)), ("above the data", (high + 10, high + 20)), ("below the data", (low - 20, low - 10))):
             self.highlight_range.set_range(*rng)
-            self.panel._update_highlight_overlay()
+            self.panel._tints.update_highlight()
             self.assertFalse(tint.item.isVisible(), name)
         self.assertEqual(shown, [], "no mask was even painted for those")
 
         mid = (low + high) / 2.0
         self.highlight_range.set_range(low, mid)  # splits the image: some pixels in, some out
-        self.panel._update_highlight_overlay()
+        self.panel._tints.update_highlight()
         self.assertGreaterEqual(len(shown), 1)  # (the range change itself already triggers one)
         self.assertGreater(shown[-1], 0)
         self.assertTrue(tint.item.isVisible())
@@ -1254,7 +1254,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_mask_overlay_color_and_alpha_changes_redraw_without_a_new_render(self) -> None:
         """Color/alpha are cosmetic-only: changing them must not touch the
-        async pixel-render pipeline (`_mask_overlay_state` cache is reused),
+        async pixel-render pipeline (`TintOverlays.mask_state` cache is reused),
         only the overlay tint itself - same "cosmetic vs computational"
         distinction the rest of this rewrite already draws."""
         self._load()
@@ -1595,7 +1595,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         first load, before the user narrows it) carries no information as a
         tint - same reasoning as the stable app's own fixed-sensor-range
         check, applied against the actual displayed image's range instead
-        (see `_update_highlight_overlay`'s docstring)."""
+        (see `TintOverlays.update_highlight`'s docstring)."""
         self._load()
         image = self.panel._current_display_image
         self.highlight_range.set_range(float(image.min()), float(image.max()))

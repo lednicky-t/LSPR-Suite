@@ -184,12 +184,12 @@ class ChromaticTabTest(unittest.TestCase):
         self._load()
         self.tab.popover()._count.setValue(12)
         self._run_and_wait()
-        self.panel._draw_landmarks()
+        self.panel._decorations.draw_landmarks()
         self.assertEqual(len(self.panel._landmark_fitted_item.data), 12)
         self.assertEqual(len(self.panel._landmark_observed_item.data), 12)  # 550 nm was tracked
         self.tab.show_button().setChecked(False)
         _APP.processEvents()
-        self.panel._draw_landmarks()
+        self.panel._decorations.draw_landmarks()
         self.assertEqual(len(self.panel._landmark_fitted_item.data), 0)
 
     def test_view_group_holds_the_overlay_toggles_and_scope_switches_modes(self) -> None:
@@ -197,14 +197,14 @@ class ChromaticTabTest(unittest.TestCase):
         self.tab.popover()._count.setValue(12)
         self._run_and_wait()
         # Current wavelength: 12 fitted dots, 12 estimated crosses (550 nm was tracked), and a line per cross to its dot.
-        self.panel._draw_landmarks()
+        self.panel._decorations.draw_landmarks()
         self.assertEqual(len(self.panel._landmark_fitted_item.data), 12)
         self.assertEqual(len(self.panel._landmark_observed_item.data), 12)
         self.assertGreater(len(self.panel._landmark_line_item.getData()[0]), 0)
         # Every wavelength at once: a fitted dot per landmark per wavelength (many colours), crosses where tracked, path lines.
         self.tab.scope_button().setChecked(True)
         _APP.processEvents()
-        self.panel._draw_landmarks()
+        self.panel._decorations.draw_landmarks()
         self.assertEqual(len(self.panel._landmark_fitted_item.data), 12 * len(synth.WAVELENGTHS))
         self.assertEqual(len(self.panel._landmark_observed_item.data), len(self.chromatic.landmarks()))
         colours = {brush.color().name() for brush in self.panel._landmark_fitted_item.data["brush"]}
@@ -212,7 +212,7 @@ class ChromaticTabTest(unittest.TestCase):
         # Hiding landmarks disables the scope switch and empties the overlay.
         self.tab.show_button().setChecked(False)
         self.assertFalse(self.tab.scope_button().isEnabled())
-        self.panel._draw_landmarks()
+        self.panel._decorations.draw_landmarks()
         self.assertEqual(len(self.panel._landmark_fitted_item.data), 0)
 
     def test_with_the_correction_on_each_landmark_converges_to_one_point(self) -> None:
@@ -228,7 +228,7 @@ class ChromaticTabTest(unittest.TestCase):
         count, wavelengths = 12, len(synth.WAVELENGTHS)
 
         def spreads() -> tuple[float, float]:
-            self.panel._draw_landmarks()
+            self.panel._decorations.draw_landmarks()
             dots = self.panel._landmark_fitted_item.data
             dots = np.column_stack([dots["x"], dots["y"]]).reshape(wavelengths, count, 2)
             crosses = self.panel._landmark_observed_item.data
@@ -257,7 +257,7 @@ class ChromaticTabTest(unittest.TestCase):
         for wavelength in (synth.WAVELENGTHS[0], synth.REFERENCE_NM, synth.WAVELENGTHS[-1]):
             self.panel._selection.set_wavelength(wavelength)
             _pump_until(lambda: False, 0.3)
-            self.panel._draw_landmarks()
+            self.panel._decorations.draw_landmarks()
             seen[wavelength] = self.panel._landmark_fitted_item.opts["brush"].color().name()  # one shared brush in this mode
         self.assertEqual(len(set(seen.values())), 3)
 
@@ -275,8 +275,8 @@ class ChromaticTabTest(unittest.TestCase):
         try:
             self.assertFalse(panel._chromatic_tab.show_button().isChecked())
             self.assertTrue(panel._chromatic_tab.scope_button().isChecked())
-            self.assertFalse(panel._landmark_overlay_visible)
-            self.assertTrue(panel._landmark_all_wavelengths)
+            self.assertFalse(panel._decorations.landmarks_visible)
+            self.assertTrue(panel._decorations.landmarks_all_wavelengths)
         finally:
             panel._renderer.stop()
 
