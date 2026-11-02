@@ -898,7 +898,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         actually selected 470 nm. Every label must now equal `values[index]`
         exactly, for any gap shape - never a fabricated round number."""
         values = (200.0, 250.0, 470.0, 500.0, 600.0)
-        majors = self.panel._wavelength_slider_major_ticks(values)
+        majors = self.panel._slider_marks.wavelength_slider_major_ticks(values)
         for index, label in majors.items():
             self.assertEqual(label, f"{values[index]:.0f}")
         # The exact reported symptom: the tick nearest 400 nm must read
@@ -911,12 +911,12 @@ class RewriteImagePanelTest(unittest.TestCase):
         gets its own label - matches `_cube_slider_major_ticks`'s identical
         shape for the same reason."""
         values = (405.3, 452.1, 498.9)
-        majors = self.panel._wavelength_slider_major_ticks(values)
+        majors = self.panel._slider_marks.wavelength_slider_major_ticks(values)
         self.assertEqual(majors, {0: "405", 1: "452", 2: "499"})
 
     def test_wavelength_tick_labels_empty_for_fewer_than_two_points(self) -> None:
-        self.assertEqual(self.panel._wavelength_slider_major_ticks(()), {})
-        self.assertEqual(self.panel._wavelength_slider_major_ticks((500.0,)), {})
+        self.assertEqual(self.panel._slider_marks.wavelength_slider_major_ticks(()), {})
+        self.assertEqual(self.panel._slider_marks.wavelength_slider_major_ticks((500.0,)), {})
 
     # -- wavelength axis gap break (2026-09-30, revised same day) -----------
 
@@ -928,7 +928,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         must be labeled with their own real value, not left for the routine
         every-Nth-index rule to maybe skip."""
         values = (0.0, 470.0, 500.0, 550.0, 600.0)
-        majors = self.panel._wavelength_slider_major_ticks(values)
+        majors = self.panel._slider_marks.wavelength_slider_major_ticks(values)
         self.assertEqual(majors[0], "0")
         self.assertEqual(majors[1], "470")
 
@@ -937,7 +937,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         no real gap to mark - every label still comes from the ordinary
         every-Nth-index rule."""
         values = (470.0, 500.0, 550.0, 600.0, 650.0)
-        majors = self.panel._wavelength_slider_major_ticks(values)
+        majors = self.panel._slider_marks.wavelength_slider_major_ticks(values)
         self.assertEqual(majors, {index: f"{value:.0f}" for index, value in enumerate(values)})
 
     # -- navigation row layout polish (2026-09-30, maintainer request) ------
