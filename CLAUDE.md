@@ -50,7 +50,7 @@ Five apps, four as git submodules, one (suite launcher) living directly in this 
 | LSPRimaging Acquisition | `apps/LSPRi/acq` | `lspri_acq_app` | `lspri-acquisition` |
 | Suite Launcher | `apps/suite_launcher` | `suite_launcher` | `lspr-suite` |
 
-`LSPRimaging Acquisition` is an early scaffold (see its own README); its launcher card is disabled. It is built on `lspr-acq-shell`.
+`LSPRimaging Acquisition` is an early scaffold (see its own README); its launcher card is disabled. It is built on `lspr-acq-shell`. `singleLSPR Evaluation` (`apps/sLSPR/eva`) is a placeholder: its development has not started, so leave it out of cross-app work.
 
 ## Shared Packages
 

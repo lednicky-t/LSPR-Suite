@@ -12,10 +12,9 @@ This repository is the umbrella for the LSPR application suite.
 ## App repositories
 
 - `apps/LSPRi/eva` -> LSPRimaging evaluation
+- `apps/LSPRi/acq` -> LSPRimaging acquisition (an early scaffold)
 - `apps/sLSPR/acq` -> singleLSPR acquisition
-- `apps/sLSPR/eva` -> singleLSPR evaluation
-
-`LSPRimaging-Acquisition` is reserved for later and is not part of this checkout yet.
+- `apps/sLSPR/eva` -> singleLSPR evaluation (a placeholder: development has not started)
 
 ## Working on an app
 
