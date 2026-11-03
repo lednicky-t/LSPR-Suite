@@ -852,8 +852,40 @@ class SensorgramPanelTests(unittest.TestCase):
         self.m.roi_toolbox.move_roi(2, 61.0, 34.0)
         self.assertTrue(_pump(lambda: self.m.scan_results.stale_cubes() == frozenset(range(N_CUBE))))
         self.assertTrue(_pump(lambda: "OUT OF DATE" in self.panel._status.text()))
-        self.assertEqual(len(self.panel._plot._items), items_current + 1)  # a ring marker set over the (still drawn) line
+        self.assertEqual(len(self.panel._plot._items), items_current + 1)  # a mark set over the (still drawn) line
         self.assertIn("6 of 6 cubes OUT OF DATE", self.panel._status.text())
+
+    def _stale_mark_items(self) -> list:
+        """The drawn out-of-date marks: the grey diamond scatter items (a shape no mask mark uses)."""
+        return [item for item in self.panel._plot._items if hasattr(item, "opts") and item.opts.get("symbol") == "d"]
+
+    def test_the_out_of_date_marks_are_grey_diamonds_and_the_clock_button_hides_them_and_is_remembered(self) -> None:
+        from lspr_imaging_app.panels.image.mark_colors import MASK_COLOR, STALE_COLOR
+
+        store = UiStateStore()
+        self.panel.restore_ui_state(store)
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        items_current = len(self.panel._plot._items)
+        self.assertEqual(self._stale_mark_items(), [])  # a current scan has nothing to mark
+        self.m.roi_toolbox.move_roi(2, 61.0, 34.0)
+        self.assertTrue(_pump(lambda: len(self._stale_mark_items()) == 1))
+        self.assertNotEqual(STALE_COLOR, MASK_COLOR)
+        self.assertEqual(self._stale_mark_items()[0].opts["pen"].color().name(), STALE_COLOR)  # not the line's colour, not the mask orange
+        self.assertTrue(self.panel._stale_toggle.isChecked())  # on by default
+        self.assertIn("6 of 6 cubes are out of date", self.panel._stale_toggle.toolTip())
+        self.panel._stale_toggle.click()
+        self.assertEqual(self._stale_mark_items(), [])
+        self.assertEqual(len(self.panel._plot._items), items_current)  # the marks are gone, the line is not
+        self.assertIn("6 of 6 cubes OUT OF DATE", self.panel._status.text())  # hiding the marks does not hide the fact
+        self.assertIn("6 of 6 cubes are out of date", self.panel._stale_toggle.toolTip())
+        self.assertIs(store.get("sensorgram/stale_marks"), False)
+        self.panel._stale_toggle.click()
+        self.assertEqual(len(self._stale_mark_items()), 1)
+        store.set("sensorgram/stale_marks", False)
+        self.panel.restore_ui_state(store)
+        self.assertFalse(self.panel._stale_toggle.isChecked())
 
 
 if __name__ == "__main__":
