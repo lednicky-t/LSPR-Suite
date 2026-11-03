@@ -86,6 +86,7 @@ source_modules =
     lspr_imaging_app.shard_crc
     lspr_imaging_app.frame_naming
     lspr_imaging_app.export_stats
+    lspr_imaging_app.analysis.export_tables
     lspr_imaging_app.analysis.fit_window
     lspr_imaging_app.analysis.frame_reduce
     lspr_imaging_app.analysis.gaussian_fit
@@ -107,6 +108,7 @@ source_modules =
     lspr_imaging_app.analysis.tasks
     lspr_imaging_app.analysis.template_shift
     lspr_imaging_app.analysis.trace_fit
+    lspr_imaging_app.analysis.voigt_fit
     lspr_imaging_app.analysis.worker
     lspr_imaging_app.image_tools.background.apply
     lspr_imaging_app.image_tools.background.estimate

@@ -132,6 +132,11 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         saved: list[AppSettings] = []
         window = self._build(on_settings_changed=saved.append)
         panel = _panel(window, "Image", ImagePanel)
+        # The window's first layout changes the view and starts the panel's 600 ms report timer; that report (the real, empty range) raced the one
+        # below and, when it came last, was rightly the one saved (seen 2026-11-02 under load). Stop it: this test is about a reported range.
+        _APP.processEvents()
+        panel._view_range_persist_timer.stop()
+        saved.clear()
         panel.view_range_changed.emit(3.0, 77.0, 4.0, 60.0)
         _flushed(saved)
         self.assertTrue(saved)
@@ -245,6 +250,28 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         )
         self._loaded(window, d2)
         self.assertIsNone(_panel(window, "Image", ImagePanel)._highlight_range.current_range())
+
+    # -- Plot export: the last folder ------------------------------------------
+
+    def test_the_export_dialogs_open_where_the_last_export_was_saved(self) -> None:
+        """A save remembers its folder (for every plot, across launches); a remembered folder that is gone falls back to the session's exports."""
+        import tempfile
+
+        from lspr_imaging_app.panels.sensorgram import SensorgramPanel
+        from lspr_imaging_app.panels.spectra import SpectraPanel
+
+        saved: list[AppSettings] = []
+        window = self._build(on_settings_changed=saved.append)
+        sensorgram = window.findChild(SensorgramPanel).export_button
+        spectra = window.findChild(SpectraPanel).export_button
+        with tempfile.TemporaryDirectory() as folder:
+            sensorgram._saved_in(Path(folder) / "sg.csv")
+            _flushed(saved)
+            self.assertEqual(saved[-1].ui_state[keys.PLOT_EXPORT_FOLDER.key], folder)
+            self.assertEqual(spectra._context()[0], Path(folder), "the other plots open there too")
+            again = self._build(initial_settings=saved[-1])
+            self.assertEqual(again.findChild(SpectraPanel).export_button._context()[0], Path(folder), "remembered across launches")
+        self.assertNotEqual(spectra._context()[0], Path(folder), "a folder that is gone is not offered")
 
 
 if __name__ == "__main__":

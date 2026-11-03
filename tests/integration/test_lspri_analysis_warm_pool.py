@@ -246,6 +246,9 @@ class WarmPoolTests(unittest.TestCase):
         self.assertTrue(_wait_until(lambda: _gone(workers), 30), "the workers of a killed application were still running")
 
 
+POOL_START_SECONDS = 180.0  # as long as `WarmPool.start` itself waits: under load (16 test files at once) two workers took over 60 s to start (2026-11-02)
+
+
 def _pump(until, seconds: float = 60.0) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -296,7 +299,9 @@ class PerformanceModeTaskTests(unittest.TestCase):
         self.assertTrue(self.completed[0].warm_pool)
         self.assertGreater(self.completed[0].first_cube_seconds, 0.0)
         self.assertIn("performance mode", self.finished[0][2])
-        self.assertEqual(warm.worker_pids(), pids)  # the scan ran on the processes that were already there
+        # The scan ran on the processes that were already there: no new pid. (A subset, not equal: `worker_pids` asks each worker with a short ping, and
+        # under load one worker can answer two pings, so a pid can be missing from one answer; seen 2026-11-03 with 16 test files at once.)
+        self.assertLessEqual(warm.worker_pids(), pids)
         self.task.set_mode(MODE_NORMAL)
         self.assertEqual(self.states[-1], ("off", 0))
         self.assertTrue(_wait_until(lambda: _gone(pids), 30))
@@ -318,7 +323,7 @@ class PerformanceModeTaskTests(unittest.TestCase):
         self.assertFalse(self.task._warm.is_ready())
         self.task.start_pool()
         self.task.start_pool()  # a second call while the first is going does nothing
-        self.assertTrue(_pump(lambda: ("ready", 2) in self.states))
+        self.assertTrue(_pump(lambda: ("ready", 2) in self.states, POOL_START_SECONDS))
         self.task.start_pool()  # already running: nothing
         _pump(lambda: False, 0.3)
         self.assertEqual([s for s, _ in self.states].count("starting"), 1)
@@ -332,7 +337,7 @@ class PerformanceModeTaskTests(unittest.TestCase):
 
     def test_shutdown_closes_the_pool_at_quit(self) -> None:
         self.task.set_mode(MODE_PERFORMANCE)
-        self.assertTrue(_pump(lambda: ("ready", 2) in self.states))
+        self.assertTrue(_pump(lambda: ("ready", 2) in self.states, POOL_START_SECONDS))
         pids = self.task._warm.worker_pids()
         self.task.shutdown()
         self.assertTrue(_wait_until(lambda: _gone(pids), 30))
@@ -341,7 +346,7 @@ class PerformanceModeTaskTests(unittest.TestCase):
         plan = self.data.plan()
         normal = sorted(scan_cubes(plan.jobs, plan.settings, processes=1), key=lambda r: r.cube_pos)
         self.task.set_mode(MODE_PERFORMANCE)
-        self.assertTrue(_pump(lambda: ("ready", 2) in self.states))
+        self.assertTrue(_pump(lambda: ("ready", 2) in self.states, POOL_START_SECONDS))
         arrays = {}
         task = ScanTask(on_result=lambda p, a, s: arrays.setdefault("a", a))
         self.addCleanup(task.shutdown)
@@ -349,7 +354,7 @@ class PerformanceModeTaskTests(unittest.TestCase):
         done = []
         task.task_finished.connect(lambda *args: done.append(args))
         task.start(self.data.source(), processes=2)
-        self.assertTrue(_pump(lambda: bool(done)))
+        self.assertTrue(_pump(lambda: bool(done), POOL_START_SECONDS))
         self.assertEqual(done[0][1], "completed")
         for cube_pos, result in enumerate(normal):
             self.assertTrue(np.array_equal(arrays["a"].values["mean"][cube_pos][:, [0, 1], :], result.values["mean"], equal_nan=True))

@@ -142,6 +142,28 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         x, _ = self.panel._plot._all_pixels_curve.getData()
         self.assertTrue(x is None or len(x) == 0)
 
+    def test_the_export_button_saves_the_curves_as_drawn(self) -> None:
+        """The corner's export button (left of the gear, with the cursor readout further left) writes one row per bin of each visible curve."""
+        import csv
+
+        self._load()
+        plot = self.panel._plot
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline and not (plot._all_pixels_curve.getData()[1] is not None and len(plot._all_pixels_curve.getData()[1]) > 0):
+            _pump(0.05)
+        plot._reposition_settings_button()
+        plot._reposition_cursor_overlay()
+        button = self.panel.export_button()
+        self.assertLess(button.x(), plot._settings_button.x())
+        self.assertLess(plot._cursor_overlay.icon_label.x(), button.x())
+        edges, values = plot._all_pixels_curve.getData()
+        written, _notes = button.save_data(self.root / "h.csv")
+        with written[0].open(encoding="utf-8", newline="") as handle:
+            rows = [r for r in list(csv.reader(handle))[1:] if r[0] == "All pixels"]
+        self.assertEqual(len(rows), len(values))
+        np.testing.assert_array_equal([float(r[3]) for r in rows], values)
+        np.testing.assert_array_equal([float(r[1]) for r in rows], edges[:-1])
+
     def test_dataset_cleared_resets_the_panel(self) -> None:
         self._load()
         self.dataset.clear_dataset()

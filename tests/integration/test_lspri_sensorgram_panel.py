@@ -167,6 +167,97 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertIn("2 ROIs", self.panel._status.text())
         self.assertNotIn("OUT OF DATE", self.panel._status.text())
 
+    def test_the_export_button_saves_what_is_drawn_and_the_figure(self) -> None:
+        """Save data writes the lines as drawn (they read back to the same numbers) with a record of the settings; Save figure writes PNG and SVG;
+        nothing is replaced unless asked; the dialogs open in the session's exports folder."""
+        import csv
+        import json
+
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1, 2})
+        self._wait_drawn(2)
+        self.panel.resize(900, 500)  # a plot of a real size (unshown, the test plot is 100 x 39 px: every curve runs past the frame)
+        self.panel.show()
+        _pump(lambda: False, 0.3)
+        button = self.panel.export_button
+        folder = self.root / "exports"
+        button.set_context(lambda: (folder, {"dataset": "d", "session": "s"}))
+        self.assertTrue(button._suggested(".csv").startswith(str(folder)))
+        self.assertTrue(folder.is_dir(), "made on first use")
+        written, _notes = button.save_data(folder / "sg.csv")
+        self.assertEqual(written[0].name, "sg.csv")
+        with written[0].open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.reader(handle))
+        series = self._series()
+        for column, s in enumerate(series):
+            got = np.array([float(r[3 + column]) if r[3 + column] else np.nan for r in rows[1:]])
+            np.testing.assert_array_equal(got, s.y)
+        record = json.loads((folder / "sg.json").read_text(encoding="utf-8"))
+        self.assertEqual((record["plot"], record["dataset"], record["session"]), ("sensorgram", "d", "s"))
+        self.assertEqual(record["settings"]["metric"]["fit_method"], self.m.analysis_settings.metric_settings().fit_method)
+        with self.assertRaises(FileExistsError):
+            button.save_data(folder / "sg.csv")
+        png, svg = button.save_figure(folder / "sg.png"), button.save_figure(folder / "sg.svg")
+        self.assertGreater(png.stat().st_size, 1000)
+        self.assertIn("<svg", svg.read_text(encoding="utf-8")[:2000])
+        self.assertNotIn("<image", svg.read_text(encoding="utf-8"), "the SVG is vector: no embedded picture (cached items, dots)")
+        import re
+
+        svg_text = svg.read_text(encoding="utf-8")
+        self.assertFalse(re.search(r"<g\b[^>]*>\s*</g>", svg_text), "no empty groups")
+        faint = [float(v) for v in re.findall(r'stroke-opacity="([0-9.]+)"', svg_text) if float(v) < 0.03]
+        self.assertEqual(faint, [], "no line groups too faint to be seen (the finest grid level)")
+        # Inkscape-friendly: named layers, one named group per line holding its style, plain shapes inside (svg_layers.py).
+        import xml.etree.ElementTree as ET
+
+        inkscape = "{http://www.inkscape.org/namespaces/inkscape}"
+        root = ET.fromstring(svg_text)
+        layers = {g.get(inkscape + "label"): g for g in root.iter("{http://www.w3.org/2000/svg}g") if g.get(inkscape + "groupmode") == "layer"}
+        top = [g.get(inkscape + "label") for g in root if g.get(inkscape + "groupmode") == "layer"]
+        self.assertEqual(top[:2], ["Background", "Plot area"], "logical sections, bottom to top")
+        self.assertLess(top.index("Plot area"), top.index("Axes"))
+        plot_area = [g.get(inkscape + "label") for g in layers["Plot area"] if g.get(inkscape + "groupmode") == "layer"]
+        self.assertEqual(plot_area[0], "Grid", "the grid is a layer of its own, under the data")
+        self.assertLess(plot_area.index("Lines"), plot_area.index("Points"))
+        for name in ("Lines", "Points", "Axes", "Cursor", "Grid"):
+            self.assertIn(name, layers)
+        left = self.panel._plot.plot_item().getAxis("left")
+        self.assertIsNot(left.grid, False, "the export drew the axis without its grid only for the moment of the export")
+        self.assertGreater(left.pen().color().alpha(), 0)
+        lines = {g.get(inkscape + "label"): g for g in layers["Lines"]}
+        self.assertEqual(set(lines), {s.label for s in series})
+        for label, group in lines.items():
+            self.assertEqual(group.get("class"), "lines")
+            self.assertIsNotNone(group.get("stroke"), f"{label}: the line's colour is on its group")
+            self.assertTrue(all(child.get("stroke") is None for child in group), f"{label}: the shapes inherit it")
+            self.assertEqual(group.get("clip-path"), "url(#plot-area)", f"{label}: cut at the plot's frame (Qt writes no clipping)")
+        self.assertIsNotNone(root.find(".//{http://www.w3.org/2000/svg}clipPath[@id='plot-area']"))
+        # The SVG drawn back must look like the plot: the axes were once drawn at 0.75x (72 dpi SVG vs 96 dpi QPicture), off their place.
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtSvg import QSvgRenderer
+
+        item = self.panel._plot.plot_item()
+        rect = item.sceneBoundingRect()
+        w, h = int(rect.width()), int(rect.height())
+
+        def pixels(draw) -> np.ndarray:
+            image = QImage(w, h, QImage.Format.Format_RGB32)
+            image.fill(QColor("black"))
+            painter = QPainter(image)
+            draw(painter)
+            painter.end()
+            raw = np.frombuffer(image.constBits().asstring(image.sizeInBytes()), np.uint8).reshape(h, image.bytesPerLine() // 4, 4)
+            return raw[:, :w, :3].astype(float)
+
+        def direct(painter) -> None:
+            painter.fillRect(QRectF(0, 0, w, h), item.scene().views()[0].backgroundBrush())
+            item.scene().render(painter, QRectF(0, 0, w, h), rect)
+
+        difference = np.abs(pixels(QSvgRenderer(str(svg)).render) - pixels(direct)).mean()
+        self.assertLess(difference, 4.0, "the SVG does not look like the plot (axes at 0.75x once; Qt's renderer ignores the plot-area clip path, Inkscape honours it)")
+        self.assertGreater(QImage(str(png)).width(), self.panel._plot.plot_item().sceneBoundingRect().width() * 1.5)  # twice the screen
+
     def test_the_scan_check_logs_where_its_time_went(self) -> None:
         with self.assertLogs("lspr_imaging_app.analysis.scan_results", level="INFO") as logs:
             self._open_and_scan()
@@ -616,7 +707,7 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertGreater(high, float(np.max(y + 2.0)))
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
-        self.assertEqual([label.text() for label in self.panel._ribbon._captions], ["Live", "Statistic", "Smoothing", "Baseline", "View"])  # the Plot tab
+        self.assertEqual([label.text() for label in self.panel._ribbon._captions], ["Live", "Statistic", "Smoothing", "Baseline", "View", "Export"])  # the Plot tab
         self.assertEqual([label.text() for label in self.panel._plan_ribbon._captions], ["View", "Evaluation", "Step stats"])  # the Experimental plan tab
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~960 px before the row could scroll
 

@@ -169,6 +169,66 @@ class SpectraPanelTests(unittest.TestCase):
         self.assertTrue(_pump(lambda: self.panel._last[0].request.cube == 2 and not self.panel._busy))
         self.assertFalse(np.array_equal(first, self.panel._last[1][0].values))
 
+    def test_the_x_axis_switches_between_nm_and_ev_for_display_only(self) -> None:
+        """Double-clicking the x axis label (`toggle_x_unit`) draws everything in photon energy; what the panel gets back stays in nm."""
+        from lspr_imaging_app.analysis.voigt_fit import HC_EV_NM
+
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        plot = self.panel._plot
+        spectrum = self.panel._last[1][0]
+        x_nm, _ = plot._items[0].getData()
+        np.testing.assert_allclose(x_nm, spectrum.wavelengths_nm)
+        plot.set_fit_window((520.0, 580.0))
+        computed = len(self.computed_requests)
+        plot.toggle_x_unit()
+        self.assertEqual(plot.x_unit(), "ev")
+        self.assertIn("eV", plot._item.getAxis("bottom").labelText)
+        x_ev, _ = plot._items[0].getData()
+        np.testing.assert_allclose(x_ev, HC_EV_NM / spectrum.wavelengths_nm)
+        low, high = plot.fit_window()
+        self.assertAlmostEqual(low, 520.0, places=6)
+        self.assertAlmostEqual(high, 580.0, places=6)
+        x_low, x_high = plot.x_range()
+        self.assertLess(x_low, x_high)
+        self.assertGreater(x_low, 100.0, "x_range is in nm, not eV")
+        dragged: list[float] = []
+        plot.wavelength_dragged.connect(dragged.append)
+        plot._axis_cursor.dragged.emit(HC_EV_NM / 550.0)  # the circle dragged to 550 nm's energy
+        self.assertAlmostEqual(dragged[-1], 550.0, places=6)
+        self.assertEqual(len(self.computed_requests), computed, "a display switch computes nothing")
+        self.assertEqual(self.ui_state.get("spectra/x_unit"), "ev")  # remembered
+        plot.toggle_x_unit()
+        np.testing.assert_allclose(plot._items[0].getData()[0], spectrum.wavelengths_nm)
+        self.assertEqual(self.ui_state.get("spectra/x_unit"), "nm")
+        again = SpectraPanel(self.m.scan_results, self.m.roi_toolbox, self.m.selection, self.m.analysis_settings, live=self.m.analysis_live)
+        try:
+            self.ui_state.set("spectra/x_unit", "ev")
+            again.restore_ui_state(self.ui_state)
+            self.assertEqual(again._plot.x_unit(), "ev", "the saved unit is restored")
+        finally:
+            again.shutdown()
+            again.deleteLater()
+
+    def test_the_export_button_saves_the_spectra_as_drawn(self) -> None:
+        import csv
+
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1, 2})
+        self._wait_drawn(2)
+        button = self.panel.export_button
+        written, _notes = button.save_data(self.root / "spectra.csv")
+        with written[0].open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.reader(handle))[1:]
+        for spectrum in self.panel._last[1]:
+            measured = [r for r in rows if r[1] == str(spectrum.roi_id) and r[2] == "measured"]
+            np.testing.assert_array_equal([float(r[3]) for r in measured], spectrum.wavelengths_nm)
+            np.testing.assert_array_equal([float(r[5]) for r in measured], spectrum.values)
+            self.assertEqual(sum(1 for r in rows if r[1] == str(spectrum.roi_id) and r[2] == "metric"), 1 if spectrum.metric_value is not None else 0)
+        self.assertTrue(button.save_figure(self.root / "spectra.png").exists())
+        self.assertNotIn("<image", button.save_figure(self.root / "spectra.svg").read_text(encoding="utf-8"))  # vector
+
     def test_spectra_computed_before_are_reused_and_dropped_with_the_scan(self) -> None:
         """Back to a cube already drawn: no computation; one more ROI selected: only that ROI is computed; a new scan empties the cache."""
         self._open_and_scan()
@@ -481,7 +541,7 @@ class SpectraPanelTests(unittest.TestCase):
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
         self.assertEqual(
-            [label.text() for label in self.panel._ribbon._captions], ["Live", "Formula", "Fit", "Metric", "View"]
+            [label.text() for label in self.panel._ribbon._captions], ["Live", "Formula", "Fit", "Metric", "View", "Export"]
         )
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~850 px before the row could scroll
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 import unittest
+from dataclasses import replace
+from unittest import mock
 
 from PyQt6 import QtWidgets
 
@@ -57,6 +59,14 @@ class DialogTests(unittest.TestCase):
         self.assertFalse(dialog.reopen_check.isChecked())
         self.assertTrue(dialog.auto_apply_check.isChecked())
         self.assertEqual(dialog.values(), current)
+
+    def test_gpu_drawing_is_on_by_default_and_returned_as_shown(self) -> None:
+        self.assertTrue(DEFAULT_PREFERENCES.gpu_drawing)
+        dialog = PreferencesDialog(Preferences(gpu_drawing=False))
+        self.assertFalse(dialog.gpu_check.isChecked())
+        self.assertFalse(dialog.values().gpu_drawing)
+        dialog.button_box.button(Button.RestoreDefaults).click()
+        self.assertTrue(dialog.values().gpu_drawing)
 
     def test_the_cache_choices_are_off_and_the_sizes_with_the_default_marked(self) -> None:
         dialog = PreferencesDialog(DEFAULT_PREFERENCES)
@@ -193,7 +203,9 @@ class WindowTests(unittest.TestCase):
 
     def test_the_dialog_starts_with_the_apps_current_values(self) -> None:
         dialog = self._open()
-        self.assertEqual(dialog.values(), DEFAULT_PREFERENCES)
+        # Drawing with the graphics card is on by default but cannot be without a screen (the tests): the dialog shows what is in effect.
+        self.assertFalse(self.panel.gpu_drawing)
+        self.assertEqual(dialog.values(), replace(DEFAULT_PREFERENCES, gpu_drawing=False))
         self.assertEqual(dialog.values().overlay_cache_mb, self.panel.overlay_cache_mb)
 
     def test_opening_it_twice_brings_the_same_dialog_forward(self) -> None:
@@ -223,6 +235,22 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.panel.overlay_cache_mb, 0)
         self.assertFalse(self.panel._roi_overlay.layers.enabled)
         self.assertEqual(self._open().values().overlay_cache_mb, 0, "reopening shows what was applied")
+
+    def test_gpu_drawing_without_opengl_stays_off_and_says_so(self) -> None:
+        """A computer without OpenGL (remote desktop, an old driver): the switch stays off, a WARNING says why, the view keeps drawing."""
+        from lspr_imaging_app.panels.image import gpu_view
+
+        self.assertFalse(self.panel.gpu_drawing)
+        dialog = self._open()
+        dialog.gpu_check.setChecked(True)
+        with (
+            mock.patch.object(gpu_view, "_offscreen", return_value=False),  # as on a screen without OpenGL
+            mock.patch.object(gpu_view, "opengl_available", return_value=False),
+            self.assertLogs(gpu_view.logger, "WARNING"),
+        ):
+            dialog.button_box.button(Button.Ok).click()
+        self.assertFalse(self.panel.gpu_drawing)
+        self.assertFalse(self._open().values().gpu_drawing, "reopening shows what is in effect")
 
     def test_ok_applies_the_parallel_work_choices_to_the_runtime_for_the_next_job(self) -> None:
         dialog = self._open()

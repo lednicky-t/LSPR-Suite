@@ -125,11 +125,12 @@ class TimingTests(unittest.TestCase):
         self.assertGreaterEqual(timings["prep_ms"], 0.0)
         self.assertGreaterEqual(timings["batches"], 1)
 
-    def test_the_no_fit_metric_counts_its_cubes_as_per_cube(self) -> None:
+    def test_the_no_fit_metric_is_batched_too(self) -> None:
+        """Since 2026-11-02 the "no fit" metric is read off the points in batches (`trace_fit._points_group`), not one cube at a time."""
         timings: dict[str, float] = {}
         traces_from_inputs([make_input(n_cube=12)], "absorbance", MetricSettings(fit_method="none"), timings)
-        self.assertGreater(timings["per_cube_cubes"], 0)
-        self.assertEqual(timings["batches"], 0)
+        self.assertEqual(timings["per_cube_cubes"], 0)
+        self.assertGreaterEqual(timings["batches"], 1)
 
 
 class FallbackTests(unittest.TestCase):

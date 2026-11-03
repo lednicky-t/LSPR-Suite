@@ -175,5 +175,27 @@ class SessionWriterTest(unittest.TestCase):
         self.assertEqual((loaded.rois[0].center_x, loaded.rois[0].label), (10.0, "a"))
 
 
+class ChromaticEncodingTests(unittest.TestCase):
+    """`prepare_session` encodes the chromatic models and landmarks with `_flat_asdict` (2026-11-02, ~5x faster than `asdict` for the
+    ~8,000 models of a real session): the same dicts, copies (not the live lists), and every field a plain value or a list."""
+
+    def test_the_same_dicts_as_asdict_and_copies(self) -> None:
+        from dataclasses import asdict, fields
+
+        from lspr_imaging_app.image_tools.chromatic.model import ChromaticLandmarkObservation, ChromaticTransformModel
+
+        model = ChromaticTransformModel(3, 612.5, affine_matrix=[[1.01, 0.002, -0.4], [0.001, 0.99, 0.7]], rmse_px=0.12, tile_count=9)
+        landmark = ChromaticLandmarkObservation(7, 3, 612.5, 101.25, 55.5)
+        self.assertEqual(session_module._flat_asdict(model, session_module._MODEL_FIELDS), asdict(model))
+        self.assertEqual(session_module._flat_asdict(landmark, session_module._LANDMARK_FIELDS), asdict(landmark))
+        encoded = session_module._flat_asdict(model, session_module._MODEL_FIELDS)
+        encoded["affine_matrix"][0][0] = 5.0
+        self.assertEqual(model.affine_matrix[0][0], 1.01, "the encoded matrix must be a copy: the writer runs on another thread")
+        for cls, sample in ((ChromaticTransformModel, model), (ChromaticLandmarkObservation, landmark)):
+            for f in fields(cls):
+                value = getattr(sample, f.name)
+                self.assertIsInstance(value, (int, float, str, bool, list, type(None)), f"{cls.__name__}.{f.name}: _flat_asdict copies plain values and lists only")
+
+
 if __name__ == "__main__":
     unittest.main()
