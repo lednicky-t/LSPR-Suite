@@ -273,6 +273,58 @@ class VisualSettingsRestoreTests(unittest.TestCase):
             self.assertEqual(again.findChild(SpectraPanel).export_button._context()[0], Path(folder), "remembered across launches")
         self.assertNotEqual(spectra._context()[0], Path(folder), "a folder that is gone is not offered")
 
+    def test_the_figure_dialog_opens_on_the_file_type_last_saved(self) -> None:
+        """PNG at first; a saved SVG is remembered for every plot and across launches; the type of the file written is what is remembered."""
+        from unittest import mock
+
+        from lspr_imaging_app.panels import plot_export_button as module
+        from lspr_imaging_app.panels.sensorgram import SensorgramPanel
+        from lspr_imaging_app.panels.spectra import SpectraPanel
+
+        svg, png = module._FIGURE_FILTERS["svg"], module._FIGURE_FILTERS["png"]
+        saved: list[AppSettings] = []
+        window = self._build(on_settings_changed=saved.append)
+        sensorgram = window.findChild(SensorgramPanel).export_button
+        spectra = window.findChild(SpectraPanel).export_button
+
+        def ask(button: object, answer: object) -> tuple[list[tuple[str, str]], list[Path]]:
+            """Open the figure dialog (answered by `answer(suggested, initial_filter)`); returns what it was offered and the files written."""
+            offered: list[tuple[str, str]] = []
+            written: list[Path] = []
+
+            def dialog(_parent, _caption, suggested, _filters, initial):
+                offered.append((suggested, initial))
+                return answer(suggested, initial)
+
+            with mock.patch.object(module.QFileDialog, "getSaveFileName", side_effect=dialog), \
+                    mock.patch.object(button, "save_figure", side_effect=lambda path: written.append(path) or path):
+                button._ask_save_figure()
+            return offered, written
+
+        with tempfile.TemporaryDirectory() as folder:
+            offered, _ = ask(sensorgram, lambda suggested, initial: ("", ""))
+            self.assertEqual(offered[0][1], png, "PNG before anything was saved")
+            self.assertTrue(offered[0][0].endswith(".png"))
+
+            _, written = ask(sensorgram, lambda suggested, initial: (str(Path(folder) / "fig.svg"), svg))
+            self.assertEqual(written, [Path(folder) / "fig.svg"])
+            _flushed(saved)
+            self.assertEqual(saved[-1].ui_state[keys.PLOT_EXPORT_FIGURE_FORMAT.key], "svg")
+
+            offered, written = ask(spectra, lambda suggested, initial: (suggested, png))  # the name left as suggested, the list changed to PNG
+            self.assertEqual(offered[0][1], svg, "the other plot opens on SVG too")
+            self.assertTrue(offered[0][0].endswith(".svg"))
+            self.assertEqual(written[0].suffix, ".png", "the file type chosen in the list decides when the name was not edited")
+            _flushed(saved)
+            self.assertEqual(saved[-1].ui_state[keys.PLOT_EXPORT_FIGURE_FORMAT.key], "png")
+
+            _, written = ask(spectra, lambda suggested, initial: (str(Path(folder) / "typed.svg"), png))  # a typed extension wins
+            self.assertEqual(written[0].suffix, ".svg")
+            _flushed(saved)
+            again = self._build(initial_settings=saved[-1])
+            offered, _ = ask(again.findChild(SpectraPanel).export_button, lambda suggested, initial: ("", ""))
+            self.assertEqual(offered[0][1], svg, "remembered across launches")
+
 
 if __name__ == "__main__":
     unittest.main()
