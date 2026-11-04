@@ -128,6 +128,7 @@ source_modules =
     lspr_imaging_app.image_tools.mask.raster_tools
     lspr_imaging_app.image_tools.mask.roi_feature_run
     lspr_imaging_app.image_tools.mask.roi_features
+    lspr_imaging_app.image_tools.mask.feature_map
     lspr_imaging_app.image_tools.mask.transient_detection
     lspr_imaging_app.image_tools.mask.transient_gaps
     lspr_imaging_app.image_tools.mask.transient_masks
