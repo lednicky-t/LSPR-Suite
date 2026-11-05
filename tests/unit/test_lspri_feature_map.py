@@ -188,5 +188,37 @@ class FeatureMapTest(unittest.TestCase):
             fm.feature_map(self.logs, disks=self.result.disks, cancelled=lambda: True)
 
 
+class KindLabelsTest(unittest.TestCase):
+    def test_every_kind_has_its_own_label_and_the_saved_ids_are_unchanged(self) -> None:
+        self.assertEqual(set(fm.KIND_LABELS), set(fm.KINDS))
+        self.assertEqual(len(set(fm.KIND_LABELS.values())), len(fm.KINDS))  # no two kinds share a name in the list
+        # The ids, not the labels, are what the app saves (image/feature_map/kind_<id>): renaming a label is free, an id is not.
+        self.assertEqual(fm.KINDS, ("dirt_dark", "dirt_bright", "structure_missing", "structure_extra", "dirt_faint"))
+
+
+class GrowMaskTest(unittest.TestCase):
+    """The margin (`fm.grow_mask`): the one function `score` and the app's regrow of a finished map (2026-11-05) both use."""
+
+    def test_zero_is_the_mask_itself_and_each_step_is_a_diamond(self) -> None:
+        mask = np.zeros((9, 9), dtype=bool)
+        mask[4, 4] = True
+        valid = np.ones_like(mask)
+        self.assertIs(fm.grow_mask(mask, valid, 0), mask)
+        one = fm.grow_mask(mask, valid, 1)
+        self.assertEqual(int(one.sum()), 5)  # the pixel and its four neighbours
+        self.assertFalse(one[3, 3])  # not the corners
+        self.assertEqual(int(fm.grow_mask(mask, valid, 2).sum()), 13)  # 1 + 4 + 8
+
+    def test_it_stays_inside_the_data_and_an_empty_mask_stays_empty(self) -> None:
+        mask = np.zeros((9, 9), dtype=bool)
+        mask[4, 4] = True
+        valid = np.ones_like(mask)
+        valid[:, 5:] = False  # no data from column 5 on
+        grown = fm.grow_mask(mask, valid, 3)
+        self.assertFalse(grown[:, 5:].any())
+        self.assertTrue(grown[4, 1])  # three steps to the left are still data
+        self.assertFalse(fm.grow_mask(np.zeros_like(mask), valid, 3).any())
+
+
 if __name__ == "__main__":
     unittest.main()

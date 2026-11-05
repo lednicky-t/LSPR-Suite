@@ -13,7 +13,10 @@ What is pinned: Process maps the injected kinds and the preview shows exactly th
 once, without a new run; moving ROIs keeps the result (the map has no ROIs), a new rotation or chromatic model drops it, and one while
 it runs refuses it; Apply adds the enabled kinds at the scope the toggle says, merged, in one mask change, inside the area selection;
 a second run with other limits reuses the slow part and the same limits give the same pixels back; the settings are remembered; the
-tool is in the picker and a remembered "roi_features" choice still opens it. A real `QApplication` in-process, never `.exec()`.
+tool is in the picker and a remembered "roi_features" choice still opens it. The margin (2026-11-05) acts on the finished map: no new
+run, regrown on a thread of its own (the old pixels stay and Apply waits until the new ones are in), the newest wins, a change while a
+run goes on lands when it ends, and the pixels are exactly those of a run made with that margin; the margin and the kinds are on the
+ribbon row in the ribbon look and do not widen the Mask tab. A real `QApplication` in-process, never `.exec()`.
 """
 
 from __future__ import annotations
@@ -29,8 +32,10 @@ from PyQt6 import QtWidgets
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
+from tests._qt_fonts import load_system_fonts  # noqa: E402
 
 ensure_repo_paths()
+load_system_fonts()  # the row-width test measures text: the offscreen platform has no fonts of its own
 
 APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
@@ -52,6 +57,7 @@ try:
     from lspr_imaging_app.image_tools.mask_scope import MaskScope
     from lspr_imaging_app.panels.feature_map_task import FeatureMapTask, choose_cubes
     from lspr_imaging_app.panels.image import ImagePanel
+    from lspr_imaging_app.panels.ribbon_icon_size import BUTTON_SIZE
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
@@ -141,9 +147,18 @@ class FeatureMapToolTest(unittest.TestCase):
         self.tab.edit_tool.set_tool(MaskEditTool.FEATURE_MAP)
         self.panel._tool_ribbon.set_category("Mask")
 
-    def _process(self, *, full: bool = False) -> None:
-        if not full and FeatureMapToolTest._shared_keep is not None and self.task._keep is None:
+    def _use_shared_keep(self) -> None:
+        if FeatureMapToolTest._shared_keep is not None and self.task._keep is None:
             self.task._keep = FeatureMapToolTest._shared_keep  # same files, same key: the task reuses it only if the key matches
+
+    def _settle_margin(self) -> None:
+        """Wait for the margin's pixels (made on a thread of their own) to be installed."""
+        self.assertTrue(_pump_until(lambda: not self.task.is_regrowing(), 20.0), "the margin was not applied")
+        _pump(0.05)
+
+    def _process(self, *, full: bool = False) -> None:
+        if not full:
+            self._use_shared_keep()
         before = len(self.messages)
         self.tool._process_button.click()
         self.assertTrue(_pump_until(lambda: len(self.messages) > before and not self.task.is_running()), "the run did not finish")
@@ -189,10 +204,10 @@ class FeatureMapToolTest(unittest.TestCase):
         runs = len(self.summaries)
         notch = synth._spot(synth.NOTCH, 2.0)
         self.assertTrue(self.task.pixels_for(FRAME)[notch].any())
-        self.tool.popover().kind_checks[fm.STRUCTURE_MISSING].setChecked(False)
+        self.tool.kinds_popover().kind_checks[fm.STRUCTURE_MISSING].setChecked(False)
         self.assertFalse(self.task.pixels_for(FRAME)[notch].any())
         self.assertTrue(_pump_until(lambda: self.preview.current() is not None and not self.preview.current().pixels[notch].any(), 5.0))
-        self.tool.popover().kind_checks[fm.DIRT_FAINT].setChecked(True)
+        self.tool.kinds_popover().kind_checks[fm.DIRT_FAINT].setChecked(True)
         self.assertTrue(self.task.pixels_for(FRAME)[synth._spot(synth.FAINT, 2.0)].any())
         self.assertEqual(len(self.summaries), runs)  # no run was needed
 
@@ -375,16 +390,134 @@ class FeatureMapToolTest(unittest.TestCase):
         self._open_tool()
         self._process(full=True)
         first = np.array(self.task.pixels_for(FRAME))
-        self.tool.popover().margin_spin.setValue(3)
+        self.tool.popover().dirt_spin.setValue(5.0)  # a search limit: the map must be made again (the margin and the kinds need no run)
         self.assertIn("settings changed", self.tool._process_button.toolTip())
         self._process()
         self.assertFalse(self.summaries[0].kept)
         self.assertTrue(self.summaries[1].kept)
         self.assertLess(self.summaries[1].seconds, self.summaries[0].seconds)
-        self.assertGreater(int(self.task.pixels_for(FRAME).sum()), int(first.sum()))  # a bigger margin
-        self.tool.popover().margin_spin.setValue(1)
+        self.assertEqual(self.task.result().settings.dirt_min, 0.05)  # the new limit was used
+        self.tool.popover().dirt_spin.setValue(2.0)
         self._process()
         np.testing.assert_array_equal(self.task.pixels_for(FRAME), first)
+
+    # -- the margin and the kinds: they act on the finished map ------------------------------------------------------------
+
+    def test_the_margin_acts_on_the_finished_map_without_a_new_run(self) -> None:
+        self._load()
+        self._open_tool()
+        self._process()  # 12 cubes asked for, the dataset has 2: the same run as asking for 2
+        runs = len(self.summaries)
+        self.assertEqual(self.task.result().margin_px, 1)  # the default
+        first = np.array(self.task.pixels_for(FRAME))
+        self.assertNotIn("settings changed", self.tool._process_button.toolTip())  # a clean signal before the margin moves
+        self.tool.margin_spin().setValue(3)
+        self.assertTrue(self.task.is_regrowing())  # made off the GUI thread: the old pixels stay until the new ones are in
+        np.testing.assert_array_equal(self.task.pixels_for(FRAME), first)
+        self.assertNotIn("settings changed", self.tool._process_button.toolTip())  # the margin is not a search setting
+        self._settle_margin()
+        wider = np.array(self.task.pixels_for(FRAME))
+        self.assertEqual(self.task.result().margin_px, 3)
+        self.assertTrue(np.array_equal(wider | first, wider))  # everything of the narrower mask is still in
+        self.assertGreater(int(wider.sum()), int(first.sum()))
+        self.assertTrue(_pump_until(lambda: self.preview.current() is not None and np.array_equal(self.preview.current().pixels, wider), 5.0))
+        self.tool.margin_spin().setValue(0)
+        self._settle_margin()
+        bare = np.array(self.task.pixels_for(FRAME))
+        self.assertLess(int(bare.sum()), int(first.sum()))
+        self.tool.margin_spin().setValue(1)  # regrown from the ungrown masks each time: back to 1 is exactly the first pixels
+        self._settle_margin()
+        np.testing.assert_array_equal(self.task.pixels_for(FRAME), first)
+        self.assertEqual(len(self.summaries), runs)  # no run was needed for any of it
+
+    def test_the_cube_count_makes_the_map_stale_only_when_the_cubes_would_differ(self) -> None:
+        self._load()
+        self._open_tool()
+        self._process()  # 12 asked (the default), the dataset has 2 cubes
+        stale = "settings changed"
+        self.assertEqual(self.task.result().cubes, (0, 1))
+        self.assertNotIn(stale, self.tool._process_button.toolTip())  # was always claimed on a dataset with fewer cubes than asked
+        cubes = self.tool.popover().cubes_spin
+        cubes.setValue(5)  # still both cubes: the same run
+        self.assertNotIn(stale, self.tool._process_button.toolTip())
+        cubes.setValue(1)  # only cube 0: a different run
+        self.assertIn(stale, self.tool._process_button.toolTip())
+        cubes.setValue(2)  # both again
+        self.assertNotIn(stale, self.tool._process_button.toolTip())
+
+    def test_the_margin_gives_the_pixels_of_a_run_made_with_it(self) -> None:
+        self._load()
+        self._open_tool()
+        self._process()
+        self.tool.margin_spin().setValue(3)
+        self._settle_margin()
+        live = np.array(self.task.pixels_for(FRAME))
+        self._process()  # a new run, with a margin of 3 from the start
+        self.assertEqual(self.task.result().margin_px, 3)
+        self.assertFalse(self.task.is_regrowing())
+        np.testing.assert_array_equal(self.task.pixels_for(FRAME), live)
+
+    def test_the_newest_margin_wins(self) -> None:
+        self._load()
+        self._open_tool()
+        self._process()
+        spin = self.tool.margin_spin()
+        spin.setValue(3)
+        spin.setValue(6)
+        spin.setValue(2)
+        self._settle_margin()
+        self.assertEqual(self.task.margin(), 2)
+        self.assertEqual(self.task.result().margin_px, 2)
+
+    def test_a_margin_changed_while_it_runs_is_applied_when_it_ends(self) -> None:
+        self._load()
+        self._open_tool()
+        self._use_shared_keep()
+        before = len(self.messages)
+        self.tool._process_button.click()
+        self.assertTrue(self.task.is_running())
+        self.tool.margin_spin().setValue(5)
+        self.assertTrue(_pump_until(lambda: len(self.messages) > before and not self.task.is_running()))
+        self._settle_margin()
+        self.assertEqual(self.task.result().margin_px, 5)
+
+    def test_apply_waits_for_a_margin_that_is_being_made(self) -> None:
+        self._load()
+        self._open_tool()
+        self.scope.set_scope(MaskScope.PERSISTENT)
+        self._process()
+        self.tool.margin_spin().setValue(4)
+        self.assertTrue(self.task.is_regrowing())
+        self.assertFalse(self.tool._apply_button.isEnabled())
+        self.assertIn("margin", self.tool._apply_button.toolTip())
+        self.tool.apply()  # refused: the pixels held are still the earlier margin's
+        self.assertIsNone(self.mask.resolve_mask_source(FRAME))
+        self._settle_margin()
+        self.assertTrue(self.tool._apply_button.isEnabled())
+        found = np.array(self.task.pixels_for(FRAME))
+        self.tool._apply_button.click()
+        _pump(0.2)
+        _frame, mask, _scope = self.mask.resolve_mask_source(FRAME)
+        np.testing.assert_array_equal(mask, found)
+        self.assertEqual(self.task.result().margin_px, 4)
+
+    def test_the_margin_and_the_kinds_are_on_the_ribbon_row_in_the_ribbon_look(self) -> None:
+        pop = self.tool.popover()
+        self.assertFalse(hasattr(pop, "margin_spin"))  # the settings popup keeps the search settings only
+        self.assertFalse(hasattr(pop, "kind_checks"))
+        spin = self.tool.margin_spin()
+        self.assertEqual(spin.suffix(), " px")  # the Background tab's exclusion dilatation: a bare "n px" field, one button high
+        self.assertEqual(spin.height(), BUTTON_SIZE)
+        self.assertEqual(spin.buttonSymbols(), QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.assertIn("Margin", spin.toolTip())
+        self.assertEqual(set(self.tool.kinds_popover().kind_checks), set(fm.KINDS))
+        self.assertIn("Kinds", self.tool._kinds_button.toolTip())
+
+    def test_the_two_new_controls_do_not_widen_the_mask_tab(self) -> None:
+        # the tool rows share one stacked widget, as wide as the widest row: the Feature map row must fit inside it
+        stack = self.tab._edit_stack
+        others = {type(stack.widget(i)).__name__: stack.widget(i).sizeHint().width() for i in range(stack.count()) if stack.widget(i) is not self.tool}
+        self.assertLessEqual(self.tool.sizeHint().width(), max(others.values()), (self.tool.sizeHint().width(), others))
 
     def test_the_settings_are_remembered_and_have_working_defaults(self) -> None:
         pop = self.tool.popover()
@@ -399,14 +532,17 @@ class FeatureMapToolTest(unittest.TestCase):
         self.tool.bind_ui_state(store)
         s = self.tool.settings()
         self.assertEqual((s.dirt_min, s.structure_min, s.certainty, s.core_share, s.grow_px), (0.035, 0.2, 6.0, 0.4, 2))
+        self.assertEqual(self.tool.margin_spin().value(), 2)  # the same saved keys as when the margin was in the popup
+        self.assertEqual(self.task.margin(), 2)
         self.assertEqual(pop.cubes(), 5)
         self.assertIn(fm.DIRT_FAINT, self.task.kinds())  # the task follows the remembered kinds
         self.assertNotIn(fm.DIRT_BRIGHT, self.task.kinds())
         pop.certainty_spin.setValue(7.0)  # a later change is written down
         self.assertEqual(store.get("image/feature_map/certainty"), 7.0)
-        pop.reset_button.click()
+        pop.reset_button.click()  # Defaults also puts back the margin and the kinds, which are on the ribbon row now
         self.assertEqual(self.tool.settings(), fm.FeatureMapSettings())
         self.assertEqual(self.task.kinds(), fm.FeatureMapSettings().kinds)
+        self.assertEqual(self.task.margin(), fm.FeatureMapSettings().grow_px)
 
     def test_the_tool_is_in_the_picker_and_a_remembered_choice_still_opens_it(self) -> None:
         labels = [action.text() for action in self.tab._edit_picker._menu.actions()]
