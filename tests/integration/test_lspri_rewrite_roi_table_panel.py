@@ -968,12 +968,6 @@ class GroupOnlyViewTest(_PanelCase):
         self.selection.set_roi_selection({1})
         self.assertFalse(self.tree.isExpanded(self.header("group_1")))
 
-    def test_the_toolbar_button_and_the_context_menu_switch_it(self) -> None:
-        self.panel._group_only_button.click()
-        self.assertTrue(self.panel.group_only())
-        self.panel._group_only_button.click()
-        self.assertFalse(self.panel.group_only())
-
     def test_it_is_reported_remembered_and_restored(self) -> None:
         reported: list[bool] = []
         self.panel.group_only_changed.connect(reported.append)
@@ -984,7 +978,6 @@ class GroupOnlyViewTest(_PanelCase):
         later = RoiTablePanel(self.toolbox, self.selection, self.geometry)
         later.restore_ui_state(store)
         self.assertTrue(later.group_only())
-        self.assertTrue(later._group_only_button.isChecked())
         later.deleteLater()
 
     def test_the_dock_title_is_the_switch(self) -> None:
@@ -1002,6 +995,26 @@ class GroupOnlyViewTest(_PanelCase):
         dock.set_title_current(1)
         roi_word.clicked.emit()
         self.assertEqual(picked, [1, 0])
+        dock.deleteLater()
+
+    def test_a_dock_made_after_the_restore_starts_on_the_saved_view_and_can_leave_it(self) -> None:
+        """The reported bug (2026-11-05): the panel restores "Groups-only" from the saved settings *before* the dock exists, so the
+        title used to start on "ROI" while the table was locked, and neither word could switch it back."""
+        from lspr_imaging_app.app_rewrite import _wire_roi_table_title
+        from lspr_imaging_app.panels.dock_container import PanelContainer
+
+        self.panel.restore_ui_state(UiStateStore({"roi_table/group_only": True}))
+        self.assertTrue(self.panel.group_only())
+        dock = PanelContainer("ROI / Groups", self.panel)
+        _wire_roi_table_title(dock, self.panel)
+        self.assertEqual(dock._title_current, 1)  # "Groups" is highlighted, as the table really is
+        dock._title_words[0].clicked.emit()  # a click on "ROI" leaves the locked view
+        self.assertFalse(self.panel.group_only())
+        self.assertEqual(dock._title_current, 0)
+        self.assertTrue(self.tree.isExpanded(self.header("group_1")))
+        dock._title_words[1].double_clicked.emit()  # and a double click on "Groups" goes back
+        self.assertTrue(self.panel.group_only())
+        self.assertEqual(dock._title_current, 1)
         dock.deleteLater()
 
 
