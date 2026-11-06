@@ -710,10 +710,10 @@ class StepTablePanelTest(StepTableBase):
         self.assertTrue(all("±" in t for t in texts), texts)
         self.assertTrue(all(widget.isHidden() is False for widget in (self._controls().add_compare_button,)))
 
-    def test_the_new_column_says_in_the_footer_when_its_pair_is_not_set(self) -> None:
+    def test_the_new_column_says_in_the_title_bar_when_its_pair_is_not_set(self) -> None:
         self._show_steps()
         self._controls().add_compare_button.click()
-        self.assertIn("Choose the baseline and signal step", self.view._footer.text())
+        self.assertIn("Choose the baseline and signal step", self.view.status_text())
         self.assertTrue(all(t == "" for t in self._texts(COLUMN_COUNT + 2)))
 
     def test_the_arrow_in_the_header_opens_the_menu_and_a_click_there_is_not_a_sort(self) -> None:

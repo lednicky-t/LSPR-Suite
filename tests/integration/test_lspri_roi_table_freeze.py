@@ -280,7 +280,7 @@ class RightClickAndMemoryTest(FreezeBase):
         checkable = [a for a in self.panel._view_menu.actions() if a.isCheckable()]
         self.assertEqual([a.isChecked() for a in checkable], [False, True])
 
-    def test_a_freeze_too_wide_for_the_panel_says_so_in_the_footer(self) -> None:
+    def test_a_freeze_too_wide_for_the_panel_says_so_in_the_title_bar(self) -> None:
         self.panel._freeze._choose(COLUMN_Y)
         self.assertTrue(any("too much of the panel" in m for m in self.messages), self.messages)
         self.panel._freeze._choose(COLUMN_X)

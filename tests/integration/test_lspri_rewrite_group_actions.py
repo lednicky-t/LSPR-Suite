@@ -61,7 +61,7 @@ class GroupActionsTests(unittest.TestCase):
     def test_group_by_rows_makes_one_group_per_row_with_distinct_colours_and_one_undo(self) -> None:
         self.controls.by_rows_requested.emit()
         groups = self.toolbox.groups()
-        self.assertEqual([g.name for g in groups], ["Row 1", "Row 2"])
+        self.assertEqual([g.name for g in groups], ["Row 01", "Row 02"])
         self.assertEqual(self._group_spots(), [{(10, 10), (35, 10), (60, 10)}, {(10, 50), (35, 50), (60, 50)}])
         self.assertNotEqual(groups[0].sample_color_hex, groups[1].sample_color_hex)
         undo_manager.undo()
@@ -69,8 +69,19 @@ class GroupActionsTests(unittest.TestCase):
 
     def test_group_by_columns_makes_one_group_per_column(self) -> None:
         self.controls.by_columns_requested.emit()
-        self.assertEqual([g.name for g in self.toolbox.groups()], ["Column 1", "Column 2", "Column 3"])
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["Column 01", "Column 02", "Column 03"])
         self.assertEqual(self._group_spots()[1], {(35, 10), (35, 50)})
+
+    def test_line_group_names_sort_in_numeric_order(self) -> None:
+        # 12 rows: plain text sorting of "Row 1".."Row 12" would give 1, 10, 11, 12, 2, ...; padded names must not.
+        for y in range(100, 100 + 10 * 40, 40):
+            self.toolbox.add_roi(10.0, float(y), sample_diameter_px=10.0)
+            self.toolbox.add_roi(60.0, float(y), sample_diameter_px=10.0)
+        self.controls.by_rows_requested.emit()
+        names = [g.name for g in self.toolbox.groups()]
+        self.assertEqual(len(names), 12)
+        self.assertEqual(sorted(names), names)
+        self.assertEqual((names[0], names[-1]), ("Row 01", "Row 12"))
 
     def test_group_by_rows_uses_only_the_selection_when_there_is_one(self) -> None:
         top_row = {r.area_roi_id for r in self.toolbox.rois() if r.center_y == 10}

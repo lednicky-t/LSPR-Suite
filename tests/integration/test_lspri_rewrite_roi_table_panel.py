@@ -160,7 +160,7 @@ class _PanelCase(unittest.TestCase):
         return index
 
     def footer(self) -> str:
-        return self.panel._footer.text()
+        return self.panel.status_text()
 
 
 class AppearanceTest(_PanelCase):
@@ -195,7 +195,7 @@ class AppearanceTest(_PanelCase):
     def test_no_rois_shows_the_hint_and_adding_one_shows_the_table(self) -> None:
         empty = RoiTablePanel(RoiToolbox(), SelectionModule(), self.geometry)
         self.assertEqual(empty._stack.currentIndex(), 1)
-        self.assertEqual(empty._footer.text(), "No ROIs")
+        self.assertEqual(empty.status_text(), "No ROIs")
         self.assertEqual(self.panel._stack.currentIndex(), 0)
         self.assertEqual(self.footer(), "5 ROIs")
 
@@ -257,9 +257,53 @@ class AppearanceTest(_PanelCase):
         self.edit(2, COLUMN_SAMPLE, "10")  # typed in µm
         self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 20.0)
 
-    def test_the_footer_counts_rois_and_the_selection(self) -> None:
+    def test_the_title_bar_counts_rois_and_the_selection(self) -> None:
         self.selection.set_roi_selection({1, 2})
         self.assertEqual(self.footer(), "5 ROIs  ·  2 selected")
+
+    def test_the_counts_are_fields_of_fixed_places_and_nothing_is_left_under_the_table(self) -> None:
+        self.selection.set_roi_selection({1, 2})
+        roi_count, group_count, selected = self.panel.title_columns()
+        self.assertEqual((roi_count.text, group_count.text, selected.text), ("5 ROIs", "", "2 selected"))
+        self.assertTrue(roi_count.widest and group_count.widest, "sized fields: a group count appearing must not shift the ones after it")
+        layout = self.panel.layout()
+        self.assertIs(layout.itemAt(layout.count() - 1).widget(), self.panel._stack, "the row under the table is gone")
+
+    def test_a_change_of_the_counts_is_announced_to_the_dock_once(self) -> None:
+        announced = []
+        self.panel.title_columns_changed.connect(announced.append)
+        self.selection.set_roi_selection({1})
+        self.assertEqual(len(announced), 1)
+        self.selection.set_roi_selection({1})  # nothing changed: nothing to redraw in the title bar
+        self.assertEqual(len(announced), 1)
+        self.assertEqual(announced[0][2].text, "1 selected")
+
+    def test_a_notice_takes_the_place_of_the_counts_for_a_while_and_the_counts_come_back(self) -> None:
+        self.panel._show_notice("Sort by # (ascending) to reorder ROIs.", error=True)
+        (notice,) = self.panel.title_columns()
+        self.assertEqual(notice.text, "Sort by # (ascending) to reorder ROIs.")
+        self.assertEqual(notice.color, get_active_theme().accent_red)
+        self.assertEqual(notice.tooltip, notice.text, "the whole text stays readable when the title bar is too narrow for it")
+        self.assertTrue(self.panel._notice_timer.isActive())
+        self.panel._notice_timer.timeout.emit()  # the pause is over
+        self.assertEqual(self.footer(), "5 ROIs")
+        self.assertFalse(self.panel._notice_timer.isActive())
+
+    def test_the_dock_title_bar_shows_the_fields(self) -> None:
+        from lspr_imaging_app.panels.dock_container import PanelContainer
+
+        window = QtWidgets.QMainWindow()
+        dock = PanelContainer("ROI / Groups", self.panel, window)
+        self.panel.title_columns_changed.connect(dock.set_subtitle_columns)
+        dock.set_subtitle_columns(self.panel.title_columns())
+        self.selection.set_roi_selection({1, 2})
+        def shown() -> list[str]:  # the unsized field is an elided label: cut to the room it has, so ask for its whole text
+            return [label.full_text() if hasattr(label, "full_text") else label.text() for label in dock._subtitle_column_labels]
+
+        self.assertEqual(shown(), ["5 ROIs", "", "2 selected"])
+        self.panel._show_notice("Hello")
+        self.assertEqual(shown(), ["Hello"])
+        window.deleteLater()
 
 
 class SharedDisplayStyleTest(_PanelCase):
@@ -822,10 +866,10 @@ class CommandTest(_PanelCase):
         action["Expand"].trigger()
         self.assertTrue(self.panel._tree.isExpanded(self.header("group_1")))
 
-    def test_footer_counts_groups(self) -> None:
+    def test_title_bar_counts_groups(self) -> None:
         self.toolbox.group_rois((1,), "A")
         self.refresh()
-        self.assertIn("1 group", self.panel._footer.text())
+        self.assertIn("1 group", self.panel.status_text())
 
     def test_moving_a_group_up_and_down(self) -> None:
         self.toolbox.group_rois((1,), "A")
