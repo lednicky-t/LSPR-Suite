@@ -3,6 +3,8 @@
 Pinned: hiding takes out that column only; the entries follow the state (the title of the column under the pointer, the list of hidden
 columns, greyed when nothing is hidden); a view mode never brings a hidden column back, and a hidden column the mode does not show is not offered; a hidden column keeps its width;
 a table sorted by a hidden column goes back to the # order; the hidden columns are remembered and come back; a freeze that ends at a hidden column holds the visible ones before it.
+With #/ROIs hidden: a group header draws no chevron, chip or count (and has no click zone for them; the arrow keys open and close the group), its name starts where a ROI's label
+does, and the colour the dot / chip showed is painted behind the label (a ROI's label cell, a group's header up to the step columns) and goes again when the column is shown.
 For the step columns: a hidden step stays hidden when the columns are rebuilt, refitted or renumbered (it is named by what it is), the fitting never shows it, the numbers of
 a group header are not drawn for it, it comes back through the menu and after a restart; and a comparison column is hidden by its pair and calculation.
 """
@@ -14,9 +16,10 @@ import unittest
 from unittest import mock
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
-from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QHeaderView, QLineEdit
+from PyQt6.QtCore import QEvent, QModelIndex, QPoint, QPointF, Qt
+from PyQt6.QtGui import QColor, QMouseEvent
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QHeaderView, QLineEdit, QStyleOptionViewItem
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
@@ -31,8 +34,8 @@ _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 try:
     from lspr_imaging_app.image_tools import GeometryModule
     from lspr_imaging_app.panels.roi_table import RoiTablePanel
-    from lspr_imaging_app.panels.roi_table.delegate import RoiTableDelegate
-    from lspr_imaging_app.panels.roi_table.model import KIND_ROLE
+    from lspr_imaging_app.panels.roi_table.delegate import CHEVRON_ZONE, LABEL_WASH_ALPHA, RoiTableDelegate, label_wash_of
+    from lspr_imaging_app.panels.roi_table.model import COLOR_ROLE, KIND_ROLE
     from lspr_imaging_app.panels.roi_table.rows import (
         COLUMN_COUNT,
         COLUMN_ID,
@@ -277,13 +280,203 @@ class HidingTheFirstColumnTest(FixedColumnsBase):
         self.assertGreater(rect.width(), 0)
         self.assertEqual(rect.width(), self.tree.header().length())
 
-    def test_the_chevron_still_collapses_and_opens_a_group(self) -> None:
+    # Row heights: Qt asks only the columns from the first one *with width* on, so with #/ROIs collapsed the delegate's "column 0 decides" left every row at height 0 as soon
+    # as the table was rebuilt (found by the maintainer 2026-11-06: an empty table at start-up, and everything gone on a click on a group).
+
+    def assertRowsHaveHeight(self) -> None:
+        for group in self.model.group_headers():
+            self.assertGreater(self.tree.visualRect(group).height(), 0, "a group header has no height")
+        cells, _dots = self.painted()
+        self.assertIn(("group", COLUMN_ID), cells, "no group header was drawn")
+        self.assertTrue([kind for kind, _column in cells if kind == "roi"], "no ROI row was drawn")
+
+    def test_the_rows_keep_their_height_when_the_table_is_rebuilt_with_the_column_hidden(self) -> None:
+        for mode in (VIEW_GEOMETRY, VIEW_SIMPLE):
+            with self.subTest(mode=mode):
+                self.panel._view_actions[mode].trigger()
+                self.hide._hide_section(COLUMN_ID)
+                self.panel.refresh_now()
+                _APP.processEvents()
+                self.assertRowsHaveHeight()
+                self.hide._show(COLUMN_ID)
+
+    def test_a_click_on_a_group_header_with_the_column_hidden_does_not_empty_the_table(self) -> None:
         self.hide._hide_section(COLUMN_ID)
-        self.assertTrue(self.tree.isExpanded(self.group()))
+        self.panel.refresh_now()
+        _APP.processEvents()
+        for x in (30, 200):  # (over where the chevron / the name is)
+            center = self.tree.visualRect(self.group()).center()
+            QTest.mouseClick(self.tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, center.y()))
+            _APP.processEvents()
+            self.panel.refresh_now()  # (what the selection that follows may trigger)
+            _APP.processEvents()
+            self.assertRowsHaveHeight()
+        self.assertEqual(sorted(self.panel._selection.selected_roi_ids()), [1], "the click did not select the group's ROI")
+
+    def test_a_panel_started_with_the_column_hidden_has_rows(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        for show_first in (True, False):  # (laid out before the first fill, or filled before it was ever shown: Qt then asks the model's columns, not the header's)
+            with self.subTest(shown_before_the_fill=show_first):
+                again = RoiTablePanel(self.toolbox, SelectionModule(), GeometryModule())
+                again.restore_ui_state(self.ui)
+                again.resize(800, 340)
+                if show_first:
+                    again.show()
+                again.refresh_now()
+                again.show()
+                _APP.processEvents()
+                self.assertEqual(again._tree.columnWidth(COLUMN_ID), 0)
+                for group in again._model.group_headers():
+                    self.assertGreater(again._tree.visualRect(group).height(), 0)
+                self.assertGreater(again._tree.visualRect(again._model.roi_index(2, COLUMN_X)).height(), 0)
+                again.hide()
+                again.deleteLater()
+
+    def test_the_delegate_gives_a_row_height_from_the_first_column_with_width(self) -> None:
+        option = QStyleOptionViewItem()
+        option.widget, option.fontMetrics = self.tree, self.tree.fontMetrics()
+        delegate, other = self.tree.itemDelegate(), self.model.roi_index(2, COLUMN_X)
+        self.assertEqual(delegate.sizeHint(option, other).height(), 0, "the shortcut for the columns Qt does not ask is gone")
+        self.hide._hide_section(COLUMN_ID)
+        self.assertEqual(delegate.sizeHint(option, other).height(), delegate.sizeHint(option, self.model.roi_index(2, COLUMN_ID)).height())
+        self.assertGreater(delegate.sizeHint(option, other).height(), 0)
+
+    def click_left_edge(self) -> None:
         self.tree.mousePressEvent(self.mouse(QEvent.Type.MouseButtonPress, 10, self.tree.visualRect(self.group()).center().y()))
+
+    def test_with_the_column_shown_the_chevron_collapses_and_opens_a_group(self) -> None:
+        self.assertTrue(self.tree.isExpanded(self.group()))
+        self.click_left_edge()
         self.assertFalse(self.tree.isExpanded(self.group()))
-        self.tree.mousePressEvent(self.mouse(QEvent.Type.MouseButtonPress, 10, self.tree.visualRect(self.group()).center().y()))
+        self.click_left_edge()
         self.assertTrue(self.tree.isExpanded(self.group()))
+
+    def test_with_the_column_hidden_there_is_no_chevron_to_click_and_the_arrow_keys_open_and_close_the_group(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        self.click_left_edge()
+        self.assertTrue(self.tree.isExpanded(self.group()), "a click where the chevron was toggled the group")
+        self.tree.setCurrentIndex(self.group())
+        QTest.keyClick(self.tree, Qt.Key.Key_Left)
+        self.assertFalse(self.tree.isExpanded(self.group()))
+        QTest.keyClick(self.tree, Qt.Key.Key_Right)
+        self.assertTrue(self.tree.isExpanded(self.group()))
+        self.hide._show(COLUMN_ID)
+        self.click_left_edge()
+        self.assertFalse(self.tree.isExpanded(self.group()), "the chevron did not come back with the column")
+
+    def marks_drawn(self) -> int:
+        """How many group headers drew their chevron, colour chip and count in one paint of the table."""
+        drawn, real = [], RoiTableDelegate._paint_group_marks
+
+        def spy(*args, **kwargs):
+            drawn.append(1)
+            return real(*args, **kwargs)
+
+        RoiTableDelegate._paint_group_marks = staticmethod(spy)
+        try:
+            self.tree.viewport().grab()
+        finally:
+            RoiTableDelegate._paint_group_marks = staticmethod(real)
+        return len(drawn)
+
+    def test_a_group_header_draws_no_chevron_chip_or_count_while_the_column_is_hidden(self) -> None:
+        shown = self.marks_drawn()
+        self.assertEqual(shown, len(self.model.group_headers()))
+        self.hide._hide_section(COLUMN_ID)
+        self.assertEqual(self.marks_drawn(), 0)
+        self.hide._show(COLUMN_ID)
+        self.assertEqual(self.marks_drawn(), shown)
+
+    def test_there_is_no_colour_chip_to_double_click_while_the_column_is_hidden(self) -> None:
+        index = self.group()
+        chip_x = self.tree.visualRect(index).left() + CHEVRON_ZONE + 4
+        self.assertTrue(self.tree._on_chip(index, chip_x))
+        self.hide._hide_section(COLUMN_ID)
+        self.assertFalse(self.tree._on_chip(index, chip_x), "a double-click on the empty place of the chip would open the colour dialog")
+
+    def test_the_name_starts_where_a_roi_label_starts_and_the_editor_follows(self) -> None:
+        def name_rect():
+            option = QStyleOptionViewItem()
+            option.rect, option.widget, option.fontMetrics = self.tree.visualRect(self.group()), self.tree, self.tree.fontMetrics()
+            return RoiTableDelegate._group_name_rect(option, self.group(), "1")
+
+        self.assertGreater(name_rect().left(), self.tree.columnWidth(COLUMN_ID))
+        self.hide._hide_section(COLUMN_ID)
+        label_text_left = self.tree.visualRect(self.group()).left() + 6  # where the text of the first visible column starts (the delegate's cell padding)
+        self.assertEqual(name_rect().left(), label_text_left)
+        self.tree.edit(self.group())
+        self.assertLessEqual(self.tree.indexWidget(self.group()).geometry().left(), label_text_left)
+
+    # The colour a dot / chip showed is painted behind the label instead (`delegate.LABEL_WASH_ALPHA`).
+
+    def blend(self, base: QColor, color_hex: str) -> QColor:
+        color = QColor(color_hex)
+        alpha = LABEL_WASH_ALPHA
+        return QColor(*(round(b + (c - b) * alpha) for b, c in ((base.red(), color.red()), (base.green(), color.green()), (base.blue(), color.blue()))))
+
+    def pixel(self, x: int, y: int) -> QColor:
+        self.tree.setCurrentIndex(QModelIndex())  # (the current row's focus highlight is painted over its cells)
+        self.tree.clearSelection()
+        return self.tree.viewport().grab().toImage().pixelColor(x, y)
+
+    def simple_view(self) -> None:
+        """The Label column is only in the Simple view (the table starts in the Geometry view, where a ROI's colour stays in its Shape pictogram)."""
+        self.panel._view_actions[VIEW_SIMPLE].trigger()
+        self.panel.refresh_now()
+        _APP.processEvents()
+
+    def label_pixel(self, roi: int) -> QColor:
+        """A pixel at the right end of a ROI's label cell, clear of its text."""
+        cell = self.model.roi_index(roi, COLUMN_NAME)
+        header = self.tree.header()
+        return self.pixel(header.sectionViewportPosition(COLUMN_NAME) + header.sectionSize(COLUMN_NAME) - 8, self.tree.visualRect(cell).center().y())
+
+    def group_pixel(self) -> QColor:
+        """A pixel at the far end of the group header, clear of its name."""
+        return self.pixel(self.tree.header().length() - 12, self.tree.visualRect(self.group()).center().y())
+
+    def assertClose(self, got: QColor, want: QColor, tolerance: int = 4) -> None:
+        self.assertTrue(
+            all(abs(a - b) <= tolerance for a, b in ((got.red(), want.red()), (got.green(), want.green()), (got.blue(), want.blue()))),
+            f"{got.name()} is not {want.name()}",
+        )
+
+    def test_a_roi_label_takes_the_colour_of_the_roi_while_the_column_is_hidden_and_loses_it_when_it_is_shown(self) -> None:
+        self.simple_view()
+        color = self.model.data(self.model.roi_index(2, COLUMN_NAME), COLOR_ROLE)
+        self.assertTrue(color)
+        plain = self.label_pixel(2)
+        self.hide._hide_section(COLUMN_ID)
+        washed = self.label_pixel(2)
+        self.assertNotEqual(washed.name(), plain.name())
+        self.assertClose(washed, self.blend(plain, color))
+        self.hide._show(COLUMN_ID)
+        self.assertEqual(self.label_pixel(2).name(), plain.name())
+
+    def test_the_wash_covers_the_label_cell_and_stops_at_its_end(self) -> None:
+        self.simple_view()
+        self.hide._hide_section(COLUMN_ID)
+        y = self.tree.visualRect(self.model.roi_index(2, COLUMN_NAME)).center().y()
+        end = self.tree.header().length()  # the Simple view is just #/ROIs (nothing now) and the label
+        self.assertLess(end + 20, self.tree.viewport().width())
+        self.assertNotEqual(self.pixel(end - 8, y).name(), self.pixel(end + 20, y).name(), "the label cell is not washed, or the wash runs on past it")
+
+    def test_a_group_header_takes_the_colour_of_the_group_behind_its_name(self) -> None:
+        color = self.model.data(self.group(), COLOR_ROLE)
+        self.assertTrue(color)
+        plain = self.group_pixel()
+        self.hide._hide_section(COLUMN_ID)
+        self.assertClose(self.group_pixel(), self.blend(plain, color))
+        self.hide._show(COLUMN_ID)
+        self.assertEqual(self.group_pixel().name(), plain.name())
+
+    def test_a_row_with_no_colour_gets_no_wash(self) -> None:
+        self.assertIsNone(label_wash_of(None))
+        self.assertIsNone(label_wash_of(""))
+        self.assertIsNone(label_wash_of("not a colour"))
+        wash = label_wash_of("#336699")
+        self.assertEqual(wash.name(), "#336699")
+        self.assertAlmostEqual(wash.alphaF(), LABEL_WASH_ALPHA, delta=0.01)
 
     def test_a_group_can_still_be_renamed_and_the_editor_is_in_view(self) -> None:
         self.hide._hide_section(COLUMN_ID)
@@ -466,6 +659,20 @@ class HiddenFirstColumnWithStepsTest(StepColumnsBase):
 
 
 class HiddenComparisonColumnsTest(StepColumnsBase):
+    def test_the_menus_name_a_comparison_column_without_underscores_and_a_step_by_its_own_title(self) -> None:
+        self.table.add_compare()
+        _pump(lambda: False, 0.1)
+        column = self.model.columnCount() - 1
+        self.assertEqual(self.title_of(column), "μ_S1 − μ_B1")  # the header draws the subscripts; a menu entry cannot
+        self.hide.prepare(column)
+        self.assertEqual(self.hide._hide.text(), "Hide column “μS1 − μB1”")
+        self.hide._hide_section(column)
+        self.hide.prepare(COLUMN_X)
+        self.assertEqual(menu_texts(self.hide._show_menu), ["μS1 − μB1"])
+
+    def title_of(self, column: int) -> str:
+        return str(self.model.headerData(column, HORIZONTAL, Qt.ItemDataRole.DisplayRole))
+
     def test_a_comparison_column_is_hidden_by_its_pair_and_calculation(self) -> None:
         spec = self.table.add_compare()
         _pump(lambda: False, 0.1)

@@ -21,7 +21,7 @@ try:
 
     from lspr_imaging_app.analysis.export_tables import roi_step_table
     from lspr_imaging_app.analysis.step_table import OP_DIFFERENCE, OP_SNR, RowNumbers, StepValue, compare_values
-    from lspr_imaging_app.selection.step_table_module import CellValue, StepColumn
+    from lspr_imaging_app.selection.step_table_module import CellValue, StepColumn, compare_title
     from lspr_imaging_app.analysis.trace_store import TraceStore
     from lspr_imaging_app.domain.roi_model import AreaRoiGroup
     from lspr_imaging_app.panels.roi_table import rows as rw
@@ -140,6 +140,87 @@ class CellTextTest(unittest.TestCase):
         self.assertIn("signal-to-noise 25.31", tip)
         self.assertNotIn("SD", tip)
         self.assertIn("baseline or signal step", sc.cell_tooltip("ROI 3", snr, None, is_group=False))
+
+
+class SubscriptRunsTest(unittest.TestCase):
+    """A comparison column's title is split into plain and subscript runs for the header to draw (2026-11-06)."""
+
+    def test_a_title_with_subscripts(self) -> None:
+        self.assertEqual(sc.subscript_runs("μ_S1 − μ_B1"), [("μ", False), ("S1", True), (" − μ", False), ("B1", True)])
+        self.assertEqual(
+            sc.subscript_runs("(μ_S1 − μ_B1) / σ_B1"),
+            [("(μ", False), ("S1", True), (" − μ", False), ("B1", True), (") / σ", False), ("B1", True)],
+        )
+
+    def test_a_title_without_one_is_a_single_plain_run(self) -> None:
+        self.assertEqual(sc.subscript_runs("Step 1"), [("Step 1", False)])
+        self.assertEqual(sc.subscript_runs(""), [("", False)])
+        self.assertEqual(sc.subscript_runs("a_"), [("a_", False)])  # an underscore with nothing after it is a plain character
+        self.assertEqual(sc.subscript_runs("a_-"), [("a_-", False)])
+
+    def test_the_runs_read_back_as_the_title_without_its_underscores(self) -> None:
+        for title in ("μ_S2 − μ_B2", "(μ_S1 − μ_B1) / σ_B1", "plain"):
+            self.assertEqual("".join(text for text, _sub in sc.subscript_runs(title)), title.replace("_", ""))
+
+    def test_the_operation_menu_rows_are_the_formula_picture_and_a_short_name(self) -> None:
+        """The row's formula is a picture with subscripts (`title_html`); the name after it is short, with no explanation in brackets (the tip says the rest)."""
+        self.assertEqual(sc.OPERATION_LABELS, {"difference": "Shift", "snr": "Signal to noise"})
+        for op, label in sc.OPERATION_LABELS.items():
+            self.assertNotIn("(", label, op)
+            self.assertNotIn("_", label, op)
+
+    def test_a_title_as_html_has_real_subscripts(self) -> None:
+        self.assertEqual(sc.title_html("μ_S1 − μ_B1"), "μ<sub>S1</sub> − μ<sub>B1</sub>")
+        self.assertEqual(sc.title_html("(μ_S2 − μ_B2) / σ_B2"), "(μ<sub>S2</sub> − μ<sub>B2</sub>) / σ<sub>B2</sub>")
+        self.assertEqual(sc.title_html("a < b"), "a &lt; b")  # (text is escaped)
+
+    def test_the_title_of_a_comparison_column_is_written_in_one_place(self) -> None:
+        self.assertEqual(compare_title(1, OP_DIFFERENCE), "μ_S1 − μ_B1")
+        self.assertEqual(compare_title(2, OP_SNR), "(μ_S2 − μ_B2) / σ_B2")
+
+    def test_the_plain_title_has_no_underscores(self) -> None:
+        self.assertEqual(sc.plain_title("μ_S1 − μ_B1"), "μS1 − μB1")
+        self.assertEqual(sc.plain_title("(μ_S2 − μ_B2) / σ_B2"), "(μS2 − μB2) / σB2")
+
+    def test_a_comparison_cell_tool_tip_names_the_column_without_underscores(self) -> None:
+        column = StepColumn(("cmp", 1), 0, "μ_S1 − μ_B1", "", (), None, "compare", "nm", None, "difference", True, "S1 - B1", OP_DIFFERENCE, 1)
+        self.assertTrue(sc.cell_tooltip("ROI 3", column, CellValue(3, 1.5, 0.22, True), is_group=False).startswith("ROI 3 - μS1 − μB1\n"))
+        step = StepColumn((1, 0), 1, "30perEG_-_ch2", "", (), None)  # a step's title is the user's note: untouched
+        self.assertTrue(sc.cell_tooltip("ROI 3", step, CellValue(3, 595.0, 0.1, True), is_group=False).startswith("ROI 3 - 30perEG_-_ch2\n"))
+
+
+class ElideRunsTest(unittest.TestCase):
+    """A title too wide for its column is cut with "..." and keeps its subscripts as far as it goes (2026-11-06: in a column the user made 61 px wide the formula used to fall
+    back to the text with underscores)."""
+
+    @staticmethod
+    def advance(text: str, sub: bool) -> int:
+        return len(text) * (4 if sub else 5)  # a stand-in for the fonts: 5 px a letter, 4 px in a subscript
+
+    RUNS = [("μ", False), ("S1", True), (" − μ", False), ("B1", True)]  # 5 + 8 + 20 + 8 = 41 px
+
+    def test_a_title_that_fits_is_not_changed(self) -> None:
+        self.assertEqual(sc.elide_runs(self.RUNS, self.advance, 41), self.RUNS)
+        self.assertEqual(sc.elide_runs(self.RUNS, self.advance, 100), self.RUNS)
+
+    def test_a_title_that_does_not_fit_is_cut_at_the_end_with_an_ellipsis_and_fits(self) -> None:
+        for width in range(6, 41):
+            cut = sc.elide_runs(self.RUNS, self.advance, width)
+            self.assertLessEqual(sum(self.advance(t, s) for t, s in cut), width, width)
+            if cut:
+                self.assertEqual(cut[-1], (sc.ELLIPSIS, False), width)
+
+    def test_the_subscripts_are_kept_as_far_as_the_title_goes(self) -> None:
+        self.assertEqual(sc.elide_runs(self.RUNS, self.advance, 30), [("μ", False), ("S1", True), (" −", False), (sc.ELLIPSIS, False)])
+        self.assertEqual(sc.elide_runs(self.RUNS, self.advance, 14), [("μ", False), ("S", True), (sc.ELLIPSIS, False)])
+
+    def test_the_text_never_comes_back_with_underscores(self) -> None:
+        for width in range(0, 45):
+            self.assertNotIn("_", "".join(text for text, _sub in sc.elide_runs(self.RUNS, self.advance, width)))
+
+    def test_nothing_fits_nothing_is_drawn(self) -> None:
+        self.assertEqual(sc.elide_runs(self.RUNS, self.advance, 4), [])
+        self.assertEqual(sc.elide_runs(self.RUNS, self.advance, 0), [])
 
 
 class WidestTextTest(unittest.TestCase):

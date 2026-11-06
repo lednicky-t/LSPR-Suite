@@ -29,7 +29,8 @@ _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 try:
     from lspr_imaging_app.panels.roi_table import RoiTablePanel
     from lspr_imaging_app.panels.roi_table.rows import COLUMN_COUNT
-    from lspr_imaging_app.panels.roi_table.step_columns import DISPLAY_BOTH, DISPLAY_MEAN, MIN_STEP_WIDTH, STEP_WIDTH_DEFAULT
+    from lspr_imaging_app.panels.roi_table.step_columns import DISPLAY_BOTH, DISPLAY_MEAN, MIN_STEP_WIDTH, STEP_WIDTH_DEFAULT, subscript_runs
+    from lspr_imaging_app.panels.roi_table.view import SubscriptHeader, _subscript_font, runs_width
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.plan.label_rule import MODE_SOLUTION, MODE_WHOLE
     from tests.integration.test_lspri_plan_bar import _pump
@@ -186,7 +187,104 @@ class FitToContentTest(WidthBase):
         self.table.add_compare()
         _pump(lambda: False, 0.1)
         column = self.model.columnCount() - 1
-        self.assertGreaterEqual(self.tree.columnWidth(column), self.bold_advance(self.title(column)) + 2 * SECTION_PADDING + ARROW_ZONE)
+        bold = QFont(self.tree.header().font())
+        bold.setWeight(QFont.Weight.DemiBold)
+        drawn = runs_width(bold, subscript_runs(self.title(column)))  # (its title is drawn with subscripts: narrower than the text with underscores)
+        self.assertGreaterEqual(self.tree.columnWidth(column), drawn + 2 * SECTION_PADDING + ARROW_ZONE)
+
+
+class ComparisonTitleTest(WidthBase):
+    """A comparison column's title is the maths it calculates, drawn with subscripts: μ_S1 − μ_B1, and (μ_S1 − μ_B1) / σ_B1 (2026-11-06; S1 / B1 do not follow the title setting
+    of the other columns, so the header says what is calculated instead)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.table.add_compare()
+        _pump(lambda: False, 0.1)
+        self.column = self.model.columnCount() - 1
+        self.header = self.tree.header()
+
+    def use_snr(self) -> None:
+        self.table.set_compare_op(self.table.compare_specs()[0].uid, "snr")
+        _pump(lambda: False, 0.1)
+
+    def painted(self) -> list[tuple[int, bool]]:
+        """(section, was it drawn with subscripts) for every section that asked to be, in one paint of the header."""
+        calls: list[tuple[int, bool]] = []
+        real = SubscriptHeader._paint_math_section
+
+        def spy(header, painter, rect, logical_index, title):
+            result = real(header, painter, rect, logical_index, title)
+            calls.append((logical_index, result))
+            return result
+
+        SubscriptHeader._paint_math_section = spy
+        try:
+            self.header.viewport().grab()
+        finally:
+            SubscriptHeader._paint_math_section = real
+        return calls
+
+    def test_the_titles_are_the_formulas(self) -> None:
+        self.assertEqual(self.title(self.column), "μ_S1 − μ_B1")
+        self.use_snr()
+        self.assertEqual(self.title(self.column), "(μ_S1 − μ_B1) / σ_B1")
+
+    def test_only_the_comparison_column_is_drawn_with_subscripts(self) -> None:
+        self.assertEqual(self.painted(), [(self.column, True)])  # a step's title is the user's note: its underscores stay underscores
+
+    def test_a_column_too_narrow_for_the_formula_still_draws_subscripts_cut_with_an_ellipsis(self) -> None:
+        """What the maintainer saw: they had made every step column 61 px wide, and the formula fell back to the text with underscores."""
+        self.tree.setColumnWidth(self.column, 61)
+        self.assertEqual(self.painted(), [(self.column, True)])
+        width = self.header.sectionSize(self.column)
+        title = self.ink(ARROW_ZONE, width)
+        self.assertTrue(title, "nothing of the title is drawn")
+        self.assertLessEqual(max(x for x, _y in title), width - SECTION_PADDING + 1)
+        self.assertGreaterEqual(min(x for x, _y in title), ARROW_ZONE, "the title runs into the menu arrow")
+        self.assertTrue(self.ink(0, ARROW_ZONE), "the menu arrow is gone")
+
+    def test_a_column_so_narrow_that_nothing_of_the_title_fits_keeps_the_arrow(self) -> None:
+        self.tree.setColumnWidth(self.column, 30)
+        self.assertEqual(self.painted(), [(self.column, True)])
+        self.assertTrue(self.ink(0, ARROW_ZONE), "the menu arrow is gone")
+
+    def ink(self, x_from: int, x_to: int) -> list[tuple[int, int]]:
+        """(x, y) of every pixel of the comparison header that differs from its background, for x (section coordinates) in [x_from, x_to)."""
+        image = self.header.viewport().grab().toImage()
+        left, width = self.header.sectionViewportPosition(self.column), self.header.sectionSize(self.column)
+        fill = image.pixelColor(left + width - 3, 1)
+        return [
+            (x, y) for y in range(self.header.viewport().height() - 2) for x in range(max(0, x_from), min(width, x_to))
+            if max(abs(a - b) for a, b in zip(image.pixelColor(left + x, y).getRgb()[:3], fill.getRgb()[:3])) > 40
+        ]
+
+    def test_the_title_sits_at_the_right_end_clear_of_the_arrow(self) -> None:
+        width = self.header.sectionSize(self.column)
+        title = self.ink(ARROW_ZONE, width)
+        self.assertTrue(title)
+        self.assertGreaterEqual(max(x for x, _y in title), width - SECTION_PADDING - 5, "the title is not at the right end")
+        self.assertLessEqual(max(x for x, _y in title), width - SECTION_PADDING + 1)
+        self.assertTrue(self.ink(0, ARROW_ZONE), "the menu arrow is gone")
+
+    def test_a_subscript_sits_lower_than_the_letter_before_it(self) -> None:
+        self.use_snr()  # ends in "σ" and the subscript "B1"; the σ sits on the baseline
+        font = QFont(self.header.font())
+        font.setWeight(QFont.Weight.DemiBold)
+        width = self.header.sectionSize(self.column)
+        sub_width = QFontMetrics(_subscript_font(font)).horizontalAdvance("B1")
+        sigma_width = QFontMetrics(font).horizontalAdvance("σ")
+        end = width - SECTION_PADDING
+        sub = self.ink(end - sub_width, end + 1)
+        sigma = self.ink(end - sub_width - sigma_width, end - sub_width)
+        self.assertTrue(sub and sigma)
+        self.assertGreaterEqual(max(y for _x, y in sub) - max(y for _x, y in sigma), 2, "the subscript is not lower than the letter")
+
+    def test_the_column_is_as_wide_as_the_drawn_title_needs_and_the_title_fits(self) -> None:
+        for op_snr in (False, True):
+            if op_snr:
+                self.use_snr()
+            self.assertEqual(self.painted(), [(self.column, True)], self.title(self.column))
 
 
 class ManualWidthTest(WidthBase):

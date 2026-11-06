@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
@@ -374,9 +374,9 @@ class StepTableModuleTest(StepTableBase):
 
     def test_a_comparison_column_title_names_the_pair_and_the_operation(self) -> None:
         a = self.table.add_compare()
-        self.assertEqual(self.table.columns()[-1].title, "S1 − B1")
+        self.assertEqual(self.table.columns()[-1].title, "μ_S1 − μ_B1")
         self.table.set_compare_op(a.uid, "snr")
-        self.assertEqual(self.table.columns()[-1].title, "(S1 − B1) / noise")
+        self.assertEqual(self.table.columns()[-1].title, "(μ_S1 − μ_B1) / σ_B1")
         self.assertEqual(self.table.columns()[-1].export_label, "(S1 - B1) / noise of B1")
 
 
@@ -431,6 +431,13 @@ class StepTablePanelTest(StepTableBase):
         texts = self._texts(COLUMN_COUNT)
         self.assertTrue(all(t and t != "None" for t in texts), texts)  # the group header, its ROI, and the Ungrouped header with ROI 2
         self.assertIn("±", texts[0])
+
+    def test_the_display_picker_rows_show_only_the_symbols(self) -> None:
+        pick = self.view._step_controls.display_pick
+        self.assertEqual(pick.count(), 5)
+        self.assertEqual([row.text().strip() for row in pick._rows], [""] * 5, "a row says it twice: the symbol and then the word")
+        self.assertTrue(all(row.icon() and not row.icon().isNull() for row in pick._rows))
+        self.assertTrue(all(row.toolTip() for row in pick._rows), "the words went into the tips, which must stay")
 
     def test_the_display_picker_chooses_mean_std_or_both(self) -> None:
         self._show_steps()
@@ -626,7 +633,7 @@ class StepTablePanelTest(StepTableBase):
         self._controls().add_compare_button.click()
         model = self.view._model
         self.assertEqual(model.columnCount(), COLUMN_COUNT + 3)
-        self.assertEqual(model.headerData(COLUMN_COUNT + 2, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole), "S1 − B1")
+        self.assertEqual(model.headerData(COLUMN_COUNT + 2, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole), "μ_S1 − μ_B1")
         self.assertEqual(model.headerData(COLUMN_COUNT + 2, Qt.Orientation.Horizontal, COLUMN_KIND_ROLE), "compare")
         self.assertEqual(model.headerData(COLUMN_COUNT, Qt.Orientation.Horizontal, COLUMN_KIND_ROLE), "step")
         texts = self._texts(COLUMN_COUNT + 2)
@@ -655,14 +662,39 @@ class StepTablePanelTest(StepTableBase):
             self.assertEqual(asked, [COLUMN_COUNT + 2])
             self.assertFalse(self.view._model.sorts_by_step())  # the click on the arrow is not a sort click
             self.assertEqual(len(menus), 1)
-            texts = [a.text() for a in menus[0].actions() if a.text()]
-            self.assertEqual(texts[0], "S1 - B1: shift (difference of the means)")
-            self.assertIn("noise of B1", texts[1])
-            self.assertEqual(texts[-1], "Remove this column")
-            self.assertTrue(menus[0].actions()[0].isChecked() and not menus[0].actions()[1].isChecked())
+            pick = menus[0].parent()  # the menu is a `PickMenu`: each row is the formula drawn with subscripts (a picture) and a short name
+            self.assertEqual([row.text().strip() for row in pick._rows], ["Shift", "Signal to noise"])
+            self.assertTrue(all(not row.icon().isNull() for row in pick._rows))
+            self.assertEqual([row.isChecked() for row in pick._rows], [True, False])
+            self.assertTrue(all(row.toolTip() for row in pick._rows), "the explanation moved into the tips")
+            self.assertEqual([b.text() for b in menus[0].findChildren(QtWidgets.QToolButton) if b not in pick._rows], ["Remove this column"])
             self._press_header(COLUMN_COUNT + 0, 6)  # the same place on a step column: a plain header, no menu
             self.assertEqual(asked, [COLUMN_COUNT + 2])
             self.assertEqual(len(menus), 1)
+
+    def test_the_menu_rows_choose_the_calculation_and_its_footer_removes_the_column(self) -> None:
+        self._show_steps()
+        self._controls().add_compare_button.click()
+        header = self.view._tree.header()
+        section = self.view._model.columnCount() - 1
+        menus: list[QtWidgets.QMenu] = []
+
+        def capture(menu: QtWidgets.QMenu, *_args: object, **_kwargs: object) -> None:
+            menus.append(menu)
+
+        with mock.patch.object(QtWidgets.QMenu, "exec", capture):
+            self._controls()._show_compare_menu(section, header.mapToGlobal(QPoint(0, 0)))
+            pick = menus[0].parent()
+            pick._rows[1].click()  # "Signal to noise"
+            self.assertEqual(self.table.compare_specs()[0].op, "snr")
+            self.assertEqual(self.view._model.headerData(section, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole), "(μ_S1 − μ_B1) / σ_B1")
+            self._controls()._show_compare_menu(section, header.mapToGlobal(QPoint(0, 0)))
+            reopened = menus[1].parent()
+            self.assertEqual([row.isChecked() for row in reopened._rows], [False, True], "the menu does not show the column's calculation")
+            remove = next(b for b in menus[1].findChildren(QtWidgets.QToolButton) if b.text() == "Remove this column")
+            remove.click()
+        self.assertEqual(self.table.compare_specs(), ())
+        self.assertEqual(self.view._model.columnCount(), section)
 
     def test_choosing_an_operation_changes_the_column_and_remove_takes_it_away(self) -> None:
         self._show_steps()
@@ -672,7 +704,7 @@ class StepTablePanelTest(StepTableBase):
         uid = self.view._model.step_columns()[-1].ref[1]
         self._controls().set_compare_op(uid, "snr")
         model = self.view._model
-        self.assertEqual(model.headerData(COLUMN_COUNT + 2, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole), "(S1 − B1) / noise")
+        self.assertEqual(model.headerData(COLUMN_COUNT + 2, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole), "(μ_S1 − μ_B1) / σ_B1")
         self.assertTrue(all(t and "±" not in t for t in self._texts(COLUMN_COUNT + 2)))  # a ratio has no SD
         self._controls().remove_compare(uid)
         self.assertEqual(model.columnCount(), COLUMN_COUNT + 2)
