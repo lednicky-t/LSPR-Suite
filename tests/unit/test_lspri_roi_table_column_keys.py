@@ -16,9 +16,9 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis.step_table_module import StepColumn
-    from lspr_imaging_app.panels.roi_table.column_keys import column_key, is_hideable, key_from_payload, key_to_payload
-    from lspr_imaging_app.panels.roi_table.rows import COLUMN_COUNT, COLUMN_ID
+    from lspr_imaging_app.selection.step_table_module import StepColumn
+    from lspr_imaging_app.panels.roi_table.column_keys import column_key, key_from_payload, key_to_payload
+    from lspr_imaging_app.panels.roi_table.rows import COLUMN_COUNT
     from lspr_imaging_app.plan.state import added_ref, measured_ref
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -41,23 +41,21 @@ class KeyTest(unittest.TestCase):
         self.assertEqual(column_key(compare(7, 1, "difference")), column_key(compare(1, 1, "difference")))  # the uid changes at every start
         self.assertNotEqual(column_key(compare(1, 1, "difference")), column_key(compare(1, 1, "snr")))  # another calculation is another column
 
-    def test_only_the_first_column_cannot_be_hidden(self) -> None:
-        self.assertFalse(is_hideable(COLUMN_ID))
-        self.assertTrue(all(is_hideable(c) for c in range(1, COLUMN_COUNT)))
-        self.assertTrue(is_hideable(added_ref(3)))
-        self.assertTrue(is_hideable(("cmp", 1, "snr")))
+    def test_every_fixed_column_has_a_key_the_first_one_too(self) -> None:
+        for number in range(COLUMN_COUNT):
+            self.assertEqual(key_from_payload(key_to_payload(number)), number)
 
 
 class PayloadTest(unittest.TestCase):
-    KEYS = [1, 2, COLUMN_COUNT - 1, measured_ref(2, 1_700_000_005_000, "10perEG_-_ch1F"), added_ref(4), ("cmp", 2, "snr")]
+    KEYS = [0, 1, 2, COLUMN_COUNT - 1, measured_ref(2, 1_700_000_005_000, "10perEG_-_ch1F"), added_ref(4), ("cmp", 2, "snr")]
 
     def test_every_kind_of_key_survives_the_saved_state(self) -> None:
         for key in self.KEYS:
             saved = json.loads(json.dumps(key_to_payload(key)))  # through JSON, as the state file does
             self.assertEqual(key_from_payload(saved), key, key)
 
-    def test_what_cannot_be_read_or_cannot_be_hidden_is_skipped(self) -> None:
-        for raw in (None, True, False, "x", 0, COLUMN_COUNT, -1, 2.5, [], {}, {"compare": [1]}, {"compare": ["a", "snr"]}, {"compare": [True, "snr"]}, {"step": "no"}, {"added": "no"}, {"junk": 1}):
+    def test_what_cannot_be_read_is_skipped(self) -> None:
+        for raw in (None, True, False, "x", COLUMN_COUNT, -1, 2.5, [], {}, {"compare": [1]}, {"compare": ["a", "snr"]}, {"compare": [True, "snr"]}, {"step": "no"}, {"added": "no"}, {"junk": 1}):
             self.assertIsNone(key_from_payload(raw), raw)
 
 

@@ -1,6 +1,6 @@
 """Hiding and showing columns of the ROI / Groups table (2026-11-06): right-click a column header -> "Hide column", "Show hidden column" (a list), "Show all hidden columns".
 
-Pinned: hiding takes out that column only and the first column cannot be hidden; the entries follow the state (the title of the column under the pointer, the list of hidden
+Pinned: hiding takes out that column only; the entries follow the state (the title of the column under the pointer, the list of hidden
 columns, greyed when nothing is hidden); a view mode never brings a hidden column back, and a hidden column the mode does not show is not offered; a hidden column keeps its width;
 a table sorted by a hidden column goes back to the # order; the hidden columns are remembered and come back; a freeze that ends at a hidden column holds the visible ones before it.
 For the step columns: a hidden step stays hidden when the columns are rebuilt, refitted or renumbered (it is named by what it is), the fitting never shows it, the numbers of
@@ -14,7 +14,9 @@ import unittest
 from unittest import mock
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtWidgets import QHeaderView, QLineEdit
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
@@ -30,6 +32,7 @@ try:
     from lspr_imaging_app.image_tools import GeometryModule
     from lspr_imaging_app.panels.roi_table import RoiTablePanel
     from lspr_imaging_app.panels.roi_table.delegate import RoiTableDelegate
+    from lspr_imaging_app.panels.roi_table.model import KIND_ROLE
     from lspr_imaging_app.panels.roi_table.rows import (
         COLUMN_COUNT,
         COLUMN_ID,
@@ -88,7 +91,8 @@ class FixedColumnsBase(unittest.TestCase):
         undo_manager.clear()
 
     def hidden(self) -> set[int]:
-        return {c for c in range(COLUMN_COUNT) if self.tree.isColumnHidden(c)}
+        """The fixed columns that do not show: hidden for Qt, or (#/ROIs) collapsed to nothing."""
+        return {c for c in range(COLUMN_COUNT) if self.tree.isColumnHidden(c) or self.tree.columnWidth(c) == 0}
 
     def shown_list(self) -> list[str]:
         return menu_texts(self.hide._show_menu)
@@ -99,15 +103,6 @@ class HidingTest(FixedColumnsBase):
         before = self.hidden()
         self.hide._hide_section(COLUMN_X)
         self.assertEqual(self.hidden(), before | {COLUMN_X})
-
-    def test_the_first_column_cannot_be_hidden(self) -> None:
-        self.hide.prepare(COLUMN_ID)
-        self.assertFalse(self.hide._hide.isEnabled())
-        self.assertIn("always stays", self.hide._hide.toolTip())
-        before = self.hidden()
-        self.hide._hide_section(COLUMN_ID)
-        self.assertEqual(self.hidden(), before)
-        self.assertEqual(self.ui.get(KEY) or [], [])
 
     def test_hiding_says_how_to_bring_the_column_back(self) -> None:
         self.hide._hide_section(COLUMN_Y)
@@ -221,12 +216,140 @@ class RememberedTest(FixedColumnsBase):
         self.assertFalse(again._tree.isColumnHidden(COLUMN_Y))
         again.deleteLater()
 
-    def test_what_the_state_holds_that_cannot_be_hidden_or_read_is_ignored(self) -> None:
-        junk = UiStateStore({KEY: [COLUMN_ID, 99, "x", None, True, {"junk": 1}, COLUMN_Y]})
+    def test_what_the_state_holds_that_cannot_be_read_is_ignored(self) -> None:
+        junk = UiStateStore({KEY: [99, "x", None, True, {"junk": 1}, COLUMN_Y]})
         panel = RoiTablePanel(self.toolbox, SelectionModule(), GeometryModule())
         panel.restore_ui_state(junk)
         self.assertEqual(panel._tree.hidden_keys(), frozenset({COLUMN_Y}))
         panel.deleteLater()
+
+
+class HidingTheFirstColumnTest(FixedColumnsBase):
+    """#/ROIs can be hidden, and the rest of the table keeps working (2026-11-06). Qt attaches the full-row group header to the first column, so the column is collapsed to
+    zero width instead of being hidden: these tests pin that the group headers, clicks, renaming, drops, selection, widths and freezing still behave."""
+
+    def group(self):
+        return self.model.group_headers()[0]
+
+    def mouse(self, kind: QEvent.Type, x: float, y: float) -> QMouseEvent:
+        point, button = QPointF(x, y), Qt.MouseButton.LeftButton
+        return QMouseEvent(kind, point, point, button, button, Qt.KeyboardModifier.NoModifier)
+
+    def painted(self) -> tuple[list[tuple[str, int]], int]:
+        """((kind, column) of every cell the delegate painted, how many colour dots were drawn) for one paint of the table."""
+        cells, dots = [], []
+        real_paint, real_dot = RoiTableDelegate.paint, RoiTableDelegate._paint_dot
+
+        def spy(delegate, painter, option, index):
+            cells.append((str(index.data(KIND_ROLE)), index.column()))
+            return real_paint(delegate, painter, option, index)
+
+        def spy_dot(*args, **kwargs):
+            dots.append(1)
+            return real_dot(*args, **kwargs)
+
+        RoiTableDelegate.paint, RoiTableDelegate._paint_dot = spy, staticmethod(spy_dot)
+        try:
+            self.tree.viewport().grab()
+        finally:
+            RoiTableDelegate.paint, RoiTableDelegate._paint_dot = real_paint, staticmethod(real_dot)
+        return cells, len(dots)
+
+    def test_the_column_has_no_width_and_the_others_keep_theirs(self) -> None:
+        widths = {c: self.tree.columnWidth(c) for c in range(COLUMN_COUNT) if c != COLUMN_ID}
+        self.hide._hide_section(COLUMN_ID)
+        self.assertEqual(self.tree.columnWidth(COLUMN_ID), 0)
+        self.assertEqual({c: self.tree.columnWidth(c) for c in widths}, widths)
+        self.assertEqual(self.tree.header().sectionViewportPosition(COLUMN_X), 0, "the first visible column starts at the left edge")
+
+    def test_the_group_headers_are_still_drawn_and_the_roi_rows_lose_only_their_dot_and_number(self) -> None:
+        _cells, dots = self.painted()
+        self.assertGreater(dots, 0)
+        self.hide._hide_section(COLUMN_ID)
+        cells, dots = self.painted()
+        self.assertIn(("group", COLUMN_ID), cells, "the group headers vanished")
+        self.assertEqual(dots, 0, "a ROI's dot is drawn over the next column")
+        self.assertIn(("roi", COLUMN_X), cells)
+
+    def test_a_group_header_is_still_one_cell_across_the_whole_row(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        rect = self.tree.visualRect(self.group())
+        self.assertGreater(rect.width(), 0)
+        self.assertEqual(rect.width(), self.tree.header().length())
+
+    def test_the_chevron_still_collapses_and_opens_a_group(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        self.assertTrue(self.tree.isExpanded(self.group()))
+        self.tree.mousePressEvent(self.mouse(QEvent.Type.MouseButtonPress, 10, self.tree.visualRect(self.group()).center().y()))
+        self.assertFalse(self.tree.isExpanded(self.group()))
+        self.tree.mousePressEvent(self.mouse(QEvent.Type.MouseButtonPress, 10, self.tree.visualRect(self.group()).center().y()))
+        self.assertTrue(self.tree.isExpanded(self.group()))
+
+    def test_a_group_can_still_be_renamed_and_the_editor_is_in_view(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        self.tree.edit(self.group())
+        editor = self.tree.indexWidget(self.group())
+        self.assertIsInstance(editor, QLineEdit)
+        self.assertGreaterEqual(editor.geometry().left(), 0)
+        self.assertGreaterEqual(editor.geometry().width(), 60)
+        self.assertLessEqual(editor.geometry().right(), self.tree.viewport().width())
+
+    def test_a_click_at_the_left_edge_finds_the_roi_row_and_the_group_header_for_a_drop(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        for roi in (1, 2, 3):
+            y = self.tree.visualRect(self.model.roi_index(roi, COLUMN_X)).center().y()
+            found = self.tree.indexAt(QPoint(2, y))
+            self.assertTrue(found.isValid() and self.model.roi_id(found) == roi, (roi, found.row()))
+        group_row = self.tree.indexAt(QPoint(2, self.tree.visualRect(self.group()).center().y()))
+        self.assertEqual(group_row.data(KIND_ROLE), "group")  # where dragged ROIs are dropped
+
+    def test_the_section_cannot_be_dragged_open_and_widths_being_applied_leave_it_alone(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        self.assertEqual(self.tree.header().sectionResizeMode(COLUMN_ID), QHeaderView.ResizeMode.Fixed)
+        self.panel._view_actions[VIEW_SIMPLE].trigger()  # applies the saved widths again
+        self.panel._view_actions[VIEW_GEOMETRY].trigger()
+        self.panel._apply_widths()
+        self.tree.apply_default_column_widths()
+        self.assertEqual(self.tree.columnWidth(COLUMN_ID), 0)
+
+    def test_showing_it_again_brings_its_width_and_its_drag_handle_back(self) -> None:
+        self.tree.setColumnWidth(COLUMN_ID, 93)
+        self.hide._hide_section(COLUMN_ID)
+        self.hide._show(COLUMN_ID)
+        self.assertEqual(self.tree.columnWidth(COLUMN_ID), 93)
+        self.assertEqual(self.tree.header().sectionResizeMode(COLUMN_ID), QHeaderView.ResizeMode.Interactive)
+        self.assertEqual(self.ui.get("roi_table/column_widths")[COLUMN_ID], 93, "the width the hiding went through was saved as the column's width")
+
+    def test_it_is_in_the_list_of_hidden_columns_and_the_menu_opens_from_anywhere_on_the_header(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        self.hide.prepare(COLUMN_Y)
+        self.assertEqual(self.shown_list(), [COLUMN_TITLES[COLUMN_ID]])
+        point = self.tree.header().rect().center()
+        with mock.patch.object(QtWidgets.QMenu, "exec", return_value=None):
+            self.panel._show_header_menu(point)  # (the zero-width section has no place of its own to click)
+        self.assertTrue(self.hide._show_all.isEnabled())
+
+    def test_the_order_stays_the_number_order_and_nothing_is_rebuilt_for_it(self) -> None:
+        rebuilt = []
+        self.model.modelReset.connect(lambda: rebuilt.append(1))
+        self.hide._hide_section(COLUMN_ID)
+        self.assertEqual(self.model.sort_state(), (COLUMN_ID, False))
+        self.assertEqual(rebuilt, [])
+
+    def test_a_freeze_up_to_a_later_column_holds_the_visible_ones(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        self.tree.set_frozen_upto(COLUMN_X)
+        self.assertEqual(self.tree.pinned_width(), self.tree.columnWidth(COLUMN_X))  # #/ROIs adds nothing
+
+    def test_it_is_remembered_and_comes_back_collapsed(self) -> None:
+        self.hide._hide_section(COLUMN_ID)
+        self.assertEqual(self.ui.get(KEY), [COLUMN_ID])
+        again = RoiTablePanel(self.toolbox, SelectionModule(), GeometryModule())
+        again.restore_ui_state(self.ui)
+        again._view_actions[VIEW_GEOMETRY].trigger()
+        again.refresh_now()
+        self.assertEqual(again._tree.columnWidth(COLUMN_ID), 0)
+        again.deleteLater()
 
 
 class StepColumnsBase(StepTableBase):
@@ -320,6 +443,26 @@ class HiddenStepColumnsTest(StepColumnsBase):
         self.assertEqual(panel._model.columnCount(), COLUMN_COUNT + 2)
         self.assertFalse(panel._tree.isColumnHidden(self.first) or panel._tree.isColumnHidden(self.second))
         panel.deleteLater()
+
+
+class HiddenFirstColumnWithStepsTest(StepColumnsBase):
+    def test_group_headers_keep_their_step_numbers_and_the_step_columns_their_widths(self) -> None:
+        widths = [self.tree.columnWidth(c) for c in (self.first, self.second)]
+        steps_painted: list[int] = []
+        real = RoiTableDelegate._paint_group_steps
+
+        def spy(delegate, painter, option, index, theme):
+            steps_painted.append(len(RoiTableDelegate._step_columns_of(option.widget, index.model())))
+            return real(delegate, painter, option, index, theme)
+
+        self.hide._hide_section(COLUMN_ID)
+        self.assertEqual(self.tree.columnWidth(COLUMN_ID), 0)
+        with mock.patch.object(RoiTableDelegate, "_paint_group_steps", spy):
+            self.tree.viewport().grab()
+        self.assertTrue(steps_painted and all(n == 2 for n in steps_painted), steps_painted)
+        self.controls.fit_now()
+        self.assertEqual([self.tree.columnWidth(c) for c in (self.first, self.second)], widths)
+        self.assertEqual(self.tree.columnWidth(COLUMN_ID), 0)
 
 
 class HiddenComparisonColumnsTest(StepColumnsBase):

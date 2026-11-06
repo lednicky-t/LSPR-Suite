@@ -37,7 +37,7 @@ try:
     from lspr_imaging_app.analysis import step_stats
     from lspr_imaging_app.analysis.scan_trace import DISPLAY_BY_GROUP
     from lspr_imaging_app.analysis.step_table import UNGROUPED, GroupMembers
-    from lspr_imaging_app.analysis.step_table_module import StepTableModule
+    from lspr_imaging_app.selection.step_table_module import StepTableModule
     from lspr_imaging_app.analysis.trace_store import TraceStore
     from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
     from lspr_imaging_app.panels.roi_table import RoiTablePanel
@@ -134,7 +134,7 @@ class StepTableModuleTest(StepTableBase):
         self.assertIn("Step 1", columns[0].tooltip)
 
     def test_there_is_only_one_axis_per_settings_module_so_a_unit_switch_moves_the_baseline_window_once(self) -> None:
-        from lspr_imaging_app.analysis.sensorgram_axis import SensorgramAxis
+        from lspr_imaging_app.selection.sensorgram_axis import SensorgramAxis
 
         again = SensorgramAxis.of(self.m.scan_results, self.m.dataset, self.m.cube_display, self.m.analysis_settings)
         self.assertIs(again, self.axis)

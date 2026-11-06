@@ -21,7 +21,7 @@ try:
 
     from lspr_imaging_app.analysis.export_tables import roi_step_table
     from lspr_imaging_app.analysis.step_table import OP_DIFFERENCE, OP_SNR, RowNumbers, StepValue, compare_values
-    from lspr_imaging_app.analysis.step_table_module import CellValue, StepColumn
+    from lspr_imaging_app.selection.step_table_module import CellValue, StepColumn
     from lspr_imaging_app.analysis.trace_store import TraceStore
     from lspr_imaging_app.domain.roi_model import AreaRoiGroup
     from lspr_imaging_app.panels.roi_table import rows as rw

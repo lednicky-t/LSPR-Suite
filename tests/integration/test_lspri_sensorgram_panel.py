@@ -672,7 +672,7 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertEqual((stats.baseline_window_start, stats.baseline_window_end), (1.0, 4.0))
 
     def test_snapping_picks_the_nearest_point_and_never_collapses_a_window(self) -> None:
-        from lspr_imaging_app.analysis.sensorgram_axis import snap_to_grid, snap_window
+        from lspr_imaging_app.selection.sensorgram_axis import snap_to_grid, snap_window
 
         grid = np.array([0.0, 10.0, 25.0, 40.0])  # a time axis: uneven spacing
         self.assertEqual(snap_to_grid(grid, 4.0), 0.0)
