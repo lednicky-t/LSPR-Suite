@@ -274,8 +274,8 @@ class SensorgramPanelTests(unittest.TestCase):
         try:
             process_panel.start_helper_early()
             process_panel.start_helper_early()  # more than once is the same one process
-            self.assertTrue(_pump(lambda: process_panel._trace_pool._executor is not None), "the helper was never started")
-            self.assertEqual(process_panel._trace_pool._started, 1)
+            self.assertTrue(_pump(lambda: process_panel._traces.pool()._executor is not None), "the helper was never started")
+            self.assertEqual(process_panel._traces.pool()._started, 1)
         finally:
             process_panel.shutdown()
             process_panel.deleteLater()
@@ -375,7 +375,7 @@ class SensorgramPanelTests(unittest.TestCase):
         self._wait_drawn(1)
         with mock.patch.object(self.m.cube_display, "effective_mode", return_value="time"), \
                 mock.patch.object(self.m.dataset, "cube_start_seconds", side_effect=lambda c: 10.0 * c):
-            self.panel._x_cache = None
+            self.panel._axis._x_cache = None
             label, x = self.panel._x_axis()
         self.assertEqual(label, "Time (s)")
         np.testing.assert_allclose(x, 10.0 * np.arange(N_CUBE))
@@ -672,7 +672,7 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertEqual((stats.baseline_window_start, stats.baseline_window_end), (1.0, 4.0))
 
     def test_snapping_picks_the_nearest_point_and_never_collapses_a_window(self) -> None:
-        from lspr_imaging_app.panels.sensorgram.plot import snap_to_grid, snap_window
+        from lspr_imaging_app.analysis.sensorgram_axis import snap_to_grid, snap_window
 
         grid = np.array([0.0, 10.0, 25.0, 40.0])  # a time axis: uneven spacing
         self.assertEqual(snap_to_grid(grid, 4.0), 0.0)
@@ -827,7 +827,7 @@ class SensorgramPanelTests(unittest.TestCase):
         self.m.selection.set_roi_selection({1})
         self.assertTrue(_pump(lambda: self.panel._last is not None and self.panel._last[0].request.roi_ids == (1,) and self.panel._job is None, 30))
         self.assertLess(len(set(self.metric_calls)), 6)  # the six were not all fitted: the first job stopped
-        self.assertIn(1, self.panel._cache)  # what it finished is kept
+        self.assertIn(1, self.panel._traces.cached())  # what it finished is kept
         self.slow = 0.0
 
     def test_a_hidden_panel_does_nothing_and_catches_up_once(self) -> None:

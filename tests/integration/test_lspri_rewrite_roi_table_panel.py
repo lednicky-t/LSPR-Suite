@@ -1311,7 +1311,7 @@ class ViewModeTest(_PanelCase):
         self.assertTrue(self.panel._unit_toggle.isVisible())
 
     def test_the_view_menu_has_two_exclusive_choices(self) -> None:
-        actions = self.panel._view_menu.actions()
+        actions = [a for a in self.panel._view_menu.actions() if a.isCheckable()]  # (the menu's last entries, Freeze / Unfreeze columns, are not choices of the view)
         self.assertEqual([a.isChecked() for a in actions], [False, True])
         actions[0].trigger()
         self.assertEqual([a.isChecked() for a in actions], [True, False])

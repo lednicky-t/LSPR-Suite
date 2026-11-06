@@ -144,7 +144,7 @@ class SmoothInsideStepsPanelTest(unittest.TestCase):
     def test_the_curve_drawn_is_smoothed_piece_by_piece(self) -> None:
         self._smooth("moving_average")
         request = self.panel._last[0].request
-        traces = self.panel._cache
+        traces = self.panel._traces.cached()
         drawn = self.panel._last[1][0]
         expected = apply_statistics(request.x, traces[drawn.member_ids[0]], request.statistics, np.array([0, 0, 0, 1, 1, 1]))[0]
         np.testing.assert_array_equal(drawn.y, expected)

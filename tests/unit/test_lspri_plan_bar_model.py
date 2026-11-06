@@ -84,6 +84,22 @@ class ColorTest(unittest.TestCase):
         colors = bm.automatic_colors([f"s{i}" for i in range(len(bm.STEP_COLORS) + 1)])
         self.assertEqual(colors[0], colors[-1])
 
+    def test_a_step_is_painted_with_its_own_colour_else_the_automatic_one_of_its_solution(self) -> None:
+        """`effective_colors` is what the plan bar paints and what the ROI table's step columns are filled with (2026-11-06): one function, so the two cannot disagree."""
+        from types import SimpleNamespace
+
+        steps = [
+            SimpleNamespace(label="H2O_--_ch1F", color=None),
+            SimpleNamespace(label="10perEG_-_ch1F", color="#123456"),  # the user's own colour wins
+            SimpleNamespace(label="H2O_--_ch2P", color=None),  # the same solution as the first step
+        ]
+        colors = bm.effective_colors(steps)
+        self.assertEqual(colors, [bm.STEP_COLORS[0], "#123456", bm.STEP_COLORS[0]])
+        self.assertEqual(colors[:1], bm.automatic_colors([s.label for s in steps])[:1])
+        # the separators decide which part of a note is "the solution": with none, every note is its own solution
+        self.assertNotEqual(bm.effective_colors(steps, separators=())[0], bm.effective_colors(steps, separators=())[2])
+        self.assertEqual(bm.effective_colors([]), [])
+
     def test_text_colour_follows_the_blended_fill(self) -> None:
         self.assertEqual(bm.contrast_text_color("#ffffff", 1.0, "#000000"), "#0f1720")  # light fill: dark text
         self.assertEqual(bm.contrast_text_color("#000000", 1.0, "#ffffff"), "#f8fbff")
