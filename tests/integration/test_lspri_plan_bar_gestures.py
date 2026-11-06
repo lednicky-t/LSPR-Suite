@@ -34,12 +34,14 @@ try:
     from lspr_imaging_app import app_rewrite
     from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
     from lspr_imaging_app.panels.sensorgram.panel import SensorgramPanel
-    from lspr_imaging_app.panels.sensorgram.plan_actions import PlanAxisContext, PlanBarActions
+    from lspr_imaging_app.panels.sensorgram.evaluation_group import MAX_PAIRS
+    from lspr_imaging_app.panels.sensorgram.plan_actions import PlanAxisContext, PlanBarActions, pairs_offered
     from lspr_imaging_app.panels.sensorgram.plan_text_editor import StepTextEditor
     from lspr_imaging_app.panels.sensorgram.plot import SensorgramPlot
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.plan import bar_model as bm
     from lspr_imaging_app.plan.axis_map import AxisMap
+    from lspr_imaging_app.plan.state import EvalPair
     from lspr_imaging_app.selection.experiment_plan_module import ExperimentPlanModule
     from lspr_imaging_app.selection.cube_display_module import MODE_CUBE
     from lspr_imaging_app.undo import undo_manager
@@ -543,11 +545,14 @@ class PlanBarActionsTest(unittest.TestCase):
             axis=AxisMap.build([2_000 * c for c in cubes], [2.0 * c for c in cubes]), grid_unix_ms=self.module.snap_grid_unix_ms(cubes), time_mode=True
         )
         self.actions = PlanBarActions(self.module, self.plot, lambda: self.context)
+        self._menus: list = []  # menus a test built and looks into; a menu with a submenu must stay alive while its actions are used
         self.plot.set_plan([_step(0, 10.0, 30.0, text=NOTE_1), _step(1, 30.0, 50.0, text=NOTE_2)], bm.PlanBarSettings())
         _APP.processEvents()
 
     def tearDown(self) -> None:
         undo_manager.clear()
+        for menu in self._menus:
+            menu.deleteLater()
         self.plot.close()
         self.plot.deleteLater()
 
@@ -645,7 +650,7 @@ class PlanBarActionsTest(unittest.TestCase):
         _menu, actions = self._actions_of(0)
         self.assertEqual(
             list(actions)[5:],
-            ["Reset all steps", "Remove step", "Add step", "Unify selected steps", "Restore removed steps", "Use as baseline (B1)", "Use as signal (S1)"],
+            ["Reset all steps", "Remove step", "Add step", "Unify selected steps", "Restore removed steps", "Use as"],
         )
         self.assertFalse(actions["Unify selected steps"].isEnabled())  # one step is nothing to unify
         self.assertFalse(actions["Restore removed steps"].isEnabled())
@@ -702,24 +707,65 @@ class PlanBarActionsTest(unittest.TestCase):
         self.assertEqual(self._bounds(), [(10_000, 30_000), (30_000, 50_000)])
         self.assertFalse(undo_manager.can_undo)
 
+    def _use_as(self, index, pair_title, role):
+        """The check-mark action 'Use as' > `pair_title` > `role` of the menu of step `index` (the menu is kept alive in `self._menus`)."""
+        menu = self.actions.build_menu(index)
+        self._menus.append(menu)
+        use_as = next(a for a in menu.actions() if a.text() == "Use as").menu()
+        pair_menu = next(a for a in use_as.actions() if a.text() == pair_title).menu()
+        return next(a for a in pair_menu.actions() if a.text() == role)
+
+    def _pair_titles(self, index):
+        menu = self.actions.build_menu(index)
+        self._menus.append(menu)
+        use_as = next(a for a in menu.actions() if a.text() == "Use as").menu()
+        return [a.text() for a in use_as.actions()]
+
     def test_use_as_baseline_and_signal_toggle_with_a_check_mark_and_show_on_the_bar(self) -> None:
         self._follow_the_module()
-        _menu, actions = self._actions_of(0)
-        actions["Use as baseline (B1)"].trigger()
-        _menu, actions = self._actions_of(1)
-        actions["Use as signal (S1)"].trigger()
+        self._use_as(0, "New pair 1 (B1 / S1)", "Baseline (B1)").trigger()
+        self._use_as(1, "Pair 1 (B1 / S1)", "Signal (S1)").trigger()
         self.assertEqual((self.module.baseline_step().order, self.module.signal_step().order), (1, 2))
         self.assertEqual([s.roles for s in self.plot.plan_bar().steps()], [("B1",), ("S1",)])
-        _menu, actions = self._actions_of(0)
-        self.assertTrue(actions["Use as baseline (B1)"].isChecked())
-        self.assertFalse(actions["Use as signal (S1)"].isChecked())
-        actions["Use as baseline (B1)"].trigger()  # again: off
+        self.assertTrue(self._use_as(0, "Pair 1 (B1 / S1)", "Baseline (B1)").isChecked())
+        self.assertFalse(self._use_as(0, "Pair 1 (B1 / S1)", "Signal (S1)").isChecked())
+        self._use_as(0, "Pair 1 (B1 / S1)", "Baseline (B1)").trigger()  # again: off
         self.assertIsNone(self.module.baseline_step())
 
-    def test_the_roles_are_for_one_step_so_they_are_greyed_out_for_a_selection(self) -> None:
+    def test_use_as_offers_the_complete_pairs_plus_one_new_pair(self) -> None:
+        self._follow_the_module()
+        self.assertEqual(self._pair_titles(0), ["New pair 1 (B1 / S1)"])  # nothing set: just pair 1
+        self._use_as(0, "New pair 1 (B1 / S1)", "Baseline (B1)").trigger()
+        self.assertEqual(self._pair_titles(0), ["Pair 1 (B1 / S1)"])  # half a pair is not a complete pair: still only pair 1
+        self._use_as(1, "Pair 1 (B1 / S1)", "Signal (S1)").trigger()
+        self.assertEqual(self._pair_titles(0), ["Pair 1 (B1 / S1)", "New pair 2 (B2 / S2)"])  # pair 1 is complete: pair 2 can be started
+        self._use_as(0, "New pair 2 (B2 / S2)", "Baseline (B2)").trigger()  # one step may play a role in several pairs
+        self.assertEqual(self.module.baseline_step(2).order, 1)
+        self.assertEqual(self._pair_titles(0), ["Pair 1 (B1 / S1)", "Pair 2 (B2 / S2)"])
+        self.assertEqual([s.roles for s in self.plot.plan_bar().steps()], [("B1", "B2"), ("S1",)])
+        self._use_as(1, "Pair 2 (B2 / S2)", "Signal (S2)").trigger()
+        self.assertEqual(self._pair_titles(0), ["Pair 1 (B1 / S1)", "Pair 2 (B2 / S2)", "New pair 3 (B3 / S3)"])
+        undo_manager.undo()  # S2 gone again: pair 3 is not offered any more
+        self.assertEqual(self._pair_titles(0), ["Pair 1 (B1 / S1)", "Pair 2 (B2 / S2)"])
+
+    def test_the_roles_are_for_one_step_so_use_as_is_greyed_out_for_a_selection(self) -> None:
         self.plot.plan_bar().select_many((0, 1), anchor=0)
         _menu, actions = self._actions_of(0)
-        self.assertFalse(actions["Use as baseline (B1)"].isEnabled() or actions["Use as signal (S1)"].isEnabled())
+        self.assertFalse(actions["Use as"].isEnabled())
+        self.plot.plan_bar().clear_selection()
+        _menu, actions = self._actions_of(0)
+        self.assertTrue(actions["Use as"].isEnabled())
+
+    def test_pairs_offered_never_hides_a_pair_that_has_a_role_set(self) -> None:
+        refs = [self.module.steps()[0].ref, self.module.steps()[1].ref]
+        offered = lambda *pairs: pairs_offered(pairs)  # noqa: E731
+        self.assertEqual(offered(), 1)
+        self.assertEqual(offered(EvalPair(1, baseline=refs[0])), 1)
+        self.assertEqual(offered(EvalPair(1, baseline=refs[0], signal=refs[1])), 2)
+        self.assertEqual(offered(EvalPair(1, baseline=refs[0], signal=refs[1]), EvalPair(2, baseline=refs[0])), 2)
+        self.assertEqual(offered(EvalPair(3, signal=refs[1])), 3)  # a gap (pairs 1 and 2 empty): pair 3 still has to be reachable
+        full = [EvalPair(n, baseline=refs[0], signal=refs[1]) for n in range(1, MAX_PAIRS + 1)]
+        self.assertEqual(offered(*full), MAX_PAIRS)  # capped
 
     def test_a_step_the_user_added_has_its_own_colour_and_nothing_to_reset(self) -> None:
         self.module.add_step(0, "after", self.context.grid_unix_ms)

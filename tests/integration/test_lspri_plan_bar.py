@@ -482,7 +482,7 @@ class PlanBarPanelTest(unittest.TestCase):
         self.assertTrue(actions.structure_tools_active())
         texts = [a.text() for a in actions.build_menu(0).actions()]
         self.assertIn("Remove step", texts)
-        self.assertIn("Use as baseline (B1)", texts)
+        self.assertIn("Use as", texts)
         self.panel._ribbon_tabs.set_category("Plot")
         self.assertFalse(actions.structure_tools_active())
         self.assertIn("Edit text...", [a.text() for a in actions.build_menu(0).actions()])  # the old items stay on every tab
