@@ -48,6 +48,7 @@ try:
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.plan.label_rule import MODE_SOLUTION
     from lspr_imaging_app.selection.cube_display_module import MODE_CUBE
+    from lspr_imaging_app.startup_tracker import StartupStep, StartupTracker
     from lspr_imaging_app.undo import undo_manager
     from tests._qt_fonts import load_system_fonts
     from tests.integration.test_lspri_plan_bar import CENTERS, CUBE_MS, T0, _pump, _write_dataset
@@ -398,8 +399,8 @@ class StepTablePanelTest(StepTableBase):
         self.view._step_controls.columns_button.click()
         self.assertTrue(_pump(lambda: not self.table.is_running()))
 
-    def _texts(self, column: int) -> list[str]:
-        model = self.view._model
+    def _texts(self, column: int, view=None) -> list[str]:
+        model = (view or self.view)._model
         out = []
         for header in model.group_headers():
             out.append(str(header.siblingAtColumn(column).data(Qt.ItemDataRole.DisplayRole)))
@@ -464,6 +465,75 @@ class StepTablePanelTest(StepTableBase):
         self.assertFalse(model.group_headers()[0].siblingAtColumn(COLUMN_COUNT).data(STEP_STALE_ROLE))
         _pump(lambda: False, 0.2)
         self.assertIn("up to date", self.view._step_controls.refresh_button.toolTip())
+
+    def test_the_button_lights_when_the_rows_arrive_after_the_columns_were_switched_on_at_start_up(self) -> None:
+        # At launch the table is blank, the saved "step columns on" is restored, and only then does the session bring the ROIs and groups (the table rebuilds ~100 ms after
+        # them). The button was checked once, against the blank table ("up to date"), and never again: the rows had no numbers and it stayed grey.
+        saved = UiStateStore({})
+        saved.set("roi_table/steps_shown", True)
+        late = RoiTablePanel(self.m.roi_toolbox, self.m.selection, self.m.geometry, step_table=self.table)
+        late._rebuild(lambda: late._model.set_content([], [], self.m.roi_toolbox.detection_settings(), late._unit(), None))  # blank, as at launch
+        late.restore_ui_state(saved)
+        self.assertFalse(late._step_controls.refresh_button.isHidden(), "the columns are on")
+        _pump(lambda: False, 0.2)
+        self.assertEqual(late._model.rows(), [])
+        late.refresh_now()  # the session's ROIs and groups arrive
+        _pump(lambda: False, 0.2)
+        self.assertTrue(late._model.rows())
+        self.assertIn("no numbers", late._step_controls.refresh_button.toolTip())
+        self.assertNotIn("up to date", late._step_controls.refresh_button.toolTip())
+        late.deleteLater()
+
+    def _launched_panel(self, *, steps_on: bool = True) -> RoiTablePanel:
+        """A table as at launch: the saved state restored (step columns on or off), no numbers yet."""
+        saved = UiStateStore({})
+        saved.set("roi_table/steps_shown", steps_on)
+        panel = RoiTablePanel(self.m.roi_toolbox, self.m.selection, self.m.geometry, step_table=self.table)
+        panel.restore_ui_state(saved)
+        self.addCleanup(panel.deleteLater)
+        return panel
+
+    def test_after_launch_the_rows_on_screen_are_calculated_once_without_a_click(self) -> None:
+        late = self._launched_panel()
+        _pump(lambda: False, 0.2)
+        self.assertEqual(self.done, [], "restoring the saved state calculates nothing by itself")
+        self.assertIn("no numbers", late._step_controls.refresh_button.toolTip())
+        late.calculate_at_startup()
+        self.assertTrue(_pump(lambda: bool(self.done) and not self.table.is_running()), "the start-up calculation never finished")
+        self.assertEqual(self.done[-1][0], "completed")
+        texts = self._texts(COLUMN_COUNT, late)
+        self.assertTrue(all(t and t != "None" for t in texts), texts)  # the group header, its ROI, and the Ungrouped header with ROI 2
+        _pump(lambda: False, 0.2)
+        self.assertIn("up to date", late._step_controls.refresh_button.toolTip())
+        runs = len(self.done)
+        late.calculate_at_startup()  # everything is current: no second run
+        _pump(lambda: False, 0.2)
+        self.assertEqual(len(self.done), runs)
+
+    def test_the_start_up_calculation_is_the_same_as_the_refresh_buttons(self) -> None:
+        late = self._launched_panel()
+        late.calculate_at_startup()
+        self.assertTrue(_pump(lambda: bool(self.done) and not self.table.is_running()))
+        by_start_up = self._texts(COLUMN_COUNT, late)
+        self.table.clear()
+        late._step_controls.refresh_button.click()
+        self.assertTrue(_pump(lambda: len(self.done) > 1 and not self.table.is_running()))
+        self.assertEqual(self._texts(COLUMN_COUNT, late), by_start_up)
+
+    def test_the_start_up_calculation_stays_quiet_when_nobody_asked_for_numbers(self) -> None:
+        off = self._launched_panel(steps_on=False)
+        off.calculate_at_startup()
+        hidden = self._launched_panel()
+        hidden.set_panel_visible(False)
+        hidden.calculate_at_startup()
+        self.m.scan_results.set_scan_file(None)
+        self.assertTrue(_pump(lambda: self.m.scan_results.stored() is None))
+        noscan = self._launched_panel()
+        noscan.calculate_at_startup()
+        _pump(lambda: False, 0.2)
+        self.assertFalse(self.table.is_running())
+        self.assertEqual(self.done, [], "step columns off, table hidden, no scan: nothing is calculated")
+        self.assertEqual(self.notices, [], "and the user is not told off for something they did not ask for")
 
     def test_collapsed_groups_do_not_get_roi_rows_calculated(self) -> None:
         self.view.set_group_only(True)
@@ -762,6 +832,40 @@ class StepTablePanelTest(StepTableBase):
 
     def test_the_kind_of_a_group_header_is_unchanged(self) -> None:
         self.assertEqual(self.view._model.group_headers()[0].data(KIND_ROLE), "group")
+
+
+class StartUpCalculationWiringTest(unittest.TestCase):
+    """The ROI table hears of the end of the start-up from the tracker the status bar shows, and only of a start-up that really completed."""
+
+    class _Panel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def calculate_at_startup(self) -> None:
+            self.calls += 1
+
+    def _tracker(self) -> StartupTracker:
+        return StartupTracker([StartupStep("all", "loading", lambda: True)], poll_ms=10, settle_polls=1)
+
+    def test_a_completed_start_up_calculates_the_table_once(self) -> None:
+        panel, tracker = self._Panel(), self._tracker()
+        app_rewrite._wire_startup_calculation(tracker, panel)
+        tracker.start()
+        self.assertEqual(panel.calls, 1)
+        tracker.cancel()  # (already over: still one)
+        self.assertEqual(panel.calls, 1)
+
+    def test_a_failed_cancelled_or_not_started_start_up_calculates_nothing(self) -> None:
+        for end in ("fail", "cancel"):
+            panel = self._Panel()
+            tracker = StartupTracker([StartupStep("all", "loading", lambda: False)], poll_ms=10, settle_polls=1)
+            app_rewrite._wire_startup_calculation(tracker, panel)
+            tracker.start()
+            getattr(tracker, end)(*(("could not open",) if end == "fail" else ()))
+            self.assertEqual(panel.calls, 0, end)
+        idle = self._Panel()
+        app_rewrite._wire_startup_calculation(self._tracker(), idle)  # never started: no dataset was reopened at launch
+        self.assertEqual(idle.calls, 0)
 
 
 if __name__ == "__main__":
