@@ -32,7 +32,12 @@ try:
         metric_trace,
         trace_key,
     )
-    from lspr_imaging_app.analysis.settings import MetricSettings, StatisticsSettings
+    from dataclasses import replace as _replace
+
+    from lspr_imaging_app.analysis.settings import LEGACY_METRIC_DEFAULTS, StatisticsSettings
+
+    def MetricSettings(**fields):  # these tests were written for the old defaults (maximum, no metric range); the new-session defaults changed 2026-11-06
+        return _replace(LEGACY_METRIC_DEFAULTS, **fields)
     from lspr_imaging_app.analysis.statistics import apply_statistics
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)

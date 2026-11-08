@@ -37,7 +37,7 @@ try:
         formula_values,
         metric_value,
     )
-    from lspr_imaging_app.analysis.settings import MetricSettings, StatisticsSettings
+    from lspr_imaging_app.analysis.settings import LEGACY_METRIC_DEFAULTS, MetricSettings, StatisticsSettings
     from lspr_imaging_app.analysis.statistics import (
         aggregate_traces,
         apply_statistics,
@@ -265,8 +265,10 @@ class SettingsDefaultsTest(unittest.TestCase):
         """These are what a session written before the analysis block
         existed falls back to, so they have to be the stable app's own
         defaults rather than a fresh opinion."""
-        metric = MetricSettings()
-        self.assertEqual((metric.fit_method, metric.poly_order, metric.metric_key), ("polynomial", 3, "maximum"))
+        metric = LEGACY_METRIC_DEFAULTS  # what an old session falls back to (the new-session defaults changed on 2026-11-06)
+        self.assertEqual((metric.fit_method, metric.poly_order, metric.metric_key, metric.metric_range), ("polynomial", 3, "maximum", "off"))
+        new = MetricSettings()  # a new session: centroid of the top 20 % (docs/snr_methods_comparison_2026-11-06.md)
+        self.assertEqual((new.fit_method, new.poly_order, new.metric_key, new.metric_range, new.metric_top_fraction), ("polynomial", 3, "centroid", "top_fraction", 0.2))
         statistics = StatisticsSettings()
         self.assertEqual(statistics.smoothing_method, "none")
         self.assertFalse(statistics.spike_rejection_enabled)

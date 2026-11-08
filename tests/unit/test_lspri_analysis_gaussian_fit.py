@@ -21,7 +21,12 @@ try:
     from lspr_imaging_app.analysis import gaussian_fit
     from lspr_imaging_app.analysis.gaussian_fit import solve_gaussian
     from lspr_imaging_app.analysis.query import fit_gaussian
-    from lspr_imaging_app.analysis.settings import MetricSettings
+    from dataclasses import replace as _replace
+
+    from lspr_imaging_app.analysis.settings import LEGACY_METRIC_DEFAULTS
+
+    def MetricSettings(**fields):  # these tests were written for the old defaults (maximum, no metric range); the new-session defaults changed 2026-11-06
+        return _replace(LEGACY_METRIC_DEFAULTS, **fields)
     from lspr_imaging_app.analysis.trace_fit import TraceInput, trace_from_input, trace_from_input_per_cube
     from tests.unit.test_lspri_analysis_trace_fit import make_input
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch

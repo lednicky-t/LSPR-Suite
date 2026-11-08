@@ -428,9 +428,9 @@ class SensorgramPanelTests(unittest.TestCase):
         before = len(self.metric_calls)
         from dataclasses import replace
 
-        self.m.analysis_settings.set_metric_settings(replace(self.m.analysis_settings.metric_settings(), metric_key="centroid"))
+        self.m.analysis_settings.set_metric_settings(replace(self.m.analysis_settings.metric_settings(), metric_key="maximum"))  # the default is the centroid (2026-11-06)
         self.assertTrue(_pump(lambda: len(self.metric_calls) > before and self.panel._job is None))
-        self.assertIn("Centroid", self.panel._plot._item.getAxis("left").labelText)
+        self.assertIn("Peak", self.panel._plot._item.getAxis("left").labelText)
 
     def test_the_baseline_band_is_set_dragged_and_makes_the_trace_a_shift(self) -> None:
         self._open_and_scan()
@@ -708,7 +708,7 @@ class SensorgramPanelTests(unittest.TestCase):
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
         self.assertEqual([label.text() for label in self.panel._ribbon._captions], ["Live", "Statistic", "Smoothing", "Baseline", "View", "Export"])  # the Plot tab
-        self.assertEqual([label.text() for label in self.panel._plan_ribbon._captions], ["View", "Evaluation", "Step stats"])  # the Experimental plan tab
+        self.assertEqual([label.text() for label in self.panel._plan_ribbon._captions], ["View", "Evaluation", "Step stats", "Checks"])  # the Experimental plan tab
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~960 px before the row could scroll
 
     # -- mask marks ------------------------------------------------------------------------------------------------------------------

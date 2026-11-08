@@ -24,7 +24,12 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
-    from lspr_imaging_app.analysis.settings import MetricSettings
+    from dataclasses import replace as _replace
+
+    from lspr_imaging_app.analysis.settings import LEGACY_METRIC_DEFAULTS
+
+    def MetricSettings(**fields):  # these tests were written for the old defaults (maximum, no metric range); the new-session defaults changed 2026-11-06
+        return _replace(LEGACY_METRIC_DEFAULTS, **fields)
     from lspr_imaging_app.analysis import trace_fit
     from lspr_imaging_app.analysis.trace_fit import TraceInput, trace_from_input, trace_from_input_per_cube, traces_from_inputs
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch

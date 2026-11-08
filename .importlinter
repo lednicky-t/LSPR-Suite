@@ -86,15 +86,18 @@ source_modules =
     lspr_imaging_app.shard_crc
     lspr_imaging_app.frame_naming
     lspr_imaging_app.export_stats
+    lspr_imaging_app.analysis.check_report
     lspr_imaging_app.analysis.export_tables
     lspr_imaging_app.analysis.fit_window
     lspr_imaging_app.analysis.frame_reduce
     lspr_imaging_app.analysis.gaussian_fit
+    lspr_imaging_app.analysis.image_motion
     lspr_imaging_app.analysis.metric_range
     lspr_imaging_app.analysis.order_quality
     lspr_imaging_app.analysis.provenance
     lspr_imaging_app.analysis.query
     lspr_imaging_app.analysis.reduction
+    lspr_imaging_app.analysis.response_shape
     lspr_imaging_app.analysis.scan
     lspr_imaging_app.analysis.scan_arrays
     lspr_imaging_app.analysis.scan_fingerprint
@@ -105,6 +108,7 @@ source_modules =
     lspr_imaging_app.analysis.settings
     lspr_imaging_app.analysis.spectrum_errors
     lspr_imaging_app.analysis.statistics
+    lspr_imaging_app.analysis.step_diagnostics
     lspr_imaging_app.analysis.tasks
     lspr_imaging_app.analysis.template_shift
     lspr_imaging_app.analysis.trace_fit

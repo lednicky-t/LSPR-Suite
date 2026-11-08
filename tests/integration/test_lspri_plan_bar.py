@@ -471,7 +471,7 @@ class PlanBarPanelTest(unittest.TestCase):
         tabs = self.panel._ribbon_tabs
         self.assertEqual(tabs._category_names, ["Plot", "Experimental plan"])
         self.assertEqual(self.panel.current_ribbon_tab(), "Plot")  # the first one is shown at the start
-        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["View", "Evaluation", "Step stats"])
+        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["View", "Evaluation", "Step stats", "Checks"])
 
     def test_the_structure_tools_are_live_only_while_the_experimental_plan_tab_is_shown(self) -> None:
         self._open_scan_and_draw()

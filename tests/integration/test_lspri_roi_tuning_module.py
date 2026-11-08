@@ -104,7 +104,7 @@ class ModuleTest(unittest.TestCase):
         self.plan = _Plan()
         self.selection = _Selection([2, 3, 5])
         self.settings = AnalysisSettingsModule()
-        self.settings.set_metric_settings(MetricSettings(fit_method="none"))
+        self.settings.set_metric_settings(MetricSettings(fit_method="none", metric_key="maximum"))  # explicit: the default is the centroid since 2026-11-06
         rois = make_rois()
         self.module = tm.RoiTuningModule(
             lambda: self.data.source(rois), self.plan, self.selection, self.settings, _Dataset(), _Toolbox(), helper_process=False

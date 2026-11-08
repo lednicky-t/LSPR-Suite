@@ -639,6 +639,9 @@ class SpectraPanelTests(unittest.TestCase):
         self.m.selection.set_roi_selection({1})
         self._wait_drawn(1)
         panel, settings = self.panel, self.m.analysis_settings
+        from dataclasses import replace
+
+        settings.set_metric_settings(replace(settings.metric_settings(), metric_key="maximum", metric_range="off"))  # the old defaults (new ones: 2026-11-06)
         self.assertEqual(panel._metric_range.currentData(), "off")
         self.assertFalse(panel._metric_range.isEnabled())  # the maximum has no range
         panel._metric.setCurrentIndex(panel._metric.findData("centroid"))
@@ -696,6 +699,30 @@ class SpectraPanelTests(unittest.TestCase):
         for control in (panel._order, panel._window_mode, panel._metric):
             self.assertTrue(control.isEnabled())
         self.assertEqual(settings.metric_settings().reference_cube_range(), (1, 2))  # remembered while it does not apply
+
+    def test_the_response_shape_is_chosen_in_the_fit_menu_with_its_four_cube_fields(self) -> None:
+        """The response shape (2026-11-06, `analysis/response_shape.py`): baseline and signal ranges in its row, each read in order; no signal range = "set" and
+        a note instead of a marker; the controls that mean nothing for it are off."""
+        self._open_and_scan()
+        self.m.selection.set_roi_selection({1})
+        self._wait_drawn(1)
+        panel, settings = self.panel, self.m.analysis_settings
+        panel._fit.setCurrentIndex(panel._fit.findData("response"))
+        metric = settings.metric_settings()
+        self.assertEqual((metric.fit_method, metric.uses_response), ("response", True))
+        self.assertEqual([box.value() for box in panel._resp_fields], [0, 9, -1, -1])  # no signal range yet
+        self.assertEqual(panel._resp_fields[2].specialValueText(), "set")
+        for control in (panel._order, panel._window_mode, panel._metric, panel._metric_range):
+            self.assertFalse(control.isEnabled())
+        self.assertTrue(_pump(lambda: self.panel._last is not None and self.panel._last[0].request.metric.uses_response and not self.panel._busy))
+        self.assertIn("signal cubes", self.panel._last[1][0].note)
+        panel._resp_fields[1].setValue(0)
+        panel._resp_fields[0].setValue(1)  # typed the wrong way round: read as 0 to 1
+        panel._resp_fields[2].setValue(3)
+        panel._resp_fields[3].setValue(2)
+        self.assertEqual(settings.metric_settings().response_ranges(), ((0, 1), (2, 3)))
+        panel._resp_fields[3].setValue(-1)  # back to "set": the signal range is cleared
+        self.assertEqual(settings.metric_settings().response_ranges(), ((0, 1), None))
 
     def test_the_reference_cube_fields_follow_a_change_made_elsewhere(self) -> None:
         from dataclasses import replace

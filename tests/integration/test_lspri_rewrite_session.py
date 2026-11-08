@@ -46,7 +46,7 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.analysis import AnalysisSettingsModule
     from lspr_imaging_app.frame_naming import FrameNamingScheme
-    from lspr_imaging_app.analysis.settings import MetricSettings, StatisticsSettings
+    from lspr_imaging_app.analysis.settings import LEGACY_METRIC_DEFAULTS, MetricSettings, StatisticsSettings
     from lspr_imaging_app.app_rewrite import apply_session, capture_session
     from lspr_imaging_app.image_tools import (
         BackgroundModule,
@@ -350,7 +350,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
 
         state = load_session(self.root)
         self.assertIsNotNone(state)
-        self.assertEqual(state.metric_settings, MetricSettings())
+        self.assertEqual(state.metric_settings, LEGACY_METRIC_DEFAULTS)  # an old file keeps the old defaults, so its numbers do not change
         self.assertEqual(state.statistics_settings, StatisticsSettings())
         # The rest of a 1.0 file still has to come back intact.
         self.assertEqual(len(state.rois), 2)
