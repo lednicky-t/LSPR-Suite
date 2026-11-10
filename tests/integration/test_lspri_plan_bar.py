@@ -36,13 +36,19 @@ try:
     from lspr_imaging_app.analysis.scan_trace import Series
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
     from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
+    from lspr_imaging_app.panels.sensorgram.edit_group import PlanEditControls
     from lspr_imaging_app.panels.sensorgram.panel import SensorgramPanel
     from lspr_imaging_app.panels.sensorgram.plan_group import PlanBarControls
+    from lspr_imaging_app.panels.sensorgram.plan_icons import (
+        add_step_after_icon, add_step_at_cursor_icon, add_step_before_icon, merge_steps_icon, remove_step_icon, restore_steps_icon,
+        split_step_icon,
+    )
     from lspr_imaging_app.panels.sensorgram.plot import SensorgramPlot
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.plan import bar_model as bm
     from lspr_imaging_app.selection.cube_display_module import MODE_CUBE, MODE_TIME
     from lspr_imaging_app.undo import undo_manager
+    from lspr_ui import get_active_theme
     from tests._qt_fonts import load_system_fonts
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -380,6 +386,207 @@ def _write_dataset(root: Path) -> ImageDataset:
     return ImageDataset(folder=root, records=records, source_format="image_stack", acquisition_metadata=_metadata())
 
 
+class PlanEditControlsTest(unittest.TestCase):
+    """The Edit group (2026-11-10) on its own: which button is on for which state, what it says when it is off, and what it asks for when clicked."""
+
+    def setUp(self) -> None:
+        self.host = QtWidgets.QWidget()
+        self.controls = PlanEditControls(self.host)
+        self.asked: list[tuple] = []
+        self.controls.add_requested.connect(lambda where: self.asked.append(("add", where)))
+        self.controls.remove_requested.connect(lambda: self.asked.append(("remove",)))
+        self.controls.merge_requested.connect(lambda: self.asked.append(("merge",)))
+        self.controls.split_requested.connect(lambda: self.asked.append(("split",)))
+        self.controls.restore_requested.connect(lambda: self.asked.append(("restore",)))
+
+    def tearDown(self) -> None:
+        self.host.deleteLater()
+
+    def _enabled(self) -> tuple[bool, ...]:
+        """(add at cursor, add in front, add behind, remove, merge); restore is asked for by name."""
+        c = self.controls
+        return tuple(b.isEnabled() for b in (c.add_cursor_button(), c.add_before_button(), c.add_after_button(), c.remove_button(), c.merge_button()))
+
+    def test_the_group_is_greyed_out_until_there_are_steps_and_says_why(self) -> None:
+        self.assertFalse(self.controls.is_available())
+        self.assertEqual(self._enabled(), (False,) * 5)
+        self.assertIn("no experiment steps", self.controls.remove_button().toolTip())
+        self.assertIn("no experiment steps", self.controls.add_cursor_button().toolTip())
+        self.controls.set_state(False, 2, True, True, False, True, True)  # a selection and a cursor mean nothing without steps
+        self.assertEqual(self._enabled(), (False,) * 5)
+        self.assertFalse(self.controls.split_button().isEnabled())
+        self.assertIn("no experiment steps", self.controls.split_button().toolTip())
+
+    def test_each_button_is_on_when_its_command_could_act(self) -> None:
+        c = self.controls
+        for state, expected in (  # (available, selected, can_add, can_merge, can_restore, cursor_on_plot) -> (at cursor, in front, behind, remove, merge)
+            ((True, 0, True, False, False, False), (False, False, False, False, False)),  # nothing selected, no cursor on the plot
+            ((True, 0, True, False, False, True), (True, False, False, False, False)),  # the cursor alone is enough for a step at the cursor
+            ((True, 1, True, False, False, True), (True, True, True, True, False)),  # one step: both sides and remove (a single step cannot be merged)
+            ((True, 1, False, False, False, False), (False, False, False, True, False)),  # no traces on the plot: a new boundary has no grid to snap to
+            ((True, 2, True, True, False, True), (True, False, False, True, True)),  # two neighbours: remove and merge; the sides need exactly one
+            ((True, 2, True, False, False, True), (True, False, False, True, False)),  # two steps with another between them cannot be merged
+        ):
+            c.set_state(*state)
+            self.assertEqual(self._enabled(), expected, state)
+
+    def test_a_button_that_is_off_says_what_is_missing(self) -> None:
+        c = self.controls
+        c.set_state(True, 0, True, False)
+        self.assertIn("cursor is not on the plot", c.add_cursor_button().toolTip())
+        self.assertIn("in front of the selected step: select one step first", c.add_before_button().toolTip())
+        self.assertIn("behind the selected step: select one step first", c.add_after_button().toolTip())
+        self.assertIn("Click a step on the plan bar", c.remove_button().toolTip())
+        self.assertIn("next to each other", c.merge_button().toolTip())
+        c.set_state(True, 2, True, False)
+        self.assertIn("Select just one", c.add_before_button().toolTip())
+        c.set_state(True, 1, False, False)
+        self.assertIn("needs traces", c.add_after_button().toolTip())
+        c.set_state(True, 1, True, False, False, True)
+        self.assertIn("In front of this step", c.add_before_button().toolTip())  # on again: the tooltips describe the commands
+        self.assertIn("Behind this step", c.add_after_button().toolTip())
+        self.assertIn("no step selected", c.add_cursor_button().toolTip())
+
+    def test_the_buttons_ask_for_their_command(self) -> None:
+        c = self.controls
+        c.set_state(True, 1, True, False, False, True)
+        c.add_cursor_button().click()
+        c.add_before_button().click()
+        c.add_after_button().click()
+        c.remove_button().click()
+        c.merge_button().click()  # off: a click on a button that cannot act does nothing
+        self.assertEqual(self.asked, [("add", "cursor"), ("add", "before"), ("add", "after"), ("remove",)])
+        c.set_state(True, 2, True, True)
+        c.merge_button().click()
+        self.assertEqual(self.asked[-1], ("merge",))
+        c.set_state(True, 0, True, False, False, True, True)
+        c.split_button().click()
+        self.assertEqual(self.asked[-1], ("split",))
+
+    def test_split_needs_the_cursor_inside_a_step_and_no_selection(self) -> None:
+        c = self.controls
+        split = c.split_button()
+        for state, expected in (  # (available, selected, can_add, can_merge, can_restore, cursor_on_plot, cursor_inside_a_step)
+            ((True, 0, True, False, False, True, True), True),  # no selection needed
+            ((True, 2, True, True, False, True, True), True),  # and whatever is selected
+            ((True, 0, True, False, False, True, False), False),  # the cursor is on a start of a step or between steps
+            ((True, 0, True, False, False, False, False), False),  # the cursor is not on the plot
+        ):
+            c.set_state(*state)
+            self.assertEqual(split.isEnabled(), expected, state)
+        c.set_state(True, 0, True, False, False, True, False)
+        self.assertIn("inside a step", split.toolTip())
+        c.set_state(True, 0, True, False, False, False, False)
+        self.assertIn("not on the plot", split.toolTip())
+        c.set_state(True, 0, True, False, False, True, True)
+        self.assertIn("No step has to be selected", split.toolTip())
+
+    def test_restore_needs_no_selection_only_something_removed(self) -> None:
+        c = self.controls
+        restore = c.restore_button()
+        c.set_state(True, 0, True, False)  # nothing removed
+        self.assertFalse(restore.isEnabled())
+        self.assertIn("nothing has been removed", restore.toolTip())
+        c.set_state(True, 0, True, False, True)  # something removed, nothing selected
+        self.assertTrue(restore.isEnabled())
+        restore.click()
+        self.assertEqual(self.asked, [("restore",)])
+        c.set_state(True, 2, True, True, True)  # whatever is selected
+        self.assertTrue(restore.isEnabled())
+
+    def test_when_every_step_was_removed_restore_is_the_one_button_left_and_says_so(self) -> None:
+        c = self.controls
+        c.set_state(False, 0, False, False, True, False)  # no steps left, some removed
+        self.assertFalse(c.is_available())
+        self.assertEqual(self._enabled(), (False,) * 5)
+        self.assertTrue(c.restore_button().isEnabled())
+        self.assertFalse(c.split_button().isEnabled())
+        self.assertIn("every step was removed", c.remove_button().toolTip())
+        c.set_state(False, 0, False, False, False)  # a dataset that never had steps: all off, and the tooltip says why
+        self.assertFalse(c.restore_button().isEnabled())
+        self.assertIn("no experiment steps", c.restore_button().toolTip())
+
+    def _drawn(self, icon) -> tuple:
+        """(the image, the pixels drawn as (x, y, colour)) of an icon rendered at 36 px; faint anti-aliasing pixels are left out of the colour checks."""
+        image = icon.pixmap(36, 36).toImage()
+        drawn = [(x, y, image.pixelColor(x, y)) for y in range(image.height()) for x in range(image.width()) if image.pixelColor(x, y).alpha() > 80]
+        return image, drawn
+
+    @staticmethod
+    def _is_ink(c) -> bool:  # the ink is red in these tests
+        return c.red() > 200 and c.blue() < 60
+
+    @staticmethod
+    def _is_accent(c) -> bool:  # and the accent is blue
+        return c.blue() > 200 and c.red() < 60
+
+    def test_the_concerned_step_is_in_the_accent_colour_and_the_other_in_ink(self) -> None:
+        """Add (behind / in front), remove and restore: one box is the ordinary ink, the dashed box and its symbol are the accent: two colours, nothing else. The dashed box is on
+        the right except for "in front of", where the new step comes first in time."""
+        for make, ghost_on_right in (
+            (add_step_after_icon, True), (add_step_before_icon, False), (remove_step_icon, True), (restore_steps_icon, True),
+        ):
+            _image, drawn = self._drawn(make("#ff0000", "#0000ff"))
+            self.assertGreater(len(drawn), 50, make.__name__)
+            left = [c for x, _y, c in drawn if x < 18]
+            right = [c for x, _y, c in drawn if x >= 18]
+            self.assertTrue(left and right, make.__name__)
+            ink_side, accent_side = (left, right) if ghost_on_right else (right, left)
+            self.assertTrue(all(self._is_ink(c) for c in ink_side), f"{make.__name__}: the selected step is ink")
+            self.assertTrue(all(self._is_accent(c) for c in accent_side), f"{make.__name__}: the dashed step and its symbol are the accent")
+
+    def test_add_at_the_cursor_is_an_ink_cursor_line_and_an_accent_step_starting_at_it(self) -> None:
+        _image, drawn = self._drawn(add_step_at_cursor_icon("#ff0000", "#0000ff"))
+        self.assertGreater(len(drawn), 50)
+        line = [(x, y) for x, y, c in drawn if self._is_ink(c)]
+        self.assertGreater(len(line), 20)  # the cursor: a tall thin line near the left, taller than the step beside it
+        self.assertTrue(all(3 <= x <= 11 for x, _y in line))
+        self.assertGreater(max(y for _x, y in line) - min(y for _x, y in line), 24)
+        accent = [(x, y) for x, y, c in drawn if self._is_accent(c)]
+        self.assertGreater(max(x for x, _y in accent), 30)  # the new step runs to the right, to the end
+        self.assertTrue(all(not self._is_ink(c) for x, _y, c in drawn if x >= 12))  # and nothing right of the cursor is ink: no other step is drawn
+
+    def test_split_is_two_ink_halves_and_a_tall_accent_cut_between_them(self) -> None:
+        _image, drawn = self._drawn(split_step_icon("#ff0000", "#0000ff"))
+        self.assertGreater(len(drawn), 50)
+        self.assertTrue(all(self._is_ink(c) for x, _y, c in drawn if x <= 15 or x >= 21))  # the two halves, one each side
+        self.assertTrue(any(x <= 15 for x, _y, _c in drawn) and any(x >= 21 for x, _y, _c in drawn))
+        cut = [(x, y) for x, y, c in drawn if 17 <= x <= 19 and self._is_accent(c)]
+        self.assertGreater(max(y for _x, y in cut) - min(y for _x, y in cut), 24)  # the cut is taller than the halves
+        halves_top = min(y for x, y, c in drawn if (x <= 15 or x >= 21) and self._is_ink(c))
+        self.assertLess(min(y for _x, y in cut), halves_top - 3)
+
+    def test_merge_has_no_concerned_step_and_stays_in_ink(self) -> None:
+        _image, drawn = self._drawn(merge_steps_icon("#ff0000"))
+        self.assertGreater(len(drawn), 50)
+        self.assertTrue(all(self._is_ink(c) for _x, _y, c in drawn))
+
+    def test_the_seven_icons_differ(self) -> None:
+        images = [
+            add_step_at_cursor_icon("#000000", "#00ff00").pixmap(36, 36).toImage(), add_step_before_icon("#000000", "#00ff00").pixmap(36, 36).toImage(),
+            add_step_after_icon("#000000", "#00ff00").pixmap(36, 36).toImage(), remove_step_icon("#000000", "#00ff00").pixmap(36, 36).toImage(),
+            merge_steps_icon("#000000").pixmap(36, 36).toImage(), restore_steps_icon("#000000", "#00ff00").pixmap(36, 36).toImage(),
+            split_step_icon("#000000", "#00ff00").pixmap(36, 36).toImage(),
+        ]
+        for i, first in enumerate(images):
+            for second in images[i + 1:]:
+                self.assertFalse(first == second)
+
+    def test_the_buttons_carry_the_theme_colours(self) -> None:
+        """The icons the group sets are the ones made from the theme's ink and its green / red / blue (checked on the pixels of the buttons' own icons)."""
+        theme = get_active_theme()
+        ink = theme.text_primary
+        c = self.controls
+        expected = (
+            (c.add_cursor_button(), add_step_at_cursor_icon(ink, theme.accent_green)), (c.add_before_button(), add_step_before_icon(ink, theme.accent_green)),
+            (c.add_after_button(), add_step_after_icon(ink, theme.accent_green)), (c.remove_button(), remove_step_icon(ink, theme.accent_red)),
+            (c.merge_button(), merge_steps_icon(ink)), (c.restore_button(), restore_steps_icon(ink, theme.accent_blue)),
+            (c.split_button(), split_step_icon(ink, theme.accent_gold)),
+        )
+        for index, (button, icon) in enumerate(expected):
+            self.assertTrue(button.icon().pixmap(36, 36).toImage() == icon.pixmap(36, 36).toImage(), index)
+
+
 class PlanBarPanelTest(unittest.TestCase):
     def setUp(self) -> None:
         undo_manager.clear()
@@ -471,7 +678,7 @@ class PlanBarPanelTest(unittest.TestCase):
         tabs = self.panel._ribbon_tabs
         self.assertEqual(tabs._category_names, ["Plot", "Experimental plan"])
         self.assertEqual(self.panel.current_ribbon_tab(), "Plot")  # the first one is shown at the start
-        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["View", "Evaluation", "Step stats", "Checks"])
+        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["View steps", "View stats", "Edit", "Evaluation", "Checks"])  # 2026-11-10
 
     def test_the_structure_tools_are_live_only_while_the_experimental_plan_tab_is_shown(self) -> None:
         self._open_scan_and_draw()
@@ -568,6 +775,230 @@ class PlanBarPanelTest(unittest.TestCase):
         self.assertEqual([s.added for s in steps], [False, True, False])
         self.assertIn("Added by you", steps[1].tooltip)
         self.assertEqual(round(steps[0].x_end, 6), round(steps[1].x_start, 6))  # the new step starts where the one it was cut from now ends
+
+    # -- the Edit group: add / remove / merge / restore steps from the ribbon (2026-11-10) ----------------------------------------------
+
+    def _edit(self) -> PlanEditControls:
+        return self.panel._steps.edit_controls
+
+    def _edit_enabled(self) -> tuple[bool, ...]:
+        """(add at cursor, add in front, add behind, remove, merge)"""
+        c = self._edit()
+        return tuple(b.isEnabled() for b in (c.add_cursor_button(), c.add_before_button(), c.add_after_button(), c.remove_button(), c.merge_button()))
+
+    def test_the_edit_buttons_follow_the_selection_on_the_bar(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        self.assertTrue(self._edit().is_available())
+        self.assertEqual(self._edit_enabled(), (True, False, False, False, False))  # nothing selected: only a step at the cursor, which needs none
+        self._bar().select(0)
+        self.assertEqual(self._edit_enabled(), (True, True, True, True, False))
+        self._bar().select_many((0, 1), anchor=0)
+        self.assertEqual(self._edit_enabled(), (True, False, False, True, True))
+        self._bar().clear_selection()
+        self.assertEqual(self._edit_enabled(), (True, False, False, False, False))
+
+    def test_add_remove_and_merge_edit_the_plan_each_as_one_undo_step(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        plan, edit = self.m.experiment_plan, self._edit()
+
+        self._bar().select(0)
+        edit.add_after_button().click()  # a new step behind the first
+        self.assertEqual([s.added for s in self._bar().steps()], [False, True, False])
+        self.assertEqual(self._bar().selected_indices(), (1,))  # the new step is selected, ready to be dragged into place
+        undo_manager.undo()
+        self.assertEqual(len(plan.steps()), 2)
+        self.assertEqual(self._edit_enabled(), (True, False, False, False, False))  # a structure change clears the selection, and the buttons follow
+
+        self._bar().select(1)
+        edit.add_before_button().click()  # a new step in front of the second
+        self.assertEqual([s.added for s in self._bar().steps()], [False, True, False])
+        undo_manager.undo()
+
+        self._bar().select(1)
+        edit.remove_button().click()
+        self.assertEqual(len(plan.steps()), 1)
+        self.assertTrue(plan.has_removed())
+        undo_manager.undo()
+        self.assertEqual(len(plan.steps()), 2)
+
+        self._bar().select_many((0, 1), anchor=0)
+        edit.merge_button().click()
+        self.assertEqual(len(plan.steps()), 1)
+        self.assertEqual(self._bar().selected_indices(), (0,))  # the step they became
+        undo_manager.undo()
+        self.assertEqual(len(plan.steps()), 2)
+
+    def test_add_at_the_cursor_needs_no_selected_step_and_is_one_undo_step(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        plan, edit = self.m.experiment_plan, self._edit()
+        self.m.selection.set_cube(1)  # inside step 1 (cubes 0 - 3)
+        self._bar().clear_selection()
+        self.assertTrue(edit.add_cursor_button().isEnabled())
+        edit.add_cursor_button().click()
+        steps = plan.steps()
+        cube1 = self.m.dataset.cube_start_unix_ms(1)
+        self.assertEqual([s.is_added for s in steps], [False, True, False])
+        self.assertEqual((steps[0].end_unix_ms, steps[1].start_unix_ms), (cube1, cube1))  # step 1 is cut where the cursor is, the new step starts there
+        self.assertEqual(self._bar().selected_indices(), (1,))  # and is selected, ready to be dragged into place
+        undo_manager.undo()
+        self.assertEqual(len(plan.steps()), 2)
+
+    def test_add_at_the_cursor_on_the_start_of_a_step_says_so_and_changes_nothing(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        notices: list[str] = []
+        self.m.experiment_plan.notice.connect(notices.append)
+        history = undo_manager.undo_label
+        self.m.selection.set_cube(0)  # cube 0 starts step 1: nothing of it is left to give
+        self._edit().add_cursor_button().click()
+        self.assertEqual(len(self.m.experiment_plan.steps()), 2)
+        self.assertEqual(undo_manager.undo_label, history)
+        self.assertEqual(len(notices), 1)
+        self.assertIn("cursor", notices[0])
+
+    def test_the_cursor_button_follows_whether_the_cursor_is_on_the_plot_without_rebuilding_the_axis(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        steps, edit = self.panel._steps, self._edit()
+        self.assertTrue(edit.add_cursor_button().isEnabled())
+        steps._plan_axis = lambda: (_ for _ in ()).throw(AssertionError("the axis is rebuilt at every cursor move"))  # type: ignore[method-assign]
+        steps._current_cube = lambda: 999  # a cube that is not one of the plotted cubes
+        steps.cursor_moved()
+        self.assertFalse(edit.add_cursor_button().isEnabled())
+        self.assertIn("not on the plot", edit.add_cursor_button().toolTip())
+        self.assertFalse(edit.split_button().isEnabled())
+        steps._current_cube = lambda: 1
+        steps.cursor_moved()
+        self.assertTrue(edit.add_cursor_button().isEnabled())
+        self.assertTrue(edit.split_button().isEnabled())  # inside step 1
+        steps._current_cube = lambda: 0
+        steps.cursor_moved()
+        self.assertTrue(edit.add_cursor_button().isEnabled())
+        self.assertFalse(edit.split_button().isEnabled())  # on the first cube of step 1: nothing of it to give
+
+    def test_split_follows_the_cube_slider(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        split = self._edit().split_button()
+        self.m.selection.set_cube(0)  # the first cube of step 1
+        self.assertFalse(split.isEnabled())
+        self.assertIn("inside a step", split.toolTip())
+        self.m.selection.set_cube(1)  # inside it
+        self.assertTrue(split.isEnabled())
+        self.m.selection.set_cube(3)  # the first cube of step 2: a boundary, not inside either step
+        self.assertFalse(split.isEnabled())
+        self.m.selection.set_cube(4)  # inside step 2
+        self.assertTrue(split.isEnabled())
+
+    def test_split_cuts_the_step_at_the_cursor_with_no_selection_and_is_one_undo_step(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        plan, edit = self.m.experiment_plan, self._edit()
+        self.m.selection.set_cube(1)
+        self._bar().clear_selection()
+        edit.split_button().click()
+        steps = plan.steps()
+        cube1 = self.m.dataset.cube_start_unix_ms(1)
+        self.assertEqual([s.is_added for s in steps], [False, True, False])
+        self.assertEqual((steps[0].end_unix_ms, steps[1].start_unix_ms), (cube1, cube1))
+        self.assertEqual(steps[0].label, steps[1].label)  # the same solution goes on
+        self.assertEqual(steps[0].label, "H2O_--_ch1F")
+        self.assertEqual(self._bar().selected_indices(), (1,))  # the new part is selected, ready to be dragged
+        self.assertEqual(self._bar().steps()[1].text, "H2O_--_ch1F")  # and drawn with the note
+        undo_manager.undo()
+        self.assertEqual(len(plan.steps()), 2)
+        self.assertEqual(plan.steps()[0].end_unix_ms - plan.steps()[0].start_unix_ms, 3 * CUBE_MS)
+
+    def test_split_on_a_first_cube_says_so_and_changes_nothing(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        notices: list[str] = []
+        self.m.experiment_plan.notice.connect(notices.append)
+        history = undo_manager.undo_label
+        self.m.selection.set_cube(0)
+        self.panel._steps.actions.split_at_cursor()  # the button is off here; the command refuses by itself as well
+        self.assertEqual(len(self.m.experiment_plan.steps()), 2)
+        self.assertEqual(undo_manager.undo_label, history)
+        self.assertEqual(len(notices), 1)
+        self.assertIn("split", notices[0])
+
+    def test_the_slider_moves_the_cursor_and_the_new_step_with_it(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        plan = self.m.experiment_plan
+        self.m.selection.set_cube(2)
+        self._edit().add_cursor_button().click()
+        self.assertEqual(plan.steps()[1].start_unix_ms, self.m.dataset.cube_start_unix_ms(2))
+
+    def test_restore_brings_back_removed_steps_even_when_every_step_was_removed(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        plan, edit = self.m.experiment_plan, self._edit()
+        self.assertFalse(edit.restore_button().isEnabled())  # nothing removed yet
+        self._bar().select_many((0, 1), anchor=0)
+        edit.remove_button().click()  # both steps: nothing is left on the bar to select
+        self.assertEqual(len(plan.steps()), 0)
+        self.assertFalse(edit.is_available())
+        self.assertEqual(self._edit_enabled(), (False,) * 5)
+        self.assertTrue(edit.restore_button().isEnabled())  # the way back is still there
+        edit.restore_button().click()
+        self.assertEqual([s.order for s in plan.steps()], [1, 2])
+        self.assertTrue(edit.is_available())
+        self.assertFalse(edit.restore_button().isEnabled())  # nothing removed any more
+        undo_manager.undo()  # one undo step: the restore is undone, the steps are removed again
+        self.assertEqual(len(plan.steps()), 0)
+        self.assertTrue(edit.restore_button().isEnabled())
+
+    def test_the_edit_buttons_do_nothing_for_a_selection_they_cannot_use(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        actions = self.panel._steps.actions
+        history = undo_manager.undo_label  # the ROIs the test added are the last entries; nothing below may add one
+        self._bar().clear_selection()
+        actions.add_at_selection("after")
+        actions.remove_selected()
+        actions.merge_selected()
+        actions.restore_removed()  # nothing was removed
+        self._bar().select(0)
+        actions.merge_selected()  # one step cannot be merged
+        self._bar().select_many((0, 1), anchor=0)
+        actions.add_at_selection("after")  # add next to a step needs exactly one
+        self.assertEqual(len(self.m.experiment_plan.steps()), 2)
+        self.assertEqual(undo_manager.undo_label, history)
+
+    def test_when_the_traces_go_the_bar_the_selection_and_the_cursor_go_and_the_buttons_follow(self) -> None:
+        self.m.cube_display.set_mode(MODE_CUBE)
+        self._open_scan_and_draw()
+        self._bar().select(0)
+        self.assertEqual(self._edit_enabled(), (True, True, True, True, False))
+        self.m.selection.set_roi_selection(set())  # nothing drawn: the bar goes, a step that is not on the bar is not selected, and the cursor is not on the plot
+        self.assertTrue(_pump(lambda: not self._bar().is_shown()))
+        self.assertEqual(self._bar().selected_indices(), ())
+        self.assertEqual(self._edit_enabled(), (False,) * 5)
+        self.assertFalse(self._edit().split_button().isEnabled())  # no cursor on the plot either
+        self.assertTrue(self._edit().is_available())  # the dataset still has steps
+
+    def test_a_dataset_without_steps_greys_the_edit_group_out(self) -> None:
+        self._open_scan_and_draw()
+        self._bar().select(0)
+        self.assertTrue(self._edit().is_available())
+        dataset = self.m.dataset._dataset
+        dataset.acquisition_metadata = dataset.acquisition_metadata.model_copy(update={"plan": None})
+        self.m.experiment_plan.steps_changed.emit("dataset")
+        self.assertFalse(self._edit().is_available())
+        self.assertEqual(self._edit_enabled(), (False,) * 5)
+
+    def test_without_the_plan_module_the_edit_group_is_greyed_out(self) -> None:
+        panel = SensorgramPanel(
+            self.m.scan_results, self.m.roi_toolbox, self.m.dataset, self.m.selection, self.m.analysis_settings, self.m.cube_display,
+            trace_in_process=False, mask=self.m.mask,
+        )
+        self.assertFalse(panel._steps.edit_controls.is_available())
+        panel.shutdown()
+        panel.deleteLater()
 
     def test_without_the_plan_module_the_group_is_greyed_out(self) -> None:
         panel = SensorgramPanel(

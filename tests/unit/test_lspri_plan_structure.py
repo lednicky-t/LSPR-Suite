@@ -219,6 +219,131 @@ class AddTest(unittest.TestCase):
         self.assertEqual(len(state.added), 2)
 
 
+class AddAtCursorTest(unittest.TestCase):
+    """`edits.add_step_at` (2026-11-10): a new step that starts at the cursor, with no other step chosen. Steps: 10 - 30 s, 30 - 50 s (joined), an idle stretch, 60 - 80 s; data end 81 s."""
+
+    def _add(self, at: float, *, steps=None, state: PlanEditsState = PlanEditsState(), min_length: int = MIN_LENGTH):
+        steps = _steps(state) if steps is None else steps
+        return edits.add_step_at(steps, state, at, GRID, min_length_ms=min_length)
+
+    def test_in_free_time_the_step_runs_from_the_cursor_to_the_next_step(self) -> None:
+        for at, expected in ((4_000, (4_000, 10_000)), (52_000, (52_000, 60_000))):  # before the first step; in the idle stretch
+            state, ref = self._add(at)
+            by_ref = {s.ref: s for s in _steps(state)}
+            self.assertEqual((by_ref[ref].start_unix_ms, by_ref[ref].end_unix_ms, by_ref[ref].is_added, by_ref[ref].label), (*expected, True, ""), at)
+            self.assertEqual(len(by_ref), 4)
+            self.assertEqual([(by_ref[m].start_unix_ms, by_ref[m].end_unix_ms) for m in (M1, M2, M3)], [(10_000, 30_000), (30_000, 50_000), (60_000, 80_000)])  # the others stay
+
+    def test_after_the_last_step_it_runs_to_the_end_of_the_data(self) -> None:
+        plan = ImagingPlan(steps=[ImagingPlanStep(step=1, label="a", start_unix_ms=10_000, end_unix_ms=60_000)])
+        steps = edits.apply_edits(plan, PlanEditsState()).steps
+        state, ref = self._add(62_000, steps=steps)
+        new = next(s for s in edits.apply_edits(plan, state).steps if s.ref == ref)
+        self.assertEqual((new.start_unix_ms, new.end_unix_ms), (62_000, 81_000))
+
+    def test_inside_a_step_the_step_is_cut_at_the_cursor_and_the_new_step_takes_the_rest(self) -> None:
+        state, ref = self._add(20_000)  # inside step 1 (10 - 30 s), which touches step 2
+        steps = _steps(state)
+        new = next(s for s in steps if s.ref == ref)
+        self.assertEqual((steps[0].ref, steps[0].start_unix_ms, steps[0].end_unix_ms), (M1, 10_000, 20_000))
+        self.assertEqual((new.order, new.start_unix_ms, new.end_unix_ms), (2, 20_000, 30_000))
+        self.assertEqual([s.order for s in steps], [1, 2, 3, 4])
+        self.assertEqual([(s.start_unix_ms, s.end_unix_ms) for s in steps[2:]], [(30_000, 50_000), (60_000, 80_000)])
+
+    def test_steps_never_overlap_whatever_the_cursor(self) -> None:
+        for at in range(0, 81_001, 2_000):
+            state, ref = self._add(at)
+            if ref is None:
+                self.assertEqual(state, PlanEditsState())
+                continue
+            steps = _steps(state)
+            self.assertTrue(all(a.end_unix_ms <= b.start_unix_ms for a, b in zip(steps, steps[1:])), at)
+            self.assertTrue(all(s.end_unix_ms - s.start_unix_ms >= MIN_LENGTH for s in steps), at)
+
+    def test_the_cursor_is_moved_to_the_nearest_cube_start(self) -> None:
+        state, ref = self._add(20_900)  # 20 s is the nearest of the grid points
+        new = next(s for s in _steps(state) if s.ref == ref)
+        self.assertEqual(new.start_unix_ms, 20_000)
+
+    def test_no_room_when_the_cursor_is_on_the_start_of_a_step_or_too_close_to_an_edge(self) -> None:
+        for at, min_length in ((10_000, MIN_LENGTH), (30_000, MIN_LENGTH), (60_000, MIN_LENGTH), (12_000, 4_000), (28_000, 4_000)):
+            state, ref = self._add(at, min_length=min_length)
+            self.assertEqual((state, ref), (PlanEditsState(), None), (at, min_length))
+
+    def test_no_room_for_less_than_a_cube_after_the_last_step_or_without_a_grid(self) -> None:
+        self.assertEqual(self._add(80_000), (PlanEditsState(), None))  # 80 - 81 s is less than a cube
+        self.assertEqual(edits.add_step_at(_steps(), PlanEditsState(), 20_000, np.array([]), min_length_ms=MIN_LENGTH), (PlanEditsState(), None))
+        self.assertEqual(self._add(float("nan")), (PlanEditsState(), None))
+
+    def test_a_step_the_user_added_is_cut_the_same_way_and_uids_go_on_counting(self) -> None:
+        state, first = self._add(52_000)  # 52 - 60 s
+        state, second = self._add(56_000, state=state)  # inside it
+        by_ref = {s.ref: s for s in _steps(state)}
+        self.assertEqual((first, second), (added_ref(1), added_ref(2)))
+        self.assertEqual((by_ref[first].start_unix_ms, by_ref[first].end_unix_ms), (52_000, 56_000))
+        self.assertEqual((by_ref[second].start_unix_ms, by_ref[second].end_unix_ms), (56_000, 60_000))
+        self.assertEqual(len(state.added), 2)
+
+
+class SplitTest(unittest.TestCase):
+    """`edits.split_step` (2026-11-10): the step the cursor is inside is cut in two there. Same synthetic steps as above (10 - 30 s, 30 - 50 s, idle, 60 - 80 s)."""
+
+    def _split(self, at: float, *, state: PlanEditsState = PlanEditsState(), min_length: int = MIN_LENGTH):
+        return edits.split_step(_steps(state), state, at, GRID, min_length_ms=min_length)
+
+    def test_a_step_is_cut_in_two_at_the_cursor_and_the_second_part_carries_the_note(self) -> None:
+        state, ref = self._split(20_000)  # inside step 1 (10 - 30 s), which touches step 2
+        steps = _steps(state)
+        new = next(s for s in steps if s.ref == ref)
+        self.assertEqual((steps[0].ref, steps[0].start_unix_ms, steps[0].end_unix_ms, steps[0].label), (M1, 10_000, 20_000, S1))
+        self.assertEqual((new.order, new.start_unix_ms, new.end_unix_ms, new.label, new.is_added), (2, 20_000, 30_000, S1, True))
+        self.assertEqual([s.order for s in steps], [1, 2, 3, 4])
+        self.assertEqual([(s.start_unix_ms, s.end_unix_ms) for s in steps[2:]], [(30_000, 50_000), (60_000, 80_000)])  # the others stay
+
+    def test_the_first_part_keeps_its_roles_and_both_parts_have_its_colour(self) -> None:
+        state = edits.set_color(PlanEditsState(), _steps()[0], "#ff0000")
+        state = edits.set_role(state, 1, "baseline", M1)
+        state, ref = self._split(20_000, state=state)
+        steps = _steps(state)
+        new = next(s for s in steps if s.ref == ref)
+        self.assertEqual((steps[0].color, steps[0].roles), ("#ff0000", ("B1",)))  # the step keeps what it had
+        self.assertEqual((new.color, new.roles), ("#ff0000", ()))  # the new part has the colour but no role: a step is one baseline or signal, not two
+
+    def test_an_edited_note_is_what_the_second_part_gets(self) -> None:
+        state = edits.set_label(PlanEditsState(), _steps()[0], "Water, second try")
+        state, ref = self._split(20_000, state=state)
+        self.assertEqual(next(s for s in _steps(state) if s.ref == ref).label, "Water, second try")
+
+    def test_a_step_with_no_note_gives_an_empty_second_part(self) -> None:
+        state, first = edits.add_step_at(_steps(), PlanEditsState(), 52_000, GRID, min_length_ms=MIN_LENGTH)  # 52 - 60 s, no note
+        state, second = self._split(56_000, state=state)
+        by_ref = {s.ref: s for s in _steps(state)}
+        self.assertEqual((by_ref[first].end_unix_ms, by_ref[second].start_unix_ms, by_ref[second].end_unix_ms, by_ref[second].label), (56_000, 56_000, 60_000, ""))
+        self.assertEqual((first, second), (added_ref(1), added_ref(2)))
+
+    def test_nothing_to_split_on_the_start_of_a_step_between_steps_or_near_an_edge(self) -> None:
+        for at, min_length in ((10_000, MIN_LENGTH), (30_000, MIN_LENGTH), (55_000, MIN_LENGTH), (12_000, 4_000), (28_000, 4_000), (80_000, MIN_LENGTH)):
+            state, ref = self._split(at, min_length=min_length)
+            self.assertEqual((state, ref), (PlanEditsState(), None), (at, min_length))
+        self.assertEqual(edits.split_step(_steps(), PlanEditsState(), 20_000, np.array([]), min_length_ms=MIN_LENGTH), (PlanEditsState(), None))
+        self.assertEqual(self._split(float("nan")), (PlanEditsState(), None))
+
+    def test_the_cursor_is_moved_to_the_nearest_cube_start(self) -> None:
+        state, ref = self._split(20_900)
+        self.assertEqual(next(s for s in _steps(state) if s.ref == ref).start_unix_ms, 20_000)
+
+    def test_the_time_covered_by_the_steps_never_changes_and_they_never_overlap(self) -> None:
+        covered = sum(s.end_unix_ms - s.start_unix_ms for s in _steps())
+        for at in range(0, 81_001, 1_000):
+            state, ref = self._split(at)
+            if ref is None:
+                continue
+            steps = _steps(state)
+            self.assertEqual(sum(s.end_unix_ms - s.start_unix_ms for s in steps), covered, at)
+            self.assertTrue(all(a.end_unix_ms <= b.start_unix_ms for a, b in zip(steps, steps[1:])), at)
+            self.assertTrue(all(s.end_unix_ms - s.start_unix_ms >= MIN_LENGTH for s in steps), at)
+
+
 class EditingAnAddedStepTest(unittest.TestCase):
     def setUp(self) -> None:
         self.state, self.ref = edits.add_step(_steps(), PlanEditsState(), 1, "after", GRID, min_length_ms=MIN_LENGTH)  # 50 - 60 s

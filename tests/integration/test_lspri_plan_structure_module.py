@@ -141,6 +141,53 @@ class StructureTest(unittest.TestCase):
         self.assertEqual(len(self.notices), 1)
         self.assertFalse(undo_manager.can_undo)
 
+    def test_add_at_the_cursor_cuts_the_step_it_is_in_and_is_one_undo_step(self) -> None:
+        ref = self.module.add_step_at(20_000, self.grid)  # inside step 1 (10 - 30 s)
+        self.assertEqual(ref, added_ref(1))
+        steps = self.module.steps()
+        self.assertEqual([(s.order, s.is_added, s.start_unix_ms, s.end_unix_ms) for s in steps], [(1, False, 10_000, 20_000), (2, True, 20_000, 30_000), (3, False, 30_000, 50_000)])
+        self.assertEqual(self.reasons, ["structure"])
+        undo_manager.undo()
+        self.assertEqual(([s.ref for s in self.module.steps()], self.module.step_by_ref(ref)), ([M1, M2], None))
+
+    def test_add_at_the_cursor_in_free_time_runs_to_the_next_step_or_the_end_of_the_data(self) -> None:
+        ref = self.module.add_step_at(60_000, self.grid)  # behind step 2 (ends at 50 s): free to the end of the data (81 s)
+        new = self.module.step_by_ref(ref)
+        self.assertEqual((new.order, new.start_unix_ms, new.end_unix_ms), (3, 60_000, 81_000))
+        self.assertEqual([(s.start_unix_ms, s.end_unix_ms) for s in self.module.steps()[:2]], [(10_000, 30_000), (30_000, 50_000)])  # nothing else moved
+
+    def test_add_at_the_cursor_with_no_room_says_so_and_changes_nothing(self) -> None:
+        undo_manager.clear()
+        self.assertIsNone(self.module.add_step_at(30_000, self.grid))  # the cursor is on the start of step 2
+        self.assertEqual(len(self.notices), 1)
+        self.assertIn("cursor", self.notices[0])
+        self.assertFalse(undo_manager.can_undo)
+        self.assertEqual([s.ref for s in self.module.steps()], [M1, M2])
+
+    def test_split_cuts_the_step_at_the_cursor_gives_the_second_part_the_note_and_is_one_undo_step(self) -> None:
+        self.assertTrue(self.module.set_role("baseline", 0))
+        undo_manager.clear()
+        ref = self.module.split_step_at(20_000, self.grid)  # inside step 1 (10 - 30 s)
+        self.assertEqual(ref, added_ref(1))
+        steps = self.module.steps()
+        self.assertEqual([(s.order, s.is_added, s.start_unix_ms, s.end_unix_ms, s.label, s.roles) for s in steps], [
+            (1, False, 10_000, 20_000, NOTE1, ("B1",)), (2, True, 20_000, 30_000, NOTE1, ()), (3, False, 30_000, 50_000, NOTE2, ()),
+        ])
+        self.assertEqual(self.reasons[-1], "structure")
+        self.assertEqual(undo_manager.undo_label, "Split step")
+        undo_manager.undo()
+        self.assertEqual(([s.ref for s in self.module.steps()], self.module.step_by_ref(ref)), ([M1, M2], None))
+        self.assertEqual(self.module.baseline_step().ref, M1)  # the role is where it was
+
+    def test_split_with_nothing_to_split_says_so_and_changes_nothing(self) -> None:
+        undo_manager.clear()
+        self.assertIsNone(self.module.split_step_at(30_000, self.grid))  # on the start of step 2
+        self.assertIsNone(self.module.split_step_at(60_000, self.grid))  # after the last step
+        self.assertEqual(len(self.notices), 2)
+        self.assertIn("split", self.notices[0])
+        self.assertFalse(undo_manager.can_undo)
+        self.assertEqual([s.ref for s in self.module.steps()], [M1, M2])
+
     def test_the_roles_are_set_read_moved_and_cleared(self) -> None:
         self.assertTrue(self.module.set_role("baseline", 0))
         self.assertTrue(self.module.set_role("signal", 1))
