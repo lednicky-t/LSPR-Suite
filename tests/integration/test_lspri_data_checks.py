@@ -18,6 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtGui import QGuiApplication
@@ -36,8 +37,9 @@ try:
     from lspr_imaging_app import app_rewrite
     from lspr_imaging_app.analysis import scan_trace
     from lspr_imaging_app.analysis.check_report import to_text
+    from lspr_imaging_app.analysis.image_motion import StepMotion
     from lspr_imaging_app.analysis.trace_store import TraceStore
-    from lspr_imaging_app.panels.check_report_window import CheckReportWindow
+    from lspr_imaging_app.panels.check_report_window import DEFAULT_SIZE, CheckReportWindow
     from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
     from lspr_imaging_app.panels.image.motion_presenter import MotionPresenter
     from lspr_imaging_app.panels.sensorgram.checks_group import ChecksControls
@@ -398,36 +400,52 @@ class MotionTests(ChecksBase):
         for row in report.table.rows:
             self.assertLess(max(row[2:6]), 1.0)  # the images do not move in this dataset
 
-    def test_nothing_to_measure_is_explained(self) -> None:
+    def _motion_window(self) -> CheckReportWindow:
+        return CheckReportWindow("Image motion", size_key=MOTION_WINDOW_SIZE, numbers_key=MOTION_WINDOW_NUMBERS, ui_state=UiStateStore({}), compact=True)
+
+    def test_nothing_to_measure_is_explained_on_the_status_bar(self) -> None:
         m2 = app_rewrite._build_modules()
+        window = self._motion_window()
         try:
             empty = ImageMotionModule(m2.dataset, m2.experiment_plan)
             said: list[str] = []
             empty.notice.connect(said.append)
             self.assertFalse(empty.run(600.0))
             self.assertIn("Open a dataset", said[0])
+            presenter = MotionPresenter(empty, self.row, window, lambda: 600.0)  # the same refusal through the button: a status-bar sentence, no window
+            announced: list[str] = []
+            self.row.status_message.connect(announced.append)
+            self.row.motion_button.click()
+            self.assertIn("Open a dataset", announced[-1])
+            self.assertFalse(window.isVisible())
+            self.assertFalse(presenter.task.is_active())  # nothing started
         finally:
+            window.deleteLater()
             m2.scan_results.shutdown()
             m2.analysis_scan.shutdown()
 
-    def test_the_motion_group_runs_it_opens_the_report_and_stops_it(self) -> None:
-        window = CheckReportWindow("Image motion", size_key=MOTION_WINDOW_SIZE, numbers_key=MOTION_WINDOW_NUMBERS, ui_state=UiStateStore({}))
-        presenter = MotionPresenter(self.motion, self.row, window)
+    def test_a_still_image_is_one_status_sentence_at_the_wavelength_on_screen_and_no_window(self) -> None:
+        window = self._motion_window()
+        on_screen = [600.0]
+        presenter = MotionPresenter(self.motion, self.row, window, lambda: on_screen[0])
+        said: list[str] = []
+        self.row.status_message.connect(said.append)
         try:
-            self.assertEqual(self.row.motion_wavelength.value(), 600)
             done: list[tuple] = []
             self.motion.finished.connect(lambda outcome, message: done.append((outcome, message)))
             self.row.motion_button.click()
-            self.assertTrue(window.isVisible())
             self.assertTrue(self.row.is_motion_running())  # the button is the Stop meanwhile
+            self.assertFalse(window.isVisible())  # runs in the background: nothing opens
             self.assertTrue(_pump(lambda: bool(done) and not self.motion.is_running()))
             self.assertFalse(self.row.is_motion_running())
-            self.assertIn("Image motion", window.status_text() + window.windowTitle())
-            self.assertIn("The image does not move", window.findings_text())
-            self.row.motion_wavelength.setValue(540)  # Run again measures at the box's wavelength
-            window.run_button.click()
+            self.assertFalse(window.isVisible())
+            self.assertEqual(len(said), 1)
+            self.assertIn("No image motion over the limits at 600 nm in 2 steps", said[0])
+            on_screen[0] = 540.0  # the next run measures the plane that is on screen then
+            self.row.motion_button.click()
             self.assertTrue(_pump(lambda: len(done) == 2 and not self.motion.is_running()))
-            self.assertIn("540 nm", window.status_text())
+            self.assertIn("540 nm", said[-1])
+            self.assertFalse(window.isVisible())
             self.row.motion_button.click()  # start, then stop
             self.assertTrue(self.row.is_motion_running())
             self.row.motion_button.click()
@@ -435,16 +453,41 @@ class MotionTests(ChecksBase):
             self.assertIn(done[-1][0], ("cancelled", "completed"))
             self.assertIs(presenter.task.is_active(), False)
         finally:
+            window.deleteLater()
+
+    def test_a_moving_step_opens_the_compact_report_and_says_so_on_the_status_bar(self) -> None:
+        window = self._motion_window()
+        presenter = MotionPresenter(self.motion, self.row, window, lambda: 600.0)  # kept: an unreferenced presenter is freed and its connections die
+        said: list[str] = []
+        self.row.status_message.connect(said.append)
+
+        def moving(label, cubes, read_plane, cancelled=None, on_plane=None):
+            return StepMotion(label, tuple(cubes), np.zeros((len(cubes), 2)), (0.2, 0.1), (0.5, 0.2))
+
+        try:
+            done: list[tuple] = []
+            self.motion.finished.connect(lambda outcome, message: done.append((outcome, message)))
+            with mock.patch("lspr_imaging_app.selection.image_motion_module.step_motion", moving):
+                self.row.motion_button.click()
+                self.assertTrue(_pump(lambda: bool(done) and not self.motion.is_running()))
+            self.assertTrue(window.isVisible())
+            self.assertIn("the image moves", window.findings_text())
+            self.assertTrue(window.run_button.isHidden())  # compact: the ribbon button runs it
+            self.assertLess(window.width(), DEFAULT_SIZE[0])
+            self.assertIn("over the limits in 2 of 2 steps", said[-1])
+            self.assertFalse(self.row.is_motion_running())
+            self.assertIs(presenter.task.is_active(), False)
+        finally:
             window.close()
             window.deleteLater()
 
 
 class WiringTests(unittest.TestCase):
-    def test_the_app_wiring_remembers_the_pair_and_the_wavelength(self) -> None:
+    def test_the_app_wiring_remembers_the_pair_and_builds_the_motion_presenter(self) -> None:
         m = app_rewrite._build_modules()
         row = AnalysisTab()
         window = QtWidgets.QMainWindow()
-        ui_state = UiStateStore({"sensorgram/checks_pair": 2, "analysis/motion_wavelength_nm": 540})
+        ui_state = UiStateStore({"sensorgram/checks_pair": 2})
         from lspr_imaging_app.panels.sensorgram import SensorgramPanel
 
         panel = SensorgramPanel(
@@ -454,7 +497,7 @@ class WiringTests(unittest.TestCase):
         try:
             checks = app_rewrite._wire_data_checks(window, m, panel, ui_state)
             motion = app_rewrite._wire_image_motion(window, m, row, ui_state)
-            self.assertEqual(row.motion_wavelength.value(), 540)
+            self.assertFalse(hasattr(row, "motion_wavelength"))  # no box since 2026-11-10: the plane on screen is measured
             m.data_checks.set_pair(3)
             self.assertEqual(ui_state.get("sensorgram/checks_pair"), 3)
             self.assertEqual({checks.task.task_id, motion.task.task_id}, {"checks.data", "checks.motion"})

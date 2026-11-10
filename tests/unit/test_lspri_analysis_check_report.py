@@ -84,7 +84,9 @@ class MotionReportTests(unittest.TestCase):
         self.assertIn("2: EG", warning.title)
         self.assertIn("jitter", warning.detail)
         self.assertIn("drift", warning.detail)
-        self.assertIn("ROI", warning.detail)
+        self.assertNotIn("ROI", warning.detail)  # the reason is said once, in its own note
+        (why,) = [f for f in report.findings if f.level == INFO]
+        self.assertIn("ROI", why.detail)
         self.assertEqual(len(report.table.rows), 2)
         self.assertEqual(report.table.rows[0][-1], "ok")
         self.assertIn("600 nm", report.table.title)
@@ -95,6 +97,26 @@ class MotionReportTests(unittest.TestCase):
         self.assertEqual(finding.level, OK)
         self.assertAlmostEqual(finding.numbers["jitter_px"], 0.02)
         self.assertAlmostEqual(finding.numbers["range_px"], 0.04)
+
+    def test_the_status_sentence_says_nothing_moves_with_the_worst_numbers(self) -> None:
+        report = motion_report([motion("1", 0.01, 0.03), motion("2", 0.02, 0.04)], [], 600.0, "")
+        self.assertEqual(
+            report.summary,
+            "No image motion over the limits at 600 nm in 2 steps: jitter up to 0.020 px (limit 0.05 px), drift up to 0.04 px (limit 0.1 px).",
+        )
+        self.assertNotIn("not measured", report.summary)
+
+    def test_the_status_sentence_names_the_steps_that_move_and_the_ones_left_out(self) -> None:
+        moving = [motion(str(i), 0.2, 0.5) for i in range(1, 6)]
+        report = motion_report([motion("0", 0.01, 0.02), *moving], ["9: short"], 540.0, "")
+        self.assertIn("over the limits in 5 of 6 steps at 540 nm: 1, 2, 3 and 2 more", report.summary)
+        self.assertIn("See the report", report.summary)
+        self.assertIn("1 step with fewer than 3 cubes not measured", report.summary)
+        self.assertEqual(report.warnings, 5)
+
+    def test_the_status_sentence_says_when_nothing_could_be_measured(self) -> None:
+        self.assertIn("not measured: 2 steps with fewer than 3 cubes", motion_report([], ["1", "2"], 600.0, "").summary)
+        self.assertIn("no experiment steps", motion_report([], [], 600.0, "").summary)
 
     def test_steps_too_short_to_measure_are_listed_and_no_steps_is_explained(self) -> None:
         report = motion_report([motion("1", 0.01, 0.03)], ["2: short"], 600.0, "")
