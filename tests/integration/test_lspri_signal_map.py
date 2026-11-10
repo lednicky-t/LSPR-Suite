@@ -16,7 +16,7 @@ import numpy as np
 
 from tests.integration.test_lspri_step_table import StepTableBase, _pump
 
-from lspr_imaging_app.analysis.signal_map import NO_VALUE_HEX, PER_GROUP, SHOW_SNR, SHOW_STEP
+from lspr_imaging_app.analysis.signal_map import NO_VALUE_HEX, PER_GROUP, SHOW_CUBE, SHOW_SNR, SHOW_STEP, full_range
 from lspr_imaging_app.analysis.step_table import OP_DIFFERENCE, compare_values
 from lspr_imaging_app.panels.image.roi_overlay import RoiOverlay
 from lspr_imaging_app.panels.image.signal_map_display import SignalMapDisplay
@@ -114,6 +114,43 @@ class SignalMapTest(StepTableBase):
         with tempfile.TemporaryDirectory() as folder:
             written = write_plot_export(Path(folder) / "map.csv", {"signal_map": table}, self.map.export_info())
             self.assertTrue(written[0].is_file())
+
+    def test_current_cube_reads_the_line_at_the_cube_with_a_whole_dataset_range(self) -> None:
+        stored = self.m.scan_results.stored()
+        cubes = list(stored.cube_indices)
+        self.map.set_show(SHOW_CUBE)
+        self.map.set_cube(cubes[0])
+        self.map.set_enabled(True)
+        self._settle()
+        lines = {r: self.table.roi_line(r)[0] for r in (1, 2)}
+        for roi in (1, 2):
+            self.assertAlmostEqual(self.map.view().values[roi], float(lines[roi][0]), places=12)
+        everything = np.concatenate(list(lines.values()))
+        low, high = full_range(everything)  # Auto: the lines' own min..max, not symmetric around zero
+        first = self.map.view()
+        self.assertAlmostEqual(first.low, low, places=12)
+        self.assertAlmostEqual(first.high, high, places=12)
+        runs, fitted = len(self.done), len(self.fits)
+        self.map.set_cube(cubes[-1])  # the slider moves: a lookup, no calculation, the same colour range
+        self._settle()
+        self.assertEqual((len(self.done), len(self.fits)), (runs, fitted))
+        view = self.map.view()
+        self.assertAlmostEqual(view.values[1], float(lines[1][-1]), places=12)
+        self.assertEqual((view.low, view.high), (first.low, first.high))
+        self.assertIn(f"Cube {cubes[-1]}", view.title)
+
+    def test_subtract_baseline_from_the_map_switches_the_setting_and_recalculates(self) -> None:
+        self.map.set_show(SHOW_CUBE)
+        self.map.set_enabled(True)
+        self._settle()
+        before = self.map.baseline_enabled()
+        runs = len(self.done)
+        self.map.set_baseline_enabled(not before)
+        self._settle()
+        self.assertEqual(self.table.baseline_enabled(), not before)  # the one switch, the Sensorgram's too
+        self.assertGreater(len(self.done), runs)  # a request from the map: recalculated
+        self.assertFalse(self.map.view().stale)
+        self.assertIn("position" if before else "shift from baseline", self.map.view().title)
 
     def test_off_hands_out_no_view(self) -> None:
         self._set_pair()
@@ -224,6 +261,13 @@ class SignalMapDrawingTest(unittest.TestCase):
         legend_action = next(a for a in group.context_menu().actions() if a.text() == "Legend")
         legend_action.trigger()
         self.assertFalse(group.legend_button.isChecked())
+        toggled: list[bool] = []
+        group.baseline_toggled.connect(toggled.append)
+        next(a for a in group.context_menu().actions() if a.text().startswith("Subtract baseline")).trigger()
+        self.assertEqual(toggled, [True])
+        self.assertTrue(group.baseline_check.isChecked())
+        group.show_combo.setCurrentIndex(group.show_combo.findData(SHOW_CUBE))
+        self.assertFalse(group.pair_combo.isEnabled())  # current cube needs no pair
         group.deleteLater()
 
 

@@ -20,6 +20,11 @@ from lspr_imaging_app.analysis import signal_map as sm  # noqa: E402
 
 
 class ValueRangeTest(unittest.TestCase):
+    def test_full_range_is_min_to_max_even_with_a_little_noise_below_zero(self) -> None:
+        values = np.array([-0.05, 0.0, 3.0, np.nan, 7.0])
+        self.assertEqual(sm.full_range(values), (-0.05, 7.0))
+        self.assertTrue(all(math.isnan(v) for v in sm.full_range(np.array([np.nan]))))
+
     def test_auto_is_symmetric_around_zero_when_the_values_have_both_signs(self) -> None:
         low, high = sm.value_range(np.array([-0.5, 0.1, 1.0]), sm.RANGE_AUTO)
         self.assertAlmostEqual(low, -high)
