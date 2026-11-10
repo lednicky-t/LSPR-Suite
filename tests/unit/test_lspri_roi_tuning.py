@@ -317,6 +317,78 @@ class LatticeObjectivesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._objectives(self.traces[:, :, :-1])
 
+    # -- the Sensorgram's drift baseline (2026-11-10) --------------------------------------------------------------------------
+
+    def _anchors(self) -> dict[int, tuple[np.ndarray, ...]]:
+        early, late = (self.cubes < 10), (self.cubes >= 20) & (self.cubes < 30)  # two anchor regions inside the baseline step
+        return {r: (early, late) for r in self.roi_ids}
+
+    def test_a_drift_curve_is_taken_off_every_positions_trace_before_the_objectives(self) -> None:
+        linear = StatisticsSettings(baseline_enabled=True, baseline_method="anchors", baseline_shape="linear")
+        obj = rt.lattice_objectives(self.roi_ids, self.offsets, self.traces, self.membership, self.x, linear, self._anchors())
+        for p in range(len(self.offsets)):
+            for i in range(2):
+                trace = self.traces[p, i]
+                ax = np.array([self.x[:10].mean(), self.x[20:30].mean()])
+                ay = np.array([trace[:10].mean(), trace[20:30].mean()])
+                corrected = trace - np.polyval(np.polyfit(ax, ay, 1), self.x)  # the straight line through the two anchors, by plain numpy
+                self.assertAlmostEqual(obj.baseline_mean[p, i], corrected[:30].mean(), places=9)
+                self.assertAlmostEqual(obj.delta[p, i], corrected[40:].mean() - corrected[:30].mean(), places=9)
+                self.assertAlmostEqual(obj.signal_std[p, i], corrected[40:].std(ddof=1), places=9)
+        # what it is for: the drift between the two steps (0.02 nm per cube over 35 cubes = 0.7 nm) no longer counts as response
+        plain = self._objectives()
+        np.testing.assert_allclose(plain.delta[:, 0], 3.7, atol=0.05)
+        np.testing.assert_allclose(obj.delta[:, 0], 3.0, atol=0.15)
+
+    def test_too_few_anchors_leave_the_trace_uncorrected_like_the_sensorgram(self) -> None:
+        linear = StatisticsSettings(baseline_enabled=True, baseline_method="anchors", baseline_shape="linear")
+        one = {r: regions[:1] for r, regions in self._anchors().items()}
+        obj = rt.lattice_objectives(self.roi_ids, self.offsets, self.traces, self.membership, self.x, linear, one)
+        np.testing.assert_array_equal(obj.delta, self._objectives().delta)
+
+
+class ObjectivesFromTracesTest(unittest.TestCase):
+    """`roi_tuning_run.objectives_from_traces`: the trial's matrix holds only the scanned cubes (the two steps and the anchors' cubes)."""
+
+    def setUp(self) -> None:
+        from types import SimpleNamespace
+
+        from lspr_imaging_app.analysis import roi_tuning_run as run
+
+        self.run = run
+        self.cubes = np.array([*range(0, 10), *range(20, 50), *range(60, 80)])  # anchors 0-9 and 20-29; baseline step 20-49; signal step 60-79
+        self.first, self.last = _cube_times(self.cubes.astype(float))
+        self.regions = rt.TuningRegions((20, 49), (60, 79))
+        offsets = rt.Lattice(3, 2.0).offsets()
+        self.matrix = SimpleNamespace(roi_ids=(7, 9), offsets=offsets, cube_indices=tuple(int(c) for c in self.cubes))
+        rng = np.random.default_rng(5)
+        self.traces = 600.0 + 0.02 * self.cubes + rng.normal(0.0, 0.05, (len(offsets), 2, self.cubes.size))
+        self.traces[:, :, self.cubes >= 60] += 3.0
+        self.anchor_cubes = {r: (tuple(range(0, 10)), tuple(range(20, 30))) for r in (7, 9)}
+        self.linear = StatisticsSettings(baseline_enabled=True, baseline_method="anchors", baseline_shape="linear")
+
+    def test_without_a_curve_the_numbers_are_those_of_the_uncorrected_traces_as_before(self) -> None:
+        window = StatisticsSettings(baseline_enabled=True, baseline_window_start=20.0, baseline_window_end=30.0)
+        got = self.run.objectives_from_traces(self.matrix, self.traces, self.regions, self.first, self.last, window)
+        membership = rt.region_membership(self.regions, self.cubes, self.first, self.last)
+        old = rt.lattice_objectives((7, 9), self.matrix.offsets, self.traces, membership, self.cubes.astype(np.float64), NO_BASELINE)
+        for name in ("baseline_mean", "signal_mean", "noise", "signal_noise", "baseline_std", "signal_std", "baseline_sem", "signal_sem"):
+            np.testing.assert_array_equal(getattr(got, name), getattr(old, name), err_msg=name)
+
+    def test_the_curve_removes_the_drift_between_the_steps(self) -> None:
+        plain = self.run.objectives_from_traces(self.matrix, self.traces, self.regions, self.first, self.last, self.linear)
+        got = self.run.objectives_from_traces(self.matrix, self.traces, self.regions, self.first, self.last, self.linear, self.anchor_cubes)
+        np.testing.assert_allclose(plain.delta, 3.0 + 0.02 * 35.0, atol=0.06)  # 35 cubes between the two steps' centres
+        np.testing.assert_allclose(got.delta, 3.0, atol=0.15)
+
+    def test_the_time_axis_gives_the_same_numbers_when_the_cubes_are_evenly_spaced(self) -> None:
+        by_cube = self.run.objectives_from_traces(self.matrix, self.traces, self.regions, self.first, self.last, self.linear, self.anchor_cubes)
+        by_time = self.run.objectives_from_traces(
+            self.matrix, self.traces, self.regions, self.first, self.last, self.linear, self.anchor_cubes, x_is_time=True
+        )
+        np.testing.assert_allclose(by_time.delta, by_cube.delta, rtol=0, atol=1e-9)
+        np.testing.assert_allclose(by_time.baseline_std, by_cube.baseline_std, rtol=0, atol=1e-9)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtCore import QCoreApplication, QEvent, QPointF, QRectF
 from PyQt6.QtGui import QFontMetricsF, QTransform
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
@@ -146,6 +146,17 @@ def _lines(count: int) -> list[Series]:
     return [Series(f"roi:{i}", f"ROI {i}", "#ffffff", x, 600.0 + i + x) for i in range(count)]
 
 
+def _destroy(plot: SensorgramPlot) -> None:
+    """Close a test's plot and delete it now, with Qt, instead of leaving it to Python's garbage collector.
+
+    Why (2026-11-10): `show_series` leaves Qt events waiting. A plot that is only closed stays alive until the collector frees it, which can
+    happen while the next test builds its plot; that test's `processEvents()` then aborts the process ("Fatal Python error: Aborted", no
+    message). Whether it happens depends only on when the collector runs, so an unrelated code change can switch it on."""
+    plot.close()
+    plot.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 class LegendCapacityTest(unittest.TestCase):
     """More groups (or ROIs) than six used to take the legend, and with it the table, away. Now the legend stays while it takes at most half of the plot height."""
 
@@ -154,7 +165,7 @@ class LegendCapacityTest(unittest.TestCase):
         plot.resize(900, height)
         plot.show()
         _APP.processEvents()
-        self.addCleanup(plot.close)
+        self.addCleanup(_destroy, plot)
         return plot
 
     def test_up_to_six_lines_always_have_a_legend(self) -> None:

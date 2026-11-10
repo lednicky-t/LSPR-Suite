@@ -107,6 +107,7 @@ source_modules =
     lspr_imaging_app.analysis.scan_store
     lspr_imaging_app.analysis.settings
     lspr_imaging_app.analysis.spectrum_errors
+    lspr_imaging_app.analysis.baseline_drift
     lspr_imaging_app.analysis.statistics
     lspr_imaging_app.analysis.step_diagnostics
     lspr_imaging_app.analysis.tasks

@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from PyQt6 import QtWidgets
+from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtGui import QGuiApplication
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
@@ -179,6 +180,10 @@ class ChecksBase(unittest.TestCase):
         self.m.analysis_scan.shutdown()
         self.m.scan_results.shutdown()
         self.row.deleteLater()
+        # Carry the deletions out now (2026-11-10). `deleteLater()` alone only posts a request that no test ever delivers, so the widgets of
+        # every test stayed alive until Python's garbage collector freed them at some later moment, which crashed the process (access
+        # violation) at some collector timings: an unrelated code change could switch the crash on.
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         self._tmp.cleanup()
         undo_manager.clear()
 

@@ -13,6 +13,7 @@ import csv
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -69,6 +70,10 @@ class _Plan:
 
     def cubes_of(self, step):
         return self.cubes[step.order]
+
+    def cubes_and_membership(self):
+        """Every cube of the dataset, and no step membership (the anchor points of these tests need none)."""
+        return tuple(range(8)), None
 
 
 class _Selection:
@@ -302,6 +307,79 @@ class ModuleTest(unittest.TestCase):
         _APP.processEvents()
         self.assertIs(self.module.result(), old)
         self.assertEqual(self.module.state(), tm.READY)
+
+    # -- the Sensorgram's drift baseline (2026-11-10) --------------------------------------------------------------------------
+
+    def _set_drift(self, *cubes: int, shape: str = "linear") -> None:
+        """Anchor points (shared by all ROIs, each its own cube only) with Subtract on: a curve is taken off the Sensorgram's traces."""
+        self.settings.set_statistics_settings(replace(
+            self.settings.statistics_settings(), baseline_enabled=True, baseline_method="anchors", baseline_shape=shape,
+            baseline_anchor_points=tuple((0, c) for c in cubes), baseline_point_halfwidth=0,
+        ))
+
+    def test_a_trial_also_scans_the_drift_baselines_anchor_cubes_and_says_so(self) -> None:
+        self.plan.cubes = {1: (1, 2, 3), 2: (5, 6, 7)}
+        self.assertEqual(self.module.preview(), "9 positions x 3 ROIs x 6 cubes (baseline 1-3, signal 5-7).")
+        self._set_drift(0, 4)
+        self.assertEqual(
+            self.module.preview(),
+            "9 positions x 3 ROIs x 8 cubes (baseline 1-3, signal 5-7, 2 more for the drift baseline's anchors). "
+            "The Sensorgram's drift baseline is taken off every trace.",
+        )
+        self.module.set_x_is_time(lambda: True)
+        self._run_to_ready()
+        result = self.module.result()
+        self.assertEqual(result.request.extra_cubes, (0, 4))
+        self.assertEqual(tuple(result.matrix.cube_indices), tuple(range(8)))
+        self.assertEqual(result.request.drift_anchors, {2: ((0,), (4,)), 3: ((0,), (4,)), 5: ((0,), (4,))})
+        self.assertTrue(result.request.x_is_time)
+        self.assertIn("drift baseline was taken off", self.module.message())
+
+    def test_anchors_inside_the_two_steps_add_no_cube(self) -> None:
+        self._set_drift(1, 2)
+        self.assertEqual(
+            self.module.preview(),
+            "9 positions x 3 ROIs x 8 cubes (baseline 0-3, signal 4-7). The Sensorgram's drift baseline is taken off every trace.",
+        )
+
+    def test_a_drift_baseline_set_after_the_trial_is_refitted_when_its_cubes_were_scanned(self) -> None:
+        self._run_to_ready()
+        old = self.module.result()
+        self.assertIsNone(old.request.drift_anchors)
+        self._set_drift(0, 3)  # both inside the baseline step
+        self.assertTrue(_pump(lambda: self.module.result() is not old), "no refit arrived")
+        self.assertTrue(_pump(lambda: self.module.state() == tm.READY))
+        new = self.module.result()
+        self.assertIs(new.matrix, old.matrix)  # no new scan
+        self.assertIsNotNone(new.request.drift_anchors)
+        self.assertFalse(np.array_equal(new.objectives.signal_mean, old.objectives.signal_mean, equal_nan=True))  # the curve is off the traces
+
+    def test_a_drift_baseline_on_cubes_the_trial_did_not_scan_makes_the_result_out_of_date(self) -> None:
+        self.plan.cubes = {1: (1, 2, 3), 2: (5, 6, 7)}
+        self._run_to_ready()
+        old = self.module.result()
+        self._set_drift(0, 4)  # neither cube is in the trial
+        _APP.processEvents()
+        self.assertEqual(self.module.state(), tm.STALE)
+        self.assertIn("drift baseline now uses 2 cubes the trial did not scan", self.module.message())
+        self.assertIs(self.module.result(), old)  # kept to look at, not refitted
+        self._run_to_ready()  # the next trial scans them
+        self.assertEqual(self.module.result().request.extra_cubes, (0, 4))
+
+    def test_switching_the_sensorgram_axis_refits_only_when_a_curve_is_subtracted(self) -> None:
+        self._run_to_ready()
+        old = self.module.result()
+        self.module.refit_for_axis()  # no curve: x plays no part
+        _APP.processEvents()
+        self.assertIs(self.module.result(), old)
+        self.assertEqual(self.module.state(), tm.READY)
+        self._set_drift(0, 3)
+        self.assertTrue(_pump(lambda: self.module.result() is not old and self.module.state() == tm.READY))
+        fitted = self.module.result()
+        self.module.set_x_is_time(lambda: True)
+        self.module.refit_for_axis()
+        self.assertTrue(_pump(lambda: self.module.result() is not fitted and self.module.state() == tm.READY), "no refit arrived")
+        self.assertTrue(self.module.result().request.x_is_time)
 
     def test_closing_the_dataset_drops_the_result(self) -> None:
         self._run_to_ready()
