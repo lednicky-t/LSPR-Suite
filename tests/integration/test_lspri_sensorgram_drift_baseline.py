@@ -227,8 +227,12 @@ class DriftBaselinePanelTest(unittest.TestCase):
         self.drift.add_point_at(self._x_of(5))
         self._settle()
         self.assertEqual(plot.anchors_needed(), 0)
-        self._set(baseline_shape="cubic")  # another shape, another count
-        self.assertEqual(plot.anchors_needed(), 2)
+        self._set(baseline_shape="constant")  # another shape, another count (the polynomials all need 2 since the fit goes through every cube)
+        self.assertEqual(plot.anchors_needed(), 0)
+        self.drift.remove_point_at(self._x_of(5))
+        self.drift.remove_point_at(self._x_of(0))
+        self._settle()
+        self.assertEqual(plot.anchors_needed(), 1)
 
     def test_the_edit_mode_makes_a_slow_click_a_click_and_restores_the_drag_limits(self) -> None:
         scene = self.panel._plot._item.scene()
@@ -419,7 +423,7 @@ class DriftBaselinePanelTest(unittest.TestCase):
         self._settle()
         self.assertEqual(self.m.analysis_settings.statistics_settings().baseline_shape, "quadratic")  # the choice is kept, never swapped
         self.assertEqual(len(said), 1)
-        self.assertIn("Quadratic needs 3 anchor steps, 1 marked: mark 2 more, or choose the Constant shape.", said[0])
+        self.assertIn("Quadratic needs 2 anchor steps, 1 marked: mark 1 more, or choose the Constant shape.", said[0])
 
     def test_a_marked_step_emptied_by_the_offset_is_explained_in_the_step_menu(self) -> None:
         steps = self.m.experiment_plan.steps()

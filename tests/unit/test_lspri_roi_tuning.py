@@ -329,9 +329,9 @@ class LatticeObjectivesTest(unittest.TestCase):
         for p in range(len(self.offsets)):
             for i in range(2):
                 trace = self.traces[p, i]
-                ax = np.array([self.x[:10].mean(), self.x[20:30].mean()])
-                ay = np.array([trace[:10].mean(), trace[20:30].mean()])
-                corrected = trace - np.polyval(np.polyfit(ax, ay, 1), self.x)  # the straight line through the two anchors, by plain numpy
+                ax = np.r_[self.x[:10], self.x[20:30]]
+                ay = np.r_[trace[:10], trace[20:30]]
+                corrected = trace - np.polyval(np.polyfit(ax, ay, 1), self.x)  # the straight line through every cube of the two anchors, by plain numpy
                 self.assertAlmostEqual(obj.baseline_mean[p, i], corrected[:30].mean(), places=9)
                 self.assertAlmostEqual(obj.delta[p, i], corrected[40:].mean() - corrected[:30].mean(), places=9)
                 self.assertAlmostEqual(obj.signal_std[p, i], corrected[40:].std(ddof=1), places=9)

@@ -80,33 +80,79 @@ class FitDriftTest(unittest.TestCase):
         np.testing.assert_allclose(y - fit.curve, 0.0, atol=1e-12)
         self.assertAlmostEqual(fit.anchor_rms, 0.0, places=12)
 
-    def test_a_quadratic_through_three_anchors_is_removed_exactly(self) -> None:
+    def test_a_quadratic_drift_is_removed_exactly(self) -> None:
         y = 1.0 + 0.01 * self.x - 1e-4 * self.x**2
         fit = bd.fit_drift(self.x, y, self.regions, "quadratic")
-        # one anchor = the mean of its region, so a curved region's anchor sits slightly off the curve; tolerance from the curvature over 10 points
-        np.testing.assert_allclose(y - fit.curve, 0.0, atol=1e-3)
+        np.testing.assert_allclose(y - fit.curve, 0.0, atol=1e-9)  # fitted through every cube, so a curved anchor no longer sits off the curve
 
-    def test_constant_is_the_mean_of_the_anchor_levels(self) -> None:
+    def test_constant_is_the_mean_of_every_anchor_cube(self) -> None:
         y = np.zeros(100)
         y[0:10], y[45:55], y[90:100] = 1.0, 2.0, 6.0
         fit = bd.fit_drift(self.x, y, self.regions, "constant")
         np.testing.assert_allclose(fit.curve, 3.0)
         self.assertAlmostEqual(fit.level, 3.0)
 
+    def test_a_longer_anchor_counts_more_because_it_has_more_cubes(self) -> None:
+        y = np.zeros(100)
+        y[0:10], y[60:90] = 0.0, 4.0  # 10 cubes at 0, 30 cubes at 4
+        regions = [np.isin(np.arange(100), np.arange(0, 10)), np.isin(np.arange(100), np.arange(60, 90))]
+        fit = bd.fit_drift(self.x, y, regions, "constant")
+        self.assertAlmostEqual(fit.level, 3.0)  # the mean of the 40 cubes (the mean of the two anchors would be 2)
+        np.testing.assert_allclose(fit.anchors_y, [0.0, 4.0])  # the marks stay one point per anchor
+
+    def test_a_cube_in_two_overlapping_anchors_counts_once(self) -> None:
+        y = np.zeros(100)
+        y[0:10], y[10:20] = 1.0, 5.0
+        a = np.isin(np.arange(100), np.arange(0, 15))
+        b = np.isin(np.arange(100), np.arange(5, 20))  # cubes 5..14 are in both
+        fit = bd.fit_drift(self.x, y, [a, b], "constant")
+        self.assertAlmostEqual(fit.level, 3.0)  # 10 cubes at 1 and 10 at 5
+
+    def test_the_curve_follows_the_trend_inside_the_anchors(self) -> None:
+        """What one mean per anchor could not do (maintainer, 2026-11-10): two buffer steps that are each already creeping. A cubic, true over the whole
+        range, is recovered from two short stretches at the ends alone; through two anchor means it was a line."""
+        y = 1.0 + 0.02 * self.x - 3e-4 * self.x**2 + 2e-6 * self.x**3
+        two = [np.isin(np.arange(100), np.arange(0, 12)), np.isin(np.arange(100), np.arange(88, 100))]
+        for shape in ("linear", "quadratic", "cubic"):
+            fit = bd.fit_drift(self.x, y, two, shape)
+            self.assertTrue(fit.ok, shape)  # two anchors are enough for every degree
+        np.testing.assert_allclose(y - bd.fit_drift(self.x, y, two, "cubic").curve, 0.0, atol=1e-8)
+        # a line through the same two stretches follows their slopes, not just their levels: the lines through the anchor means would pass 0.4 off in the middle
+        line = bd.fit_drift(self.x, y, two, "linear")
+        means_line = np.interp(self.x, [float(np.mean(self.x[r])) for r in two], [float(np.mean(y[r])) for r in two])
+        self.assertNotAlmostEqual(float(np.max(np.abs(line.curve - means_line))), 0.0, places=2)
+
+    def test_pchip_stays_on_the_anchor_means(self) -> None:
+        y = 0.05 * self.x  # a steep trend inside every anchor
+        fit = bd.fit_drift(self.x, y, self.regions, "pchip")
+        means = [float(np.mean(y[r])) for r in self.regions]
+        np.testing.assert_allclose(fit.anchors_y, means, atol=1e-12)
+        np.testing.assert_allclose(fit.anchors_base, means, atol=1e-12)  # the curve passes through each anchor's mean, at the anchor's mean x
+
     def test_too_few_anchors_leave_no_curve_and_say_why(self) -> None:
-        fit = bd.fit_drift(self.x, np.ones(100), self.regions[:2], "cubic")
-        self.assertFalse(fit.ok)
-        self.assertIn("cubic needs 4", fit.message)
-        self.assertTrue(np.isnan(fit.curve).all())
+        for shape in ("linear", "quadratic", "cubic", "pchip"):
+            fit = bd.fit_drift(self.x, np.ones(100), self.regions[:1], shape)  # one anchor: its trend would be carried over the whole experiment
+            self.assertFalse(fit.ok)
+            self.assertIn(f"{shape} needs 2", fit.message)
+            self.assertTrue(np.isnan(fit.curve).all())
+        self.assertTrue(bd.fit_drift(self.x, np.ones(100), self.regions[:1], "constant").ok)
         none = bd.fit_drift(self.x, np.ones(100), [], "constant")
         self.assertFalse(none.ok)
         self.assertIn("no anchors", none.message)
 
+    def test_a_polynomial_needs_cubes_at_enough_different_x(self) -> None:
+        one_cube_each = [np.isin(np.arange(100), [10]), np.isin(np.arange(100), [80])]  # two anchors, but only two different x
+        fit = bd.fit_drift(self.x, np.ones(100), one_cube_each, "quadratic")
+        self.assertFalse(fit.ok)
+        self.assertIn("needs cubes at 3 different x", fit.message)
+        self.assertTrue(bd.fit_drift(self.x, np.ones(100), one_cube_each, "linear").ok)
+
     def test_an_anchor_without_values_does_not_count(self) -> None:
         y = np.ones(100)
         y[45:55] = np.nan
-        fit = bd.fit_drift(self.x, y, self.regions, "quadratic")
-        self.assertIn("found 2", fit.message)
+        y[90:100] = np.nan
+        fit = bd.fit_drift(self.x, y, self.regions, "linear")
+        self.assertIn("found 1", fit.message)
 
     def test_pchip_passes_through_every_anchor_and_is_flat_beyond_the_ends(self) -> None:
         regions = [np.isin(np.arange(100), np.arange(a, a + 9)) for a in (0, 45, 90)]  # 9 points each: the anchors sit on x = 4, 49, 94
@@ -173,7 +219,7 @@ class ApplyStatisticsTest(unittest.TestCase):
         self.assertTrue(fit is not None and fit.ok)
 
     def test_too_few_anchors_leave_the_trace_uncorrected(self) -> None:
-        trace, value = apply_statistics(self.t, self.traces[1], _anchor_settings(baseline_shape="cubic"), None, self.regions)
+        trace, value = apply_statistics(self.t, self.traces[1], _anchor_settings(baseline_shape="linear"), None, self.regions[:1])
         np.testing.assert_array_equal(trace, self.traces[1])
         self.assertTrue(np.isnan(value))
 
@@ -324,8 +370,8 @@ class AnchorCubesTest(unittest.TestCase):
         self.assertEqual([len(region) for region in cubes[1]], [14, 14, 14])
 
     def test_a_trace_cut_to_some_cubes_gets_the_same_correction_as_the_whole_trace(self) -> None:
-        """The property the ROI position tuning relies on: an anchor is the mean of its region, so the curve at a cube depends only on the anchor
-        cubes. Fitted on the whole trace or on the anchor cubes plus any others, a cube's corrected value is the same."""
+        """The property the ROI position tuning relies on: the curve is fitted through the anchors' cubes only, so it depends only on them. Fitted on the
+        whole trace or on the anchor cubes plus any others, a cube's corrected value is the same."""
         for stats in (replace(self.steps, baseline_shape="linear"), replace(self.steps, baseline_shape="pchip"), _anchor_settings(baseline_shape="quadratic")):
             anchor_cubes = bd.anchor_cubes_by_roi((1, 2, 3), CUBES, stats, self.membership)
             scanned = np.array(sorted(bd.cubes_needed(anchor_cubes) | set(range(120, 140))))  # the anchors and one binding step
