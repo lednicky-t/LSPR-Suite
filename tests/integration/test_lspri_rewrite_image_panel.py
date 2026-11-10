@@ -18,6 +18,7 @@ easy to break by "just" mutating state directly in a handler.
 
 from __future__ import annotations
 
+import gc
 import sys
 import tempfile
 import time
@@ -27,7 +28,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QTest
 
@@ -61,6 +62,16 @@ try:
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
+
+def _destroy(panel) -> None:
+    """Destroy a test's panel now, in order (the cure of `test_lspri_rewrite_chromatic_tab.py`, 2026-10-18). Left alone, the panels of all earlier tests wait
+    for the cyclic garbage collector and are destroyed in one go in the middle of a later test's event loop, which crashes Qt natively (the known
+    "many panels GC'd at once" class; with the collector off this file never crashed, and adding the signal map on 2026-11-10 moved it to every run)."""
+    panel.hide()
+    panel.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    _APP.processEvents()
+    gc.collect()
 
 import numpy as np  # noqa: E402
 import tifffile  # noqa: E402
@@ -133,6 +144,7 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.panel._renderer.stop()
+        _destroy(self.panel)
         self._tmp.cleanup()
 
     def _ribbon_page(self, name: str):
@@ -1936,6 +1948,7 @@ class RewriteImagePanelViewportPersistenceTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.panel._renderer.stop()
+        _destroy(self.panel)
         self._tmp.cleanup()
 
     def _build_panel(self, *, initial_view_range=None) -> "ImagePanel":
