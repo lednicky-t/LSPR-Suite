@@ -536,6 +536,36 @@ class SliderRibbonTest(unittest.TestCase):
             self.panel._renderer.submit = original
         return RenderResult(request=replace(requests[-1]), image=np.ones((8, 8), dtype=np.float32))
 
+    def test_while_playing_the_canvas_repaints_once_per_frame_shown_after_the_other_plots_marked_theirs(self) -> None:
+        """2026-11-11 (`play_repaint.py`): no automatic repaints during Play; `play_frame_shown` (the Sensorgram's cursor strip) comes just before
+        the canvas's own repaint; the canvas's normal mode and a repaint come back when Play stops."""
+        from PyQt6.QtWidgets import QGraphicsView
+
+        show = self.panel._slideshow
+        view = self.panel._view
+        events: list[str] = []
+        viewport = view.viewport()
+        viewport.update = lambda *args: events.append("canvas repaint")
+        self.panel.play_frame_shown.connect(lambda: events.append("other plots"))
+        normal = view.viewportUpdateMode()
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
+        _pump(0.3)
+        show.hold_frame_s = 0.0
+        show.play()
+        self.assertEqual(view.viewportUpdateMode(), QGraphicsView.ViewportUpdateMode.NoViewportUpdate)
+        events.clear()
+        self.panel._on_rendered(self._newest_result())
+        self.assertEqual(events, ["other plots", "canvas repaint"])
+        events.clear()
+        show.stop()
+        self.assertEqual(view.viewportUpdateMode(), normal)
+        self.assertIn("canvas repaint", events)
+        events.clear()
+        self.panel._on_rendered(self._newest_result())  # not playing: no extra repaint of its own
+        self.assertNotIn("other plots", events)
+        _pump(0.2)
+
     def test_a_frame_arriving_just_before_the_next_step_is_shown_with_that_step(self) -> None:
         """2026-11-11: shown at once, the image and the step's widgets reached the screen in two window repaints."""
         show = self.panel._slideshow
