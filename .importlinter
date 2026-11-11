@@ -47,6 +47,7 @@ layers =
     selection
     dataset
     io
+    display_options
     storage
     analysis
     roi

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from dataclasses import replace
 from unittest import mock
 
 from PyQt6 import QtWidgets
@@ -26,6 +27,7 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_core.perf import PerfPreferences, PerfRuntime, get_runtime, set_runtime
     from lspr_imaging_app.app_rewrite import build_main_window
+    from lspr_imaging_app.display_options import ResolutionSizes
     from lspr_imaging_app.panels.dock_container import PanelContainer
     from lspr_imaging_app.panels.histogram import HistogramPanel
     from lspr_imaging_app.panels.image import ImagePanel
@@ -68,12 +70,11 @@ class DialogTests(unittest.TestCase):
         dialog.button_box.button(Button.RestoreDefaults).click()
         self.assertFalse(dialog.values().gpu_drawing)
 
-    def test_the_removed_display_choices_are_gone(self) -> None:
-        """"Screen resolution" and "Show the image in a window of its own" were removed 2026-11-11 (beaten by a processor-drawn window)."""
+    def test_the_image_window_option_stays_removed(self) -> None:
+        """"Show the image in a window of its own" was removed 2026-11-11 (no reliable gain); "Screen resolution" came back 2026-11-12."""
         dialog = PreferencesDialog(DEFAULT_PREFERENCES)
-        for name in ("resolution_combo", "own_window_check", "display_note_label"):
+        for name in ("own_window_check",):
             self.assertFalse(hasattr(dialog, name), name)
-        self.assertFalse(hasattr(DEFAULT_PREFERENCES, "screen_resolution"))
         self.assertFalse(hasattr(DEFAULT_PREFERENCES, "image_own_window"))
 
     def test_the_cache_choices_are_off_and_the_sizes_with_the_default_marked(self) -> None:
@@ -172,6 +173,64 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(results, ["accepted", "rejected"])
 
 
+class DisplayChoiceDialogTests(unittest.TestCase):
+    """Preferences -> Performance: screen resolution (applied at the next start)."""
+
+    def test_the_default_is_sharp(self) -> None:
+        self.assertEqual(DEFAULT_PREFERENCES.screen_resolution, "full")
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES)
+        self.assertEqual(dialog.resolution_combo.currentData(), "full")
+
+    def test_the_choices_are_full_first_then_standard(self) -> None:
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES)
+        self.assertEqual([dialog.resolution_combo.itemData(i) for i in range(dialog.resolution_combo.count())], ["full", "standard"])
+
+    def test_the_choice_is_shown_and_returned_and_restore_defaults_resets_it(self) -> None:
+        current = replace(DEFAULT_PREFERENCES, screen_resolution="standard")
+        dialog = PreferencesDialog(current)
+        self.assertEqual(dialog.resolution_combo.currentData(), "standard")
+        self.assertEqual(dialog.values(), current)
+        dialog.button_box.button(Button.RestoreDefaults).click()
+        self.assertEqual(dialog.values(), DEFAULT_PREFERENCES)
+
+    def test_the_note_says_what_this_run_has_and_that_a_restart_is_needed(self) -> None:
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES, running_resolution="standard")
+        text = dialog.display_note_label.text()
+        self.assertIn("next time the app starts", text)
+        self.assertIn("reduced resolution", text)
+        plain = PreferencesDialog(DEFAULT_PREFERENCES)  # kept in a name: a parentless dialog is deleted with its last reference
+        self.assertIn("full resolution", plain.display_note_label.text())
+
+    def test_the_entries_show_the_real_pixel_sizes_and_never_the_word_standard(self) -> None:
+        sizes = ResolutionSizes(full=(3840, 2160), reduced=(2560, 1440))
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES, resolution_sizes=sizes)
+        full_text, reduced_text = (dialog.resolution_combo.itemText(i) for i in range(2))
+        self.assertTrue(full_text.startswith("3840 × 2160"), full_text)
+        self.assertTrue(reduced_text.startswith("2560 × 1440"), reduced_text)
+        self.assertIn("stretched to 3840 × 2160", reduced_text)
+        self.assertEqual([dialog.resolution_combo.itemData(i) for i in range(2)], ["full", "standard"], "the saved values do not change")
+        for text in (full_text, reduced_text, dialog.display_note_label.text(), dialog.resolution_combo.toolTip()):
+            self.assertNotIn("Standard", text)
+        self.assertIn("3840 × 2160", dialog.display_note_label.text(), "a full run has the real size")
+        self.assertTrue(dialog.resolution_combo.isEnabled())
+
+    def test_the_note_gives_the_reduced_size_in_a_reduced_run(self) -> None:
+        sizes = ResolutionSizes(full=(3840, 2160), reduced=(2560, 1440))
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES, running_resolution="standard", resolution_sizes=sizes)
+        self.assertIn("This run: 2560 × 1440", dialog.display_note_label.text())
+
+    def test_a_screen_at_100_percent_has_both_entries_equal_and_the_choice_greyed_out(self) -> None:
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES, resolution_sizes=ResolutionSizes(full=(1920, 1080), reduced=(1920, 1080)))
+        self.assertFalse(dialog.resolution_combo.isEnabled())
+        self.assertIn("100 %", dialog.resolution_combo.toolTip())
+
+    def test_the_choice_is_greyed_out_where_it_cannot_work(self) -> None:
+        works = PreferencesDialog(DEFAULT_PREFERENCES)
+        cannot = PreferencesDialog(DEFAULT_PREFERENCES, resolution_available=False)
+        self.assertTrue(works.resolution_combo.isEnabled())
+        self.assertFalse(cannot.resolution_combo.isEnabled())
+
+
 class WindowTests(unittest.TestCase):
     def setUp(self) -> None:
         previous_runtime = set_runtime(PerfRuntime())  # a window applies its saved choices to the runtime: keep that out of other tests
@@ -258,6 +317,118 @@ class WindowTests(unittest.TestCase):
             dialog.button_box.button(Button.Ok).click()
         self.assertFalse(self.panel.gpu_drawing)
         self.assertFalse(self._open().values().gpu_drawing, "reopening shows what is in effect")
+
+    def test_ok_remembers_the_screen_resolution_for_the_next_start_and_changes_nothing_now(self) -> None:
+        dialog = self._open()
+        self.assertEqual(dialog.values().screen_resolution, "full")
+        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
+        dialog.button_box.button(Button.Ok).click()
+        self.assertEqual(self._open().values().screen_resolution, "standard", "reopening shows the saved choice")
+
+    def _restart_boxes(self) -> list[QtWidgets.QMessageBox]:
+        return [b for b in self.window.findChildren(QtWidgets.QMessageBox) if b.isVisible()]
+
+    def _button(self, box: QtWidgets.QMessageBox, text: str) -> QtWidgets.QAbstractButton:
+        return next(b for b in box.buttons() if b.text() == text)
+
+    def test_changing_the_screen_resolution_offers_to_close_the_app(self) -> None:
+        dialog = self._open()
+        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
+        dialog.button_box.button(Button.Ok).click()
+        (box,) = self._restart_boxes()
+        self.assertIn("next time the app starts", box.text())
+        self.assertIn("×", box.text(), "it names the new size")
+        self.assertEqual([b.text() for b in box.buttons()], ["Close the app now", "Later"])
+        self.assertEqual(box.defaultButton().text(), "Later", "closing the app has to be chosen on purpose")
+
+    def test_later_keeps_the_app_open_and_the_choice_saved(self) -> None:
+        dialog = self._open()
+        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
+        dialog.button_box.button(Button.Ok).click()
+        (box,) = self._restart_boxes()
+        with mock.patch.object(self.window, "close") as close:
+            self._button(box, "Later").click()
+            QtWidgets.QApplication.processEvents()
+        close.assert_not_called()
+        self.assertEqual(self._open().values().screen_resolution, "standard")
+
+    def test_close_the_app_now_closes_the_main_window(self) -> None:
+        dialog = self._open()
+        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
+        dialog.button_box.button(Button.Ok).click()
+        (box,) = self._restart_boxes()
+        with mock.patch.object(self.window, "close") as close:
+            self._button(box, "Close the app now").click()
+            QtWidgets.QApplication.processEvents()
+        close.assert_called_once_with()
+
+    def test_no_offer_when_nothing_about_the_resolution_changed(self) -> None:
+        dialog = self._open()
+        dialog.reopen_check.setChecked(not dialog.reopen_check.isChecked())  # another change, same resolution
+        dialog.button_box.button(Button.Ok).click()
+        self.assertEqual(self._restart_boxes(), [])
+
+    def test_no_offer_when_the_choice_goes_back_to_what_this_run_already_has(self) -> None:
+        first = self._open()
+        first.resolution_combo.setCurrentIndex(first.resolution_combo.findData("standard"))
+        first.button_box.button(Button.Ok).click()
+        (box,) = self._restart_boxes()
+        self._button(box, "Later").click()
+        QtWidgets.QApplication.processEvents()
+        second = self._open()  # saved: standard; this run: full
+        second.resolution_combo.setCurrentIndex(second.resolution_combo.findData("full"))
+        second.button_box.button(Button.Ok).click()
+        self.assertEqual(self._restart_boxes(), [], "the saved choice is the running one again: nothing to restart for")
+
+    def _open_while_drawing_with_the_graphics_card(self) -> PreferencesDialog:
+        """Open Preferences as if the Image view were an OpenGL view (offscreen has none): the dialog starts with the card ticked."""
+        with mock.patch.object(ImagePanel, "gpu_drawing", new_callable=mock.PropertyMock, return_value=True):
+            return self._open()
+
+    def test_switching_the_graphics_card_off_offers_to_close_the_app(self) -> None:
+        dialog = self._open_while_drawing_with_the_graphics_card()
+        self.assertTrue(dialog.gpu_check.isChecked())
+        dialog.gpu_check.setChecked(False)
+        dialog.button_box.button(Button.Ok).click()
+        (box,) = self._restart_boxes()
+        self.assertIn("processor", box.text())
+        self.assertIn("starts again", box.text())
+        self.assertNotIn("screen resolution", box.text(), "only the graphics card changed")
+        self.assertEqual([b.text() for b in box.buttons()], ["Close the app now", "Later"])
+
+    def test_switching_the_graphics_card_on_needs_no_restart(self) -> None:
+        dialog = self._open()
+        dialog.gpu_check.setChecked(True)  # works at once (and stays off here: no OpenGL offscreen)
+        dialog.button_box.button(Button.Ok).click()
+        self.assertEqual(self._restart_boxes(), [])
+
+    def test_both_choices_changed_give_one_box_naming_both(self) -> None:
+        dialog = self._open_while_drawing_with_the_graphics_card()
+        dialog.gpu_check.setChecked(False)
+        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
+        dialog.button_box.button(Button.Ok).click()
+        (box,) = self._restart_boxes()
+        self.assertIn("processor", box.text())
+        self.assertIn("screen resolution", box.text())
+        self.assertEqual(box.text().count("Close the app now, then start it again?"), 1)
+
+    def test_cancel_offers_nothing(self) -> None:
+        dialog = self._open()
+        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
+        dialog.button_box.button(Button.Cancel).click()
+        self.assertEqual(self._restart_boxes(), [])
+
+    def test_the_window_hands_the_dialog_the_pixel_sizes_of_its_screen(self) -> None:
+        """Offscreen there is no Windows to ask, but Qt's own size of the screen is enough for a full run."""
+        dialog = self._open()
+        self.assertIn("×", dialog.resolution_combo.itemText(0))
+        self.assertIn("×", dialog.display_note_label.text())
+
+    def test_cancel_leaves_the_screen_resolution_alone(self) -> None:
+        dialog = self._open()
+        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
+        dialog.button_box.button(Button.Cancel).click()
+        self.assertEqual(self._open().values().screen_resolution, "full")
 
     def test_ok_applies_the_parallel_work_choices_to_the_runtime_for_the_next_job(self) -> None:
         dialog = self._open()
