@@ -521,6 +521,61 @@ class SliderRibbonTest(unittest.TestCase):
         show.stop()
         _pump(0.2)
 
+    def _newest_result(self):
+        """Request a frame for the current selection and return a finished result for it (as the render thread would)."""
+        from dataclasses import replace
+
+        from lspr_imaging_app.panels.image.render import RenderResult
+
+        requests = []
+        original = self.panel._renderer.submit
+        self.panel._renderer.submit = lambda request: (requests.append(request), original(request))[1]
+        try:
+            self.panel._redraw()
+        finally:
+            self.panel._renderer.submit = original
+        return RenderResult(request=replace(requests[-1]), image=np.ones((8, 8), dtype=np.float32))
+
+    def test_a_frame_arriving_just_before_the_next_step_is_shown_with_that_step(self) -> None:
+        """2026-11-11: shown at once, the image and the step's widgets reached the screen in two window repaints."""
+        show = self.panel._slideshow
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
+        _pump(0.3)
+        show.hold_frame_s = 3600.0  # the next step is always "soon" for this test
+        show.play()
+        result = self._newest_result()
+        shown_before = self.panel._last_shown_serial
+        stepped_from = self.selection.current_wavelength()
+        self.panel._on_rendered(result)
+        self.assertEqual(self.panel._last_shown_serial, shown_before, "held, not shown yet")
+        self.assertIs(self.panel._held_result, result)
+        self.assertTrue(self.panel.render_pending())  # other panels keep waiting for the image
+        show._step()  # the timer: the held frame is shown and the step made, in this one call
+        self.assertEqual(self.panel._last_shown_serial, result.request.serial)
+        self.assertIsNone(self.panel._held_result)
+        self.assertNotEqual(self.selection.current_wavelength(), stepped_from)
+        show.stop()
+        _pump(0.2)
+
+    def test_a_frame_far_from_the_next_step_is_shown_at_once_and_stop_drops_a_held_one(self) -> None:
+        show = self.panel._slideshow
+        self.selection.set_cube(0)
+        self.selection.set_wavelength(500.0)
+        _pump(0.3)
+        show.hold_frame_s = 0.0  # never "soon": a slow show adds no delay
+        show.play()
+        result = self._newest_result()
+        self.panel._on_rendered(result)
+        self.assertEqual(self.panel._last_shown_serial, result.request.serial)
+        show.hold_frame_s = 3600.0
+        held = self._newest_result()
+        self.panel._on_rendered(held)
+        self.assertIs(self.panel._held_result, held)
+        show.stop()
+        self.assertIsNone(self.panel._held_result)
+        _pump(0.2)
+
     def test_an_older_result_does_not_release_the_brake_while_a_newer_request_is_in_flight(self) -> None:
         from dataclasses import replace
 

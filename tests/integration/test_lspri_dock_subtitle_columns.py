@@ -185,6 +185,24 @@ class DockSubtitleColumnsTest(unittest.TestCase):
         self.assertTrue(self.dock._subtitle_columns_host.isHidden())
         self.assertEqual(self.dock._subtitle_label.text(), "plain text")
 
+    def test_a_new_cube_or_time_text_lays_nothing_out_again(self) -> None:
+        """2026-11-11: during Play the cube and time fields change at every frame. With only their width fixed, each new text sent a
+        layout request up to the main window, which was then repainted whole (2 x 2.5 Mpx per frame with the OpenGL Image view)."""
+        from lspr_imaging_app.panels.image.paint_census import PaintCensus
+
+        self.dock.set_subtitle_columns(_fields("", "Cube 1", "550 nm", "0:00:01.00", "buffer"))
+        _pump()
+        census = PaintCensus()
+        census.start()
+        try:
+            for i in range(2, 12):
+                self.dock.set_subtitle_columns(_fields("", f"Cube {i}", f"{540 + i} nm", f"0:00:{i:02d}.00", "buffer"))
+                _pump(0.02)
+            fields = census.window_fields(10)
+        finally:
+            census.stop()
+        self.assertEqual(fields["layouts_per_frame"], 0.0, fields["layouts"])
+
     def test_theme_refresh_keeps_the_fields(self) -> None:
         self.dock.set_subtitle_columns(_fields("Ignored", "Cube 3", "550 nm", "0:03.24", "buffer"))
         _pump()

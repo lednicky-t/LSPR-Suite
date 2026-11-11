@@ -62,6 +62,18 @@ class IndicatorTests(unittest.TestCase):
         self.assertIn("started ", self.indicator._detail.text())
         self.assertIn("elapsed", self.indicator._detail.text())
 
+    def test_dismiss_result_clears_a_finished_result_but_keeps_a_running_task(self) -> None:
+        """2026-11-11: the slideshow calls it on start, so its live fps line is not hidden behind an old result."""
+        self.indicator.report("t", "Task", 0.4, "")
+        self.indicator.finish("t", "completed", "")
+        self.indicator.dismiss_result()
+        self.assertFalse(self.indicator.isVisible())
+        self.assertEqual(len(self.indicator.history()), 1)  # still in History
+        self.indicator.report("r", "Running", 0.5, "")
+        self.indicator.dismiss_result()
+        self.assertTrue(self.indicator.isVisible())
+        self.assertIn("Running", self.indicator._text.text())
+
     def test_result_stays_until_dismissed_or_next_task(self) -> None:
         self.indicator.report("t", "Task", 0.4, "")
         self.indicator.finish("t", "completed", "4 landmarks")

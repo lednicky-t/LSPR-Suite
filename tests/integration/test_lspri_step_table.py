@@ -839,7 +839,10 @@ class StartUpCalculationWiringTest(unittest.TestCase):
 
     class _Panel:
         def __init__(self) -> None:
+            from lspr_imaging_app.panels.panel_task import PanelTask
+
             self.calls = 0
+            self.task = PanelTask("roi_table_steps", "ROI / Groups")  # the wiring waits for its run to end before starting the warm pool (2026-11-11)
 
         def calculate_at_startup(self) -> None:
             self.calls += 1
@@ -849,7 +852,7 @@ class StartUpCalculationWiringTest(unittest.TestCase):
 
     def test_a_completed_start_up_calculates_the_table_once(self) -> None:
         panel, tracker = self._Panel(), self._tracker()
-        app_rewrite._wire_startup_calculation(tracker, panel)
+        app_rewrite._wire_startup_calculation(tracker, panel, lambda: None)
         tracker.start()
         self.assertEqual(panel.calls, 1)
         tracker.cancel()  # (already over: still one)
@@ -859,12 +862,12 @@ class StartUpCalculationWiringTest(unittest.TestCase):
         for end in ("fail", "cancel"):
             panel = self._Panel()
             tracker = StartupTracker([StartupStep("all", "loading", lambda: False)], poll_ms=10, settle_polls=1)
-            app_rewrite._wire_startup_calculation(tracker, panel)
+            app_rewrite._wire_startup_calculation(tracker, panel, lambda: None)
             tracker.start()
             getattr(tracker, end)(*(("could not open",) if end == "fail" else ()))
             self.assertEqual(panel.calls, 0, end)
         idle = self._Panel()
-        app_rewrite._wire_startup_calculation(self._tracker(), idle)  # never started: no dataset was reopened at launch
+        app_rewrite._wire_startup_calculation(self._tracker(), idle, lambda: None)  # never started: no dataset was reopened at launch
         self.assertEqual(idle.calls, 0)
 
 

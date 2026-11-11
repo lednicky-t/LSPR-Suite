@@ -267,6 +267,40 @@ class HitAndMissTests(_Case):
         self.paint()
         self.assertEqual(self.overlay.layers.cached_states, 0, "a picture of the wrong state was kept")
 
+    def test_the_same_state_at_every_frame_is_kept_after_one_repeat(self) -> None:
+        # Play through cubes at one wavelength: the panel calls `begin` once, then `repeat` at every frame (2026-11-11 fix).
+        layers = self.overlay.layers
+        self.show_state(2)
+        direct = self.paint()
+        self.assertEqual(layers.cached_states, 0, "nothing kept before the epoch held for a frame")
+        layers.repeat(("epoch",), ("state", 2))
+        self.paint()
+        self.assertEqual(layers.cached_states, 1)
+        layers.repeat(("epoch",), ("state", 2))
+        cached = self.paint()
+        self.assertEqual(layers.cached_states, 1)
+        # The picture is the overlay (as the appearance tests measure: identical up to the accepted group-label difference).
+        self.assertLess(np.mean(np.any(direct != cached, axis=2)), 0.01)
+
+    def test_a_repeat_after_a_forced_redraw_announces_the_state_first(self) -> None:
+        layers = self.overlay.layers
+        self.show_state(1)
+        layers.invalidate()
+        self.draw(1)  # the forced redraw (a setting changed)
+        layers.repeat(("epoch",), ("state", 1))
+        self.paint()
+        self.assertEqual(layers.cached_states, 0, "the first repeat only announces the state")
+        layers.repeat(("epoch",), ("state", 1))
+        self.paint()
+        self.assertEqual(layers.cached_states, 1)
+
+    def test_a_repeat_with_another_epoch_keeps_nothing_at_that_frame(self) -> None:
+        layers = self.overlay.layers
+        self.show_state(1)
+        layers.repeat(("another epoch",), ("state", 1))
+        self.paint()
+        self.assertEqual(layers.cached_states, 0)
+
     def test_invalidate_paints_plainly_until_the_next_frame_step(self) -> None:
         self.warm()
         self.overlay.layers.invalidate()

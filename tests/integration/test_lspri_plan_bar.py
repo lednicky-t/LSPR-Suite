@@ -626,6 +626,28 @@ class PlanBarPanelTest(unittest.TestCase):
     def _bar(self):
         return self.panel._plot.plan_bar()
 
+    def test_during_play_the_cursor_follows_the_frame_on_screen_not_the_slider(self) -> None:
+        """2026-11-11: while Play runs the cursor moves when the Image panel is about to show a frame (`show_play_frame`), so it reaches
+        the screen in the same window repaint as the image; the cube slider is one step ahead of it."""
+        self._open_scan_and_draw()
+        cubes = list(self.m.scan_results.stored().cube_indices)
+        self.assertGreaterEqual(len(cubes), 3)
+        cursor = self.panel._plot._axis_cursor
+        self.m.selection.set_cube(cubes[0])
+        at_first = cursor.x()
+        self.panel.follow_play(True)
+        self.m.selection.set_cube(cubes[2])  # the slider moved on: the frame on screen is still the first
+        self.assertEqual(cursor.x(), at_first)
+        self.panel.show_play_frame(cubes[1])
+        at_second = cursor.x()
+        self.assertNotEqual(at_second, at_first)
+        self.panel.follow_play(False)  # Play stopped: back to the slider
+        self.assertNotEqual(cursor.x(), at_second)
+        self.m.selection.set_cube(cubes[1])
+        self.assertEqual(cursor.x(), at_second)
+        self.panel.show_play_frame(cubes[0])  # not playing: ignored
+        self.assertEqual(cursor.x(), at_second)
+
     def test_the_steps_are_drawn_on_the_cube_axis(self) -> None:
         self.m.cube_display.set_mode(MODE_CUBE)
         self._open_scan_and_draw()

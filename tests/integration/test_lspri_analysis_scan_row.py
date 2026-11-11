@@ -234,8 +234,18 @@ class ScanRowTests(unittest.TestCase):
         row2 = AnalysisTab()
         self.addCleanup(row2.deleteLater)
         startup = StartupTracker([StartupStep("x", "waiting", lambda: True)])
+        from lspr_imaging_app.panels.panel_task import PanelTask
+
+        class _IdleTable:  # no start-up calculation to wait for
+            task = PanelTask("roi_table_steps", "ROI / Groups")
+
+            def calculate_at_startup(self) -> None:
+                pass
+
         with mock.patch.object(WarmPool, "start", return_value={7, 8}) as start:
             app_rewrite._wire_analysis_scan(m2, row2, UiStateStore({"analysis/mode": "performance"}), startup)
+            # Since 2026-11-11 the workers are started by the start-up calculation's wiring, once the ROI / Groups calculation has ended.
+            app_rewrite._wire_startup_calculation(startup, _IdleTable(), m2.analysis_scan.start_pool)
             self.assertEqual((row2.mode(), m2.analysis_scan.mode()), ("performance", "performance"))
             _pump_a_little()
             start.assert_not_called()  # the application is still starting: no seven processes now

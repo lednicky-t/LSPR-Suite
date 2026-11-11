@@ -28,7 +28,7 @@ try:
     from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.image_tools import ChromaticModule, GeometryModule
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
-    from lspr_imaging_app.panels.image.decoration_overlays import DecorationOverlays
+    from lspr_imaging_app.panels.image.decoration_overlays import DecorationOverlays, _same_lines
     from lspr_imaging_app.panels.image.overlay_tint import OverlayTint
     from lspr_imaging_app.panels.image.scale_bar_overlay import ScaleBarItem
     from lspr_imaging_app.panels.image.tint_overlays import TintOverlays
@@ -181,6 +181,39 @@ class DecorationOverlaysTests(unittest.TestCase):
         self.preview_tool = False
         self.decorations.draw_crop_outline()
         self.assertEqual(self._drawn_points(), 0)
+
+    def test_an_unchanged_outline_or_grid_is_not_touched_again(self) -> None:
+        """2026-11-11: both run at every frame shown; touching an unchanged curve (or repainting the view) made Qt repaint the whole Image
+        view a second time per Play frame."""
+        repaints = []
+        self.view.viewport().update = lambda *a: repaints.append(1)
+        cleared = []
+        self.crop_curve.clear = lambda: cleared.append(1)
+        for _ in range(3):
+            self.decorations.draw_crop_outline()  # no preview tool: nothing to show
+            self.decorations.update_chunk_grid()  # preview off
+            self.decorations.update_source_grid()  # not shown
+        self.assertEqual((cleared, repaints), ([], []))
+        self.preview_tool = True
+        self.geometry.set_crop(10, 20, 30, 40)
+        del self.crop_curve.clear
+        self.decorations.draw_crop_outline()
+        self.decorations.draw_crop_outline()
+        self.assertEqual(self._drawn_points(), 5)
+        self.decorations.clear_lines()
+        self.assertEqual(self._drawn_points(), 0)
+        self.decorations.draw_crop_outline()  # after clear_lines the outline is drawn again
+        self.assertEqual(self._drawn_points(), 5)
+
+    def test_the_same_grid_lines_with_their_nan_breaks_count_as_unchanged(self) -> None:
+        identity = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        a = DecorationOverlays.grid_polyline((100, 200), identity, 50, 50, 0, 0)
+        b = DecorationOverlays.grid_polyline((100, 200), identity, 50, 50, 0, 0)
+        c = DecorationOverlays.grid_polyline((100, 200), identity, 50, 50, 10, 0)
+        self.assertTrue(_same_lines(a, b))
+        self.assertFalse(_same_lines(a, c))
+        self.assertTrue(_same_lines(None, None))
+        self.assertFalse(_same_lines(a, None))
 
     def test_grid_lines_run_at_every_chunk_boundary_from_the_offset(self) -> None:
         identity = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
