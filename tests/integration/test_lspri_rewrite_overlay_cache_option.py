@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -68,7 +69,7 @@ class BudgetChangeTests(unittest.TestCase):
 
     def test_a_smaller_budget_than_the_pictures_use_drops_them(self) -> None:
         effect = self.layers._effects[0]
-        effect._entries[("state", 0)] = (None, None, 10 * _MB)  # a stand-in picture of 10 MB
+        effect._entries[("state", 0)] = types.SimpleNamespace(size=10 * _MB)  # a stand-in picture of 10 MB
         self.layers._budget.used = 10 * _MB
         self.layers.set_budget_bytes(5 * _MB)
         self.assertEqual(self.layers.cached_states, 0)
