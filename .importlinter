@@ -47,12 +47,13 @@ layers =
     selection
     dataset
     io
+    display_options
     storage
     analysis
     roi
     image_tools
     plan
-    threaded_task | diagnostics | gil_tuning | version | plane_reader
+    threaded_task | diagnostics | gil_tuning | version | plane_reader | opengl_surface
     progress | applog | format_versions | shard_crc | frame_naming | export_stats | frame_roles_state | undo | thread_priority | shortcuts | change_events | wavelength_color | image_features | domain | processing
 # No known exceptions (2026-11-02: the last upward imports were fixed). A new one fails the build: move what you need down or pass it in;
 # do not add an `ignore_imports` line without the maintainer's agreement (see apps/LSPRi/eva/docs/import_layering_2026-11-02.md).
