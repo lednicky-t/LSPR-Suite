@@ -101,7 +101,7 @@ class CubeIntervalStatsPureFunctionTests(unittest.TestCase):
 
 class DatasetModuleCubeIntervalStatsTests(unittest.TestCase):
     """`DatasetModule.cube_interval_stats()` - the query surface
-    `panels/workflow/dataset_experimental_plan.py` actually calls."""
+    `panels/dataset_manager/experimental_plan.py` actually calls."""
 
     def _dataset_with_timings(self, start_ms_by_cube: dict[int, int]) -> ImageDataset:
         metadata = ImagingAcquisitionMetadata(

@@ -1,8 +1,9 @@
 """Tests for the View menu layout of the LSPRi rewrite (2026-10-19).
 
-Panels (Show/Hide all, then one checkable entry per panel with Ctrl+1..6) sit
+Panels (Show/Hide all, then one checkable entry per panel with Ctrl+1..5) sit
 directly at the top of View - no "Panels" submenu - then Panel Presets, then
-Theme at the bottom. ROI / Groups is listed right under Histogram.
+Theme at the bottom. ROI / Groups is listed right under Histogram. (Workflow
+was the first panel, Ctrl+1, until it was retired 2026-11-11.)
 
 A real `QApplication` built in-process, never `.exec()`; the window is the real
 `build_main_window()`.
@@ -31,7 +32,8 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
     skip_if_lspri_rewrite_absent(exc)
     raise
 
-_PANEL_ORDER = ["Workflow", "Image", "Histogram", "ROI / Groups", "Spectra", "Sensorgram"]
+_PANEL_ORDER = ["Image", "Histogram", "ROI / Groups", "Spectra", "Sensorgram"]
+_PANELS = slice(2, 2 + len(_PANEL_ORDER))
 
 
 class ViewMenuLayoutTest(unittest.TestCase):
@@ -46,19 +48,17 @@ class ViewMenuLayoutTest(unittest.TestCase):
     def test_panels_come_first_in_the_requested_order(self) -> None:
         texts = [a.text() for a in self.entries]
         self.assertEqual(texts[:2], ["Show all panels", "Hide all panels"])
-        self.assertEqual(texts[2:8], _PANEL_ORDER)
+        self.assertEqual(texts[_PANELS], _PANEL_ORDER)
+        self.assertNotIn("Workflow", texts, "the Workflow panel was retired 2026-11-11")
 
     def test_presets_follow_the_panels_and_theme_is_last(self) -> None:
         texts = [a.text() for a in self.entries]
-        self.assertEqual(texts[8:], ["Panel Presets", "Theme"])
+        self.assertEqual(texts[_PANELS.stop:], ["Panel Presets", "Theme"])
         self.assertNotIn("Panels", texts, "the old Panels submenu must be gone")
 
     def test_shortcuts_follow_the_menu_order(self) -> None:
-        shortcuts = {a.text(): a.shortcut().toString() for a in self.entries[2:8]}
-        self.assertEqual(
-            shortcuts,
-            dict(zip(_PANEL_ORDER, ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+6"])),
-        )
+        shortcuts = {a.text(): a.shortcut().toString() for a in self.entries[_PANELS]}
+        self.assertEqual(shortcuts, dict(zip(_PANEL_ORDER, ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"])))
 
     def test_panel_entries_toggle_their_dock(self) -> None:
         self.window.show()
@@ -72,10 +72,10 @@ class ViewMenuLayoutTest(unittest.TestCase):
         show_all = next(a for a in self.entries if a.text() == "Show all panels")
         hide_all.trigger()
         _APP.processEvents()
-        self.assertFalse(any(a.isChecked() for a in self.entries[2:8]))
+        self.assertFalse(any(a.isChecked() for a in self.entries[_PANELS]))
         show_all.trigger()
         _APP.processEvents()
-        self.assertTrue(all(a.isChecked() for a in self.entries[2:8]))
+        self.assertTrue(all(a.isChecked() for a in self.entries[_PANELS]))
 
 
 if __name__ == "__main__":

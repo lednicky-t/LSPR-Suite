@@ -262,7 +262,7 @@ class LoadAndSaveTest(unittest.TestCase):
             {
                 "last_dataset_folder", "auto_reopen_last_dataset", "theme", "main_window_geometry",
                 "main_window_state", "active_layout_preset", "layout_presets",
-                "auto_apply_preset_on_stage_change", "active_workflow_stage", "expanded_subsections", "ui_state",
+                "ui_state",  # (the three Workflow-panel fields were removed with that panel, 2026-11-11)
             },
         )
 

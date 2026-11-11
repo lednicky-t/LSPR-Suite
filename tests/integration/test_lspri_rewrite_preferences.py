@@ -28,12 +28,9 @@ try:
     from lspr_core.perf import PerfPreferences, PerfRuntime, get_runtime, set_runtime
     from lspr_imaging_app.app_rewrite import build_main_window
     from lspr_imaging_app.display_options import ResolutionSizes
-    from lspr_imaging_app.panels.dock_container import PanelContainer
-    from lspr_imaging_app.panels.histogram import HistogramPanel
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.overlay_cache import BUDGET_CHOICES_MB, DEFAULT_BUDGET_MB
     from lspr_imaging_app.panels.preferences_dialog import DEFAULT_PREFERENCES, Preferences, PreferencesDialog
-    from lspr_imaging_app.panels.workflow import WorkflowPanel, WorkflowStage
     from lspr_imaging_app.storage.app_settings import AppSettings
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -49,17 +46,20 @@ class DialogTests(unittest.TestCase):
             DEFAULT_PREFERENCES,
             Preferences(
                 reopen_last_dataset=fresh.auto_reopen_last_dataset,
-                auto_apply_layout_preset=fresh.auto_apply_preset_on_stage_change,
                 overlay_cache_mb=DEFAULT_BUDGET_MB,
             ),
         )
 
     def test_it_shows_the_current_values_and_returns_them_unchanged(self) -> None:
-        current = Preferences(reopen_last_dataset=False, auto_apply_layout_preset=True, overlay_cache_mb=512)
+        current = Preferences(reopen_last_dataset=False, overlay_cache_mb=512)
         dialog = PreferencesDialog(current)
         self.assertFalse(dialog.reopen_check.isChecked())
-        self.assertTrue(dialog.auto_apply_check.isChecked())
         self.assertEqual(dialog.values(), current)
+
+    def test_the_workflow_stage_option_stays_removed(self) -> None:
+        """"Arrange the panels when the Workflow stage changes" went with the Workflow panel (2026-11-11)."""
+        self.assertFalse(hasattr(PreferencesDialog(DEFAULT_PREFERENCES), "auto_apply_check"))
+        self.assertFalse(hasattr(DEFAULT_PREFERENCES, "auto_apply_layout_preset"))
 
     def test_gpu_drawing_is_off_by_default_and_returned_as_shown(self) -> None:
         """Off by default since 2026-11-11 (faster Play on a 4K window; docs/play_diagnosis_2026-11-11.md 6d)."""
@@ -91,7 +91,7 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(dialog.values().overlay_cache_mb, 64)
 
     def test_restore_defaults_puts_the_defaults_on_screen(self) -> None:
-        dialog = PreferencesDialog(Preferences(reopen_last_dataset=False, auto_apply_layout_preset=True, overlay_cache_mb=0))
+        dialog = PreferencesDialog(Preferences(reopen_last_dataset=False, overlay_cache_mb=0))
         dialog.button_box.button(Button.RestoreDefaults).click()
         self.assertEqual(dialog.values(), DEFAULT_PREFERENCES)
 
@@ -258,12 +258,6 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(len(shown), 1, "Edit -> Preferences... opens exactly one dialog")
         return shown[0]
 
-    def _histogram_dock(self) -> PanelContainer:
-        widget = self.window.findChild(HistogramPanel)
-        while widget is not None and not isinstance(widget, PanelContainer):
-            widget = widget.parent()
-        return widget
-
     def test_the_options_menu_is_gone_and_preferences_sits_in_edit(self) -> None:
         self.assertEqual([m.title() for m in self._menus()], ["&File", "&Edit", "&View", "&Help"])
         self.assertEqual(self.preferences_action.shortcut().toString(), "Ctrl+,")
@@ -283,7 +277,6 @@ class WindowTests(unittest.TestCase):
     def test_cancel_applies_and_saves_nothing(self) -> None:
         dialog = self._open()
         dialog.reopen_check.setChecked(False)
-        dialog.auto_apply_check.setChecked(True)
         dialog.cache_combo.setCurrentIndex(dialog.cache_combo.findData(0))
         dialog.button_box.button(Button.Cancel).click()
         self.assertEqual(self.panel.overlay_cache_mb, DEFAULT_BUDGET_MB)
@@ -471,18 +464,6 @@ class WindowTests(unittest.TestCase):
         dialog.reopen_check.setChecked(False)
         dialog.button_box.button(Button.Ok).click()
         self.assertFalse(self.saved[-1].auto_reopen_last_dataset)
-
-    def test_auto_apply_off_leaves_the_panels_alone_when_the_stage_changes(self) -> None:
-        self.window.findChild(WorkflowPanel).stage_changed.emit(WorkflowStage.ANALYSIS)
-        self.assertFalse(self._histogram_dock().isHidden())
-
-    def test_auto_apply_on_arranges_the_panels_when_the_stage_changes_and_is_saved(self) -> None:
-        dialog = self._open()
-        dialog.auto_apply_check.setChecked(True)
-        dialog.button_box.button(Button.Ok).click()
-        self.assertTrue(self.saved[-1].auto_apply_preset_on_stage_change)
-        self.window.findChild(WorkflowPanel).stage_changed.emit(WorkflowStage.ANALYSIS)
-        self.assertTrue(self._histogram_dock().isHidden(), "the Analysis preset does not show the Histogram")
 
 
 if __name__ == "__main__":

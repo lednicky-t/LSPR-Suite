@@ -129,9 +129,10 @@ class TestDisplayAndText(unittest.TestCase):
         self.assertEqual(shortcuts.display("edit.undo"), "Ctrl+Z or Alt+Backspace")
         self.assertEqual(shortcuts.display("mouse.view.pan"), "Middle-drag")
 
-    def test_the_panel_keys_run_ctrl_1_to_6_in_view_menu_order(self) -> None:
+    def test_the_panel_keys_run_ctrl_1_to_5_in_view_menu_order(self) -> None:
+        """Ctrl+1..6 until the Workflow panel (Ctrl+1) was retired, 2026-11-11."""
         keys = [shortcuts.display(binding_id) for binding_id in shortcuts.PANEL_TOGGLE_IDS.values()]
-        self.assertEqual(keys, [f"Ctrl+{n}" for n in range(1, 7)])
+        self.assertEqual(keys, [f"Ctrl+{n}" for n in range(1, 6)])
 
     def test_the_text_export_lists_every_binding_under_its_section(self) -> None:
         text = shortcuts.shortcuts_as_text()

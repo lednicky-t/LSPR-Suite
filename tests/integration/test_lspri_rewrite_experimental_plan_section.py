@@ -1,5 +1,6 @@
-"""Tests for the rewrite's "Experimental plan" Workflow section
-(`panels/workflow/dataset_experimental_plan.py`), specifically the "cube
+"""Tests for the Dataset Manager's "Experiment plan" page
+(`panels/dataset_manager/experimental_plan.py`; the Workflow panel's
+"Experimental plan" section until 2026-11-11), specifically the "cube
 interval" line added 2026-09-30 (`docs/rewrite_build_log_2026-09.md`'s
 same-dated entries have the full "why", including the same-day revision
 from "sampling interval"/median to "cube interval"/mean+std).
@@ -34,7 +35,7 @@ try:
 
     from lspr_imaging_app.dataset import DatasetModule
     from lspr_imaging_app.dataset.model import ImageDataset, ImageKey, ImageRecord
-    from lspr_imaging_app.panels.workflow.dataset_experimental_plan import ExperimentalPlanSection
+    from lspr_imaging_app.panels.dataset_manager.experimental_plan import ExperimentalPlanSection
     from lspr_imaging_app.selection import SelectionModule
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)

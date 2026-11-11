@@ -65,12 +65,26 @@ class AppSettingsTest(unittest.TestCase):
             main_window_state="c3RhdGU=",
             active_layout_preset="Analysis",
             layout_presets={"Analysis": "YmxvYg=="},
-            auto_apply_preset_on_stage_change=True,
-            active_workflow_stage="IMAGE_TOOLS",
-            expanded_subsections={"IMAGE_TOOLS:Transforms": True, "IMAGE_TOOLS:Mask": False},
         )
         save_app_settings(state, self.path)
         self.assertEqual(load_app_settings(self.path), state)
+
+    def test_a_file_with_the_retired_workflow_fields_still_loads(self) -> None:
+        """The Workflow panel's three fields were removed 2026-11-11; a settings file written before must keep its other
+        values (an unknown key is ignored), not fall back to defaults."""
+        import json
+
+        save_app_settings(AppSettings(theme="bright", last_dataset_folder=r"C:\datasets\run7"), self.path)
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        payload.update(
+            auto_apply_preset_on_stage_change=True,
+            active_workflow_stage="ANALYSIS",
+            expanded_subsections={"DATASET:Summary": True},
+        )
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
+        loaded = load_app_settings(self.path)
+        self.assertEqual(loaded.theme, "bright")
+        self.assertEqual(loaded.last_dataset_folder, r"C:\datasets\run7")
 
     def test_defaults_favor_auto_reopen_and_dark_theme(self) -> None:
         """The maintainer's explicit choice (2026-09-26): auto-reopen is on

@@ -188,32 +188,8 @@ class SessionFileTest(unittest.TestCase):
             self.assertEqual(load_session(root).frame_roles, FrameRolesState())
 
 
-class _FakeSelection:
-    def __init__(self, wavelength: float) -> None:
-        self.wavelength = wavelength
-
-    def current_wavelength(self) -> float:
-        return self.wavelength
-
-
-class WorkflowRowsAndLabelTest(unittest.TestCase):
-    def test_rows_show_dark_and_ignored_summary(self) -> None:
-        from lspr_imaging_app.panels.workflow.frame_roles_rows import FrameRolesRows
-
-        _ds, _ref, roles = _make()
-        selection = _FakeSelection(550.0)
-        rows = FrameRolesRows(roles, selection)
-        self.assertEqual(rows._dark_label.text(), "[Dark: 0 nm - unscaled]")
-        self.assertEqual(rows._ignored_label.text(), "[Ignored: none]")
-        roles.set_dark(selection.current_wavelength())
-        self.assertEqual(rows._dark_label.text(), "[Dark: 550 nm - unscaled]")
-        roles.set_wavelength_ignored(600.0, True)
-        roles.set_cube_ignored(1, True)
-        roles.set_cube_ignored(2, True)
-        self.assertEqual(rows._ignored_label.text(), "[Ignored: 1 wavelength, 2 cubes]")
-        roles.clear_dark()
-        self.assertEqual(rows._dark_label.text(), "[Dark: -]")
-
+class DockLabelTest(unittest.TestCase):
+    # (The Workflow panel's dark / ignored readout rows were removed with that panel, 2026-11-11: the slider shows both.)
     def test_dock_label_prefix_for_dark_reference_and_ignored_in_the_slider_colours(self) -> None:
         from lspr_imaging_app.panels.image.frame_status_text import FrameStatusText
         from lspr_imaging_app.panels.image.slider_colors import SliderColors
