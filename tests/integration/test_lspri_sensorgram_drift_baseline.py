@@ -387,6 +387,19 @@ class DriftBaselinePanelTest(unittest.TestCase):
         self.assertEqual(self.panel._plot.plan_bar().baseline_anchors(), frozenset())
         self.assertTrue(self.drift.trim.isHidden())
 
+    def test_marked_range_steps_draw_no_squares_on_the_traces_but_the_curve_and_the_plan_bar_icon(self) -> None:
+        """2026-11-11: the hollow squares belong to the Anchor points method; the Range method's steps are marked by the plan bar's anchor icon only."""
+        steps = self.m.experiment_plan.steps()
+        self._set(baseline_method=METHOD_WINDOW, baseline_anchor_steps=(tuple(steps[0].ref),), baseline_shape="constant", baseline_step_trim=0)
+        self.assertEqual(self._dots(), [])
+        self.assertEqual(self.panel._plot.plan_bar().baseline_anchors(), frozenset({0}))
+        self.assertTrue(all(line.baseline_curve is not None for line in self._lines()))  # the drift curve is still computed (and drawn dashed)
+        self._set(baseline_enabled=True)
+        self.assertEqual(self._dots(), [])
+        first_cube = int(self.m.scan_results.stored().cube_indices[0])
+        self._set(baseline_method=METHOD_ANCHORS, baseline_shape="constant", baseline_point_halfwidth=0, baseline_anchor_points=((0, first_cube),))
+        self.assertEqual(len(self._dots()), len(self._lines()))  # the Anchor points method still draws its squares
+
     def test_too_few_marked_steps_for_the_shape_are_said_at_the_pointer_in_the_menu_and_in_the_shape_tip(self) -> None:
         """2026-11-10: with the default Linear shape the first marked step corrects nothing (two are needed, and no simpler shape is swapped in);
         the status row is hidden, so the reason has to show where the user is looking."""
