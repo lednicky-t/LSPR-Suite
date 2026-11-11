@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import sys
 import unittest
-from dataclasses import replace
 from unittest import mock
 
 from PyQt6 import QtWidgets
@@ -60,13 +59,22 @@ class DialogTests(unittest.TestCase):
         self.assertTrue(dialog.auto_apply_check.isChecked())
         self.assertEqual(dialog.values(), current)
 
-    def test_gpu_drawing_is_on_by_default_and_returned_as_shown(self) -> None:
-        self.assertTrue(DEFAULT_PREFERENCES.gpu_drawing)
-        dialog = PreferencesDialog(Preferences(gpu_drawing=False))
-        self.assertFalse(dialog.gpu_check.isChecked())
-        self.assertFalse(dialog.values().gpu_drawing)
-        dialog.button_box.button(Button.RestoreDefaults).click()
+    def test_gpu_drawing_is_off_by_default_and_returned_as_shown(self) -> None:
+        """Off by default since 2026-11-11 (faster Play on a 4K window; docs/play_diagnosis_2026-11-11.md 6d)."""
+        self.assertFalse(DEFAULT_PREFERENCES.gpu_drawing)
+        dialog = PreferencesDialog(Preferences(gpu_drawing=True))
+        self.assertTrue(dialog.gpu_check.isChecked())
         self.assertTrue(dialog.values().gpu_drawing)
+        dialog.button_box.button(Button.RestoreDefaults).click()
+        self.assertFalse(dialog.values().gpu_drawing)
+
+    def test_the_removed_display_choices_are_gone(self) -> None:
+        """"Screen resolution" and "Show the image in a window of its own" were removed 2026-11-11 (beaten by a processor-drawn window)."""
+        dialog = PreferencesDialog(DEFAULT_PREFERENCES)
+        for name in ("resolution_combo", "own_window_check", "display_note_label"):
+            self.assertFalse(hasattr(dialog, name), name)
+        self.assertFalse(hasattr(DEFAULT_PREFERENCES, "screen_resolution"))
+        self.assertFalse(hasattr(DEFAULT_PREFERENCES, "image_own_window"))
 
     def test_the_cache_choices_are_off_and_the_sizes_with_the_default_marked(self) -> None:
         dialog = PreferencesDialog(DEFAULT_PREFERENCES)
@@ -164,63 +172,6 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(results, ["accepted", "rejected"])
 
 
-class DisplayChoiceDialogTests(unittest.TestCase):
-    """Preferences -> Performance: screen resolution and the image's own window (both applied at the next start)."""
-
-    def test_the_defaults_are_sharp_and_the_image_in_the_main_window(self) -> None:
-        self.assertEqual(DEFAULT_PREFERENCES.screen_resolution, "full")
-        self.assertFalse(DEFAULT_PREFERENCES.image_own_window)
-        dialog = PreferencesDialog(DEFAULT_PREFERENCES)
-        self.assertEqual(dialog.resolution_combo.currentData(), "full")
-        self.assertFalse(dialog.own_window_check.isChecked())
-
-    def test_the_resolution_choices_are_full_first_then_standard(self) -> None:
-        dialog = PreferencesDialog(DEFAULT_PREFERENCES)
-        self.assertEqual([dialog.resolution_combo.itemData(i) for i in range(dialog.resolution_combo.count())], ["full", "standard"])
-
-    def test_both_choices_are_shown_and_returned_and_restore_defaults_resets_them(self) -> None:
-        current = replace(DEFAULT_PREFERENCES, screen_resolution="standard", image_own_window=True)
-        dialog = PreferencesDialog(current)
-        self.assertEqual(dialog.resolution_combo.currentData(), "standard")
-        self.assertTrue(dialog.own_window_check.isChecked())
-        self.assertEqual(dialog.values(), current)
-        dialog.button_box.button(Button.RestoreDefaults).click()
-        self.assertEqual(dialog.values(), DEFAULT_PREFERENCES)
-
-    def test_the_note_says_what_this_run_has_and_that_a_restart_is_needed(self) -> None:
-        dialog = PreferencesDialog(DEFAULT_PREFERENCES, running_resolution="standard", running_own_window=True)
-        text = dialog.display_note_label.text()
-        self.assertIn("next time the app starts", text)
-        self.assertIn("standard resolution", text)
-        self.assertIn("image window on", text)
-        plain = PreferencesDialog(DEFAULT_PREFERENCES)  # kept in a name: a parentless dialog is deleted with its last reference
-        self.assertIn("full resolution", plain.display_note_label.text())
-
-    def test_the_resolution_choice_is_greyed_out_where_it_cannot_work(self) -> None:
-        works = PreferencesDialog(DEFAULT_PREFERENCES)
-        cannot = PreferencesDialog(DEFAULT_PREFERENCES, resolution_available=False)
-        self.assertTrue(works.resolution_combo.isEnabled())
-        self.assertFalse(cannot.resolution_combo.isEnabled())
-
-    def test_the_own_window_flag_reaches_the_opengl_viewport_only_when_asked(self) -> None:
-        """`apply_gpu_drawing(own_window=...)`: a native window handle on the OpenGL viewport (before it is first shown); offscreen has no
-        OpenGL, so the viewport swap is intercepted and the widget that would have been installed is looked at."""
-        from lspr_imaging_app.panels.image import gpu_view
-        from PyQt6.QtCore import Qt
-
-        for own, expected in ((False, False), (True, True)):
-            view = QtWidgets.QGraphicsView()
-            installed: list = []
-            with (
-                mock.patch.object(gpu_view, "_offscreen", return_value=False),
-                mock.patch.object(gpu_view, "opengl_available", return_value=True),
-                mock.patch.object(gpu_view, "replace_viewport", side_effect=lambda _view, widget: installed.append(widget)),
-            ):
-                gpu_view.apply_gpu_drawing(view, True, own_window=own)
-            self.assertEqual(len(installed), 1)
-            self.assertEqual(installed[0].testAttribute(Qt.WidgetAttribute.WA_NativeWindow), expected, f"own_window={own}")
-
-
 class WindowTests(unittest.TestCase):
     def setUp(self) -> None:
         previous_runtime = set_runtime(PerfRuntime())  # a window applies its saved choices to the runtime: keep that out of other tests
@@ -260,9 +211,8 @@ class WindowTests(unittest.TestCase):
 
     def test_the_dialog_starts_with_the_apps_current_values(self) -> None:
         dialog = self._open()
-        # Drawing with the graphics card is on by default but cannot be without a screen (the tests): the dialog shows what is in effect.
-        self.assertFalse(self.panel.gpu_drawing)
-        self.assertEqual(dialog.values(), replace(DEFAULT_PREFERENCES, gpu_drawing=False))
+        self.assertFalse(self.panel.gpu_drawing)  # off by default (and impossible without a screen anyway)
+        self.assertEqual(dialog.values(), DEFAULT_PREFERENCES)
         self.assertEqual(dialog.values().overlay_cache_mb, self.panel.overlay_cache_mb)
 
     def test_opening_it_twice_brings_the_same_dialog_forward(self) -> None:
@@ -308,23 +258,6 @@ class WindowTests(unittest.TestCase):
             dialog.button_box.button(Button.Ok).click()
         self.assertFalse(self.panel.gpu_drawing)
         self.assertFalse(self._open().values().gpu_drawing, "reopening shows what is in effect")
-
-    def test_ok_remembers_the_screen_resolution_and_own_window_for_the_next_start_and_changes_nothing_now(self) -> None:
-        dialog = self._open()
-        self.assertEqual(dialog.values().screen_resolution, "full")
-        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
-        dialog.own_window_check.setChecked(True)
-        dialog.button_box.button(Button.Ok).click()
-        reopened = self._open().values()
-        self.assertEqual(reopened.screen_resolution, "standard", "reopening shows the saved choice")
-        self.assertTrue(reopened.image_own_window)
-        self.assertFalse(self.panel.own_window, "the image window is only made when the app starts")
-
-    def test_cancel_leaves_the_screen_resolution_alone(self) -> None:
-        dialog = self._open()
-        dialog.resolution_combo.setCurrentIndex(dialog.resolution_combo.findData("standard"))
-        dialog.button_box.button(Button.Cancel).click()
-        self.assertEqual(self._open().values().screen_resolution, "full")
 
     def test_ok_applies_the_parallel_work_choices_to_the_runtime_for_the_next_job(self) -> None:
         dialog = self._open()
