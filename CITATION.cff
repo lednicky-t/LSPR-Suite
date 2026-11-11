@@ -8,8 +8,8 @@ authors:
     orcid: "https://orcid.org/0000-0003-0564-1862"
 repository-code: "https://github.com/lednicky-t/LSPR-Suite"
 license: MIT
-version: "0.2.241"
-date-released: "2026-11-10"
+version: "0.2.242"
+date-released: "2026-11-11"
 identifiers:
   - type: doi
     value: "10.5281/zenodo.22111890"
