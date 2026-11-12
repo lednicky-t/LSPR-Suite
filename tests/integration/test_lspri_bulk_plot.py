@@ -67,7 +67,12 @@ class BulkPlotWindowTest(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertIn("S_bulk = 200.0", lines[0].name())
         self.assertIn("nm/RIU", lines[0].name())
-        self.assertEqual(len(self._items(pg.FillBetweenItem)), 1)  # the line's uncertainty band
+        bands = self._items(pg.FillBetweenItem)
+        self.assertEqual(len(bands), 1)  # the line's uncertainty band ...
+        band = bands[0].path().boundingRect()
+        self.assertFalse(bands[0].path().isEmpty())  # ... with a real shape (it was empty, i.e. not drawn, when its curves were PlotDataItem(pen=None))
+        self.assertAlmostEqual(band.left(), min(RI), places=6)
+        self.assertAlmostEqual(band.right(), max(RI), places=6)
         self.assertIn("589.3 nm", w._plot.getPlotItem().getAxis("bottom").labelText)
         self.assertTrue(w._plot.getPlotItem().getAxis("bottom").labelText.startswith("Refractive index"))
         self.assertEqual(w.windowTitle(), "Bulk sensitivity")
@@ -77,6 +82,49 @@ class BulkPlotWindowTest(unittest.TestCase):
         self.assertGreater(x_hi, max(RI))
         self.assertLess(x_hi, max(RI) + 0.1 * (max(RI) - min(RI)))
         self.assertEqual(w.status.text(), "")
+        vb = w._plot.getPlotItem().vb
+        vb.enableAutoRange()
+        vb.autoRange()  # the "A" button (View All): x must stay around the RIs, not run down to 0 (an empty band path did that)
+        self.assertGreater(vb.viewRange()[0][0], 1.0)
+        self.assertLess(vb.viewRange()[0][1], 1.5)
+
+    def test_point_size_control_redraws_and_is_remembered(self) -> None:
+        from lspr_imaging_app.panels.sensorgram.bulk_plot import POINT_SIZE_KEY
+
+        store = UiStateStore({})
+        w = self.window
+        w.restore_ui_state(store)
+        w.set_steps(_steps(), None)
+        w.set_lines([BulkLine("ROI 1", "#4e79a7", _numbers())], y_label="Peak position (nm)")
+        w.show()
+
+        def sizes() -> set[float]:
+            return {float(s.opts["size"]) for s in self._items(pg.ScatterPlotItem)}  # (per point it is -1 = "the item's size")
+
+        self.assertEqual(sizes(), {9.0, 10.0})  # the default; the steps outside the set one larger
+        w.point_size.setValue(15)
+        self.assertEqual(sizes(), {15.0, 16.0})
+        self.assertEqual(store.get(POINT_SIZE_KEY), 15)
+        other = BulkPlotWindow()  # a later start-up: the saved size comes back
+        try:
+            other.restore_ui_state(store)
+            self.assertEqual(other.point_size.value(), 15)
+        finally:
+            other.close()
+            other.deleteLater()
+
+    def test_ri_std_is_drawn_as_horizontal_bars_and_named_in_the_tip(self) -> None:
+        w = self.window
+        steps = [PlotStep(s.ref, s.order, s.name, s.ri, 0.002 if s.order != 2 else math.nan, s.in_set) for s in _steps()]  # step 2 has an RI but no Std
+        w.set_steps(steps, 589.3)
+        w.set_lines([BulkLine("ROI 1", "#4e79a7", _numbers())], y_label="Peak position (nm)")
+        w.show()
+        bars = self._items(pg.ErrorBarItem)
+        widths = sorted(float(v) for bar in bars for v in np.atleast_1d(bar.opts["width"]))
+        self.assertEqual(widths, [0.0, 0.004, 0.004, 0.004])  # 2 x Std (the bars are centred: total width), none where the RI has no Std
+        tips = [tip for s in self._items(pg.ScatterPlotItem) for tip in s.data["data"]]
+        self.assertTrue(any("at RI 1.33300 ± 0.00200" in tip for tip in tips))
+        self.assertTrue(any(tip.endswith("at RI 1.34531") for tip in tips))  # no Std: no ±
 
     def test_too_few_steps_in_the_set_says_so_and_draws_no_line(self) -> None:
         w = self.window
