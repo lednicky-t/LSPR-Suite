@@ -293,7 +293,7 @@ class SessionFileTest(unittest.TestCase):
         save_session(self.root, SessionState(plan_edits=self.state), self.naming)
         payload = json.loads(session_path(self.root).read_text(encoding="utf-8"))
         self.assertEqual(payload["schema_version"], SESSION_SCHEMA_VERSION)
-        self.assertEqual(SESSION_SCHEMA_VERSION, "1.6")
+        self.assertEqual(SESSION_SCHEMA_VERSION, "1.7")
         plan = payload["plan"]
         # one edit: step 1 has the new note and the end it gave up when the new step was cut off it
         self.assertEqual((len(plan["edits"]), len(plan["removed"]), len(plan["added"]), plan["next_uid"], len(plan["pairs"])), (1, 1, 1, 2, 1))

@@ -56,6 +56,14 @@ class DialogTests(unittest.TestCase):
         self.assertFalse(dialog.reopen_check.isChecked())
         self.assertEqual(dialog.values(), current)
 
+    def test_the_refractive_index_settings_default_to_the_lab_refractometer_and_7_days(self) -> None:
+        """2026-11-12, maintainer: Rudolph Research J357, 589.3 nm LED; the age limit defaults to 7 days. 0 still means not given."""
+        self.assertEqual((DEFAULT_PREFERENCES.ri_wavelength_nm, DEFAULT_PREFERENCES.ri_age_warning_days), (589.3, 7))
+        dialog = PreferencesDialog(Preferences(ri_wavelength_nm=632.8, ri_age_warning_days=30))
+        self.assertEqual((dialog.values().ri_wavelength_nm, dialog.values().ri_age_warning_days), (632.8, 30))
+        not_given = PreferencesDialog(Preferences(ri_wavelength_nm=0.0))  # kept in a name: a temporary dialog is deleted at once
+        self.assertEqual(not_given.ri_wavelength_spin.text(), "Not given")
+
     def test_the_workflow_stage_option_stays_removed(self) -> None:
         """"Arrange the panels when the Workflow stage changes" went with the Workflow panel (2026-11-11)."""
         self.assertFalse(hasattr(PreferencesDialog(DEFAULT_PREFERENCES), "auto_apply_check"))
