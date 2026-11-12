@@ -144,5 +144,53 @@ class CoverageTest(unittest.TestCase):
         self.assertLess(np.std(weighted), np.std(equal))
 
 
+class ExcessTest(unittest.TestCase):
+    """Measured minus the bulk prediction (2026-11-12): exact on a line, honest uncertainty, the intercept cancelling in a difference."""
+
+    def _points(self, y, sigma, ri=RI):
+        return {i: (float(r), float("nan"), float(v), float(s)) for i, (r, v, s) in enumerate(zip(ri, y, sigma))}
+
+    def test_a_step_on_the_line_has_no_excess_and_one_above_it_has_its_offset(self) -> None:
+        y = TRUE_SLOPE * RI + TRUE_INTERCEPT
+        fit = bs.fit_bulk(RI, y, np.full(5, 0.01))
+        points = self._points(y, np.full(5, 0.01))
+        points["protein"] = (1.3350, float("nan"), TRUE_SLOPE * 1.3350 + TRUE_INTERCEPT + 0.8, 0.01)  # 0.8 nm more than bulk: binding
+        self.assertAlmostEqual(bs.excess(fit, {"protein": 1.0}, points, list(range(5))).value, 0.8, places=6)
+        self.assertAlmostEqual(bs.excess(fit, {2: 1.0}, points, list(range(5))).value, 0.0, places=6)  # a fitted step on the line
+        found = bs.excess(fit, {"protein": 1.0, 0: -1.0}, points, list(range(5)))  # protein minus water: S_bulk * dRI predicted, the intercept cancels
+        self.assertAlmostEqual(found.predicted, TRUE_SLOPE * (1.3350 - RI[0]), places=6)
+        self.assertAlmostEqual(found.value, 0.8, places=6)
+
+    def test_the_uncertainty_covers_68_percent_outside_and_inside_the_fit(self) -> None:
+        rng = np.random.default_rng(11)
+        sigma = np.array([0.01, 0.03, 0.015, 0.02, 0.05])
+        outside_ri, outside_sigma = 1.3500, 0.02
+        hits_out = hits_in = hits_diff = 0
+        runs = 4000
+        for _ in range(runs):
+            y = TRUE_SLOPE * RI + TRUE_INTERCEPT + rng.normal(0.0, sigma)
+            fit = bs.fit_bulk(RI, y, sigma)
+            points = self._points(y, sigma)
+            points["x"] = (outside_ri, float("nan"), TRUE_SLOPE * outside_ri + TRUE_INTERCEPT + rng.normal(0.0, outside_sigma), outside_sigma)
+            keys = list(range(5))
+            out, inside, diff = bs.excess(fit, {"x": 1.0}, points, keys), bs.excess(fit, {1: 1.0}, points, keys), bs.excess(fit, {"x": 1.0, 0: -1.0}, points, keys)
+            hits_out += abs(out.value) <= out.u
+            hits_in += abs(inside.value) <= inside.u
+            hits_diff += abs(diff.value) <= diff.u
+        for name, hits in (("outside the fit", hits_out), ("a fitted step", hits_in), ("a difference", hits_diff)):
+            self.assertGreater(hits / runs, 0.64, name)
+            self.assertLess(hits / runs, 0.80, name)  # u never shrinks below the data's (Birge max(1, ...)): a little above 68 %
+
+    def test_a_fitted_steps_uncertainty_is_smaller_than_the_naive_sum(self) -> None:
+        """The step is part of the line it is compared with: its residual varies less than sqrt(SEM^2 + u_line^2)."""
+        y = TRUE_SLOPE * RI + TRUE_INTERCEPT
+        sigma = np.full(5, 0.02)
+        fit = bs.fit_bulk(RI, y, sigma)
+        found = bs.excess(fit, {2: 1.0}, self._points(y, sigma), list(range(5)))
+        u_line = 0.02 * math.sqrt(float(bs.line_weights(fit, RI[2]) @ bs.line_weights(fit, RI[2])))
+        self.assertLess(found.u, math.hypot(0.02, u_line))
+        self.assertAlmostEqual(found.u, math.sqrt(0.02**2 - u_line**2), places=9)  # residual of an equal-weight point: sigma^2 (1 - h)
+
+
 if __name__ == "__main__":
     unittest.main()

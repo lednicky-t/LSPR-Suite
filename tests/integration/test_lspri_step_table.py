@@ -9,6 +9,7 @@ the table; columns follow the steps and the plan bar's title style; the panel sh
 
 from __future__ import annotations
 
+import math
 import sys
 import tempfile
 import unittest
@@ -328,6 +329,60 @@ class StepTableModuleTest(StepTableBase):
             self.assertAlmostEqual(cell.sd, float(np.hypot(water.sd, eg.sd)) / (1.34531 - 1.33300), places=6)
             self.assertTrue(cell.current)
 
+    def test_measured_minus_predicted_is_zero_on_a_two_step_line_for_steps_and_the_difference(self) -> None:
+        """Two steps in the fit: the line passes through both, so each step and their difference (S1 - B1 against S_bulk * dRI) are exactly as predicted."""
+        self._bulk_ready()
+        self._set_pair()
+        self.table.add_compare()
+        self._calculate(rois=(1,))
+        steps = self._refs()[:2]
+        for ref in steps:
+            cell = self.table.roi_cell(1, ref)
+            self.assertAlmostEqual(cell.excess, 0.0, places=6)
+            self.assertAlmostEqual(cell.predicted, cell.mean, places=6)
+            self.assertEqual(cell.excess_note, "")
+        diff = self.table.roi_cell(1, [c for c in self.table.columns() if c.op == "difference"][0].ref)
+        self.assertAlmostEqual(diff.excess, 0.0, places=6)
+        self.assertAlmostEqual(diff.predicted, diff.mean, places=6)
+        bulk = self.table.roi_cell(1, next(c for c in self.table.columns() if c.op == st.OP_BULK).ref)
+        self.assertTrue(math.isnan(bulk.excess) and bulk.excess_note == "")  # the S_bulk column itself has nothing to compare
+
+    def test_the_s_bulk_plot_shows_the_sensorgram_lines_and_the_groups(self) -> None:
+        """The app's wiring (`app_rewrite._wire_bulk_plot`) with the real Sensorgram: opening the plot makes the drawn lines carry their step numbers (the step table on the
+        plot is off), the plot fits them; the All groups choice reads the table module's group rows and offers to calculate them."""
+        from PyQt6.QtWidgets import QMainWindow
+
+        from lspr_imaging_app.panels.sensorgram.bulk_plot import LINES_GROUPS
+
+        self._bulk_ready()
+        main = QMainWindow()
+        app_rewrite._wire_bulk_plot(self.m, main, self.panel, UiStateStore({}), (None,))
+        plot = main.bulk_plot
+        self.m.selection.set_roi_selection({1, 2})
+        self._draw()
+        self.panel.bulk_controls().plot_toggle.setChecked(True)
+        self.assertTrue(plot.isVisible())
+        self.assertTrue(_pump(lambda: len(plot._lines) == 2), plot.status.text())
+        self.assertTrue(all(values is not None and values.fit_sem.ok for _line, values in plot._fits))
+        group_id = self.m.roi_toolbox.create_group("Pair")
+        self.m.roi_toolbox.add_rois_to_group([1, 2], group_id)
+        plot.lines_pick.setCurrentIndex(plot.lines_pick.findData(LINES_GROUPS))
+        self.assertFalse(plot.calculate_button.isHidden())
+        plot.calculate_button.click()
+        self.assertTrue(_pump(lambda: len(plot._lines) == 1 and plot.calculate_button.isHidden()), plot.status.text())
+        plot.close()
+        self.assertFalse(self.panel.bulk_controls().plot_toggle.isChecked())  # the pop-up's check box follows the window
+        main.deleteLater()
+
+    def test_measured_minus_predicted_says_na_and_why(self) -> None:
+        self._bulk_ready()
+        self._calculate(rois=(1,))
+        self.m.experiment_plan.set_label(1, "Glucose_-_ch1F")  # a solution the RI table does not have: step 2 has no RI, and S_bulk is left with one point
+        step1, step2 = self._refs()[:2]
+        self.assertIn("no refractive index for 'Glucose'", self.table.roi_cell(1, step2).excess_note)
+        self.assertIn("no S_bulk", self.table.roi_cell(1, step1).excess_note)
+        self.assertTrue(math.isnan(self.table.roi_cell(1, step1).excess))
+
     def test_the_s_bulk_column_is_empty_without_refractive_indices_and_follows_the_weighting(self) -> None:
         ref = self._bulk_ready()
         self._calculate(rois=(1,))
@@ -477,8 +532,8 @@ class StepTablePanelTest(StepTableBase):
 
     def test_the_display_picker_rows_show_only_the_symbols(self) -> None:
         pick = self.view._step_controls.display_pick
-        self.assertEqual(pick.count(), 5)
-        self.assertEqual([row.text().strip() for row in pick._rows], [""] * 5, "a row says it twice: the symbol and then the word")
+        self.assertEqual(pick.count(), 8)  # mean, SD, both, SEM, mean ± SEM, and since 2026-11-12 the three measured − predicted modes
+        self.assertEqual([row.text().strip() for row in pick._rows], [""] * 8, "a row says it twice: the symbol and then the word")
         self.assertTrue(all(row.icon() and not row.icon().isNull() for row in pick._rows))
         self.assertTrue(all(row.toolTip() for row in pick._rows), "the words went into the tips, which must stay")
 
@@ -737,6 +792,32 @@ class StepTablePanelTest(StepTableBase):
         header.mousePressEvent(press)
         header.mouseReleaseEvent(release)
         return press
+
+    def test_the_excess_displays_show_signed_values_na_and_leave_the_ratio_and_s_bulk_columns_blank(self) -> None:
+        from lspr_imaging_app.panels.roi_table.step_columns import DISPLAY_EXCESS, DISPLAY_EXCESS_U, DISPLAY_EXCESS_Z, NA_TEXT
+        from lspr_imaging_app.plan.refractive_index import RiTable, SolutionRi
+
+        self._show_steps()
+        self.m.experiment_plan.restore_ri_table(RiTable("RIs.txt", "0" * 64, "", 589.3, (SolutionRi("H2O", 1.333), SolutionRi("10perEG", 1.3453))))
+        self.m.experiment_plan.add_to_bulk([0, 1])
+        self.m.experiment_plan.set_role("baseline", 0, 1)
+        self.m.experiment_plan.set_role("signal", 1, 1)
+        self._controls().add_compare_button.click()
+        self._controls().add_compare_button.click()  # the second is the S/N column
+        self._controls().bulk_button.click()
+        kinds = [c.op or "step" for c in self.view._model.step_columns()]
+        self.assertEqual(kinds, ["step", "step", "difference", "snr", "bulk"])
+        self._pick(DISPLAY_EXCESS)
+        first = self._shown(1, COLUMN_COUNT)
+        self.assertRegex(first, r"^[+-]0\.0+$")  # on the line: a signed zero at the table's decimals
+        self.assertEqual((self._shown(1, COLUMN_COUNT + 3), self._shown(1, COLUMN_COUNT + 4)), ("", ""))  # S/N and S_bulk: nothing to predict
+        self._pick(DISPLAY_EXCESS_U)
+        self.assertIn("±", self._shown(1, COLUMN_COUNT + 2))
+        self.m.experiment_plan.set_label(1, "Glucose_-_ch1F")
+        self._pick(DISPLAY_EXCESS_Z)
+        self.assertEqual(self._shown(1, COLUMN_COUNT + 1), NA_TEXT)
+        data = self._controls().export_data()
+        self.assertTrue(any("measured - predicted" in h for h in data.tables["roi_table_steps"].header))
 
     def test_the_s_bulk_button_adds_and_removes_its_column_and_the_cell_shows_the_slope(self) -> None:
         from lspr_imaging_app.panels.roi_table.step_columns import cell_tooltip
