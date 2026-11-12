@@ -230,8 +230,9 @@ class PlanBarControlsTest(unittest.TestCase):
     def test_the_defaults(self) -> None:
         settings = self.controls.settings()
         defaults = bm.PlanBarSettings()
-        for name in ("visible", "position", "height_stop", "alpha", "text_mode", "separators", "text_align", "text_stop"):
+        for name in ("visible", "position", "height_stop", "alpha", "text_mode", "separators", "text_align", "text_stop", "show_ri"):
             self.assertEqual(getattr(settings, name), getattr(defaults, name), name)
+        self.assertFalse(settings.show_ri)  # the refractive index after the text is opt-in
         self.assertGreaterEqual(settings.text_pt, bm.FONT_RANGE[0])
 
     def test_every_control_reports_one_change_and_shows_in_the_settings(self) -> None:
@@ -245,10 +246,11 @@ class PlanBarControlsTest(unittest.TestCase):
         c._separators.editingFinished.emit()
         c._stop.setValue(5)
         c._size.setValue(12)
-        self.assertEqual(self.changes, 8)
+        c._show_ri.setChecked(True)
+        self.assertEqual(self.changes, 9)
         s = c.settings()
-        self.assertEqual((s.visible, s.position, s.height_stop, s.alpha, s.text_mode, s.separators, s.text_stop, s.text_pt),
-                         (False, bm.POSITION_BOTTOM, 7, 0.2, "solution", ("_x_", "_y_"), 5, 12))
+        self.assertEqual((s.visible, s.position, s.height_stop, s.alpha, s.text_mode, s.separators, s.text_stop, s.text_pt, s.show_ri),
+                         (False, bm.POSITION_BOTTOM, 7, 0.2, "solution", ("_x_", "_y_"), 5, 12, True))
 
     def test_top_bottom_is_hidden_while_the_height_is_full_and_keeps_its_choice(self) -> None:
         c = self.controls
@@ -260,10 +262,10 @@ class PlanBarControlsTest(unittest.TestCase):
         c._height.setValue(4)
         self.assertFalse(c._position.isHidden())
 
-    def test_the_four_text_controls_live_in_the_one_step_labels_menu(self) -> None:
+    def test_the_text_controls_live_in_the_one_step_labels_menu(self) -> None:
         c = self.controls
         inside = c._labels.findChildren(QtWidgets.QWidget)  # recursive, and through the menu's own window (isAncestorOf stops at a window)
-        for control in (c._content, c._align, c._stop, c._size):
+        for control in (c._content, c._show_ri, c._align, c._stop, c._size):
             self.assertNotIn(control, c.widgets())
             self.assertIn(control, inside)
         self.assertIn(c._labels, c.widgets())
@@ -326,7 +328,9 @@ class PlanBarControlsTest(unittest.TestCase):
         c._align.setCurrentIndex(c._align.findData(bm.ALIGN_DATA))
         c._stop.setValue(5)
         c._size.setValue(15)
+        c._show_ri.setChecked(True)
         saved = c.settings()
+        self.assertTrue(saved.show_ri)
 
         other_host = QtWidgets.QWidget()
         other = PlanBarControls(other_host)

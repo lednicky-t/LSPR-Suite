@@ -87,6 +87,7 @@ source_modules =
     lspr_imaging_app.shard_crc
     lspr_imaging_app.frame_naming
     lspr_imaging_app.export_stats
+    lspr_imaging_app.analysis.bulk_sensitivity
     lspr_imaging_app.analysis.check_report
     lspr_imaging_app.analysis.export_tables
     lspr_imaging_app.analysis.fit_window

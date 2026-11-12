@@ -141,6 +141,33 @@ class DevicesAndStepsTest(unittest.TestCase):
         self.assertEqual((bar.text, bar.x_start, bar.x_end, bar.levels), ("H2O_--_ch1F", 5.0, 15.0, None))
         self.assertIn("cube 5.0 to cube 15.0", bar.tooltip)
 
+    def test_the_refractive_index_follows_the_text_in_brackets_only_when_asked_and_known(self) -> None:
+        """2026-11-12: `show_ri` writes `text (RI)`; a step whose solution has no RI keeps its text, never an empty `()`; the tooltip keeps the whole note."""
+        plan = ImagingPlan(steps=[
+            ImagingPlanStep(step=1, label="H2O_--_ch1F", start_unix_ms=10_000, end_unix_ms=30_000),
+            ImagingPlanStep(step=2, label="10perEG_-_ch1F", start_unix_ms=30_000, end_unix_ms=50_000),
+        ])
+        steps = apply_edits(plan, PlanEditsState()).steps
+        axis = AxisMap.build(list(range(0, 60_001, 2_000)), [ms / 1000.0 for ms in range(0, 60_001, 2_000)])
+        known = {"H2O": 1.33300}
+        value = lambda step: known.get(step.label.split("_")[0])  # noqa: E731 - the stand-in for the imported table
+
+        def texts(**changes) -> list[str]:
+            return [b.text for b in bm.build_bar_steps(steps, axis, [], text_mode=MODE_SOLUTION, ri_value=value, **changes)]
+
+        self.assertEqual(texts(), ["H2O", "10perEG"])  # off by default
+        self.assertEqual(texts(show_ri=True), ["H2O (1.33300)", "10perEG"])
+        self.assertEqual([b.text for b in bm.build_bar_steps(steps, axis, [], text_mode=MODE_WHOLE, ri_value=value, show_ri=True)], ["H2O_--_ch1F (1.33300)", "10perEG_-_ch1F"])
+        self.assertEqual([b.text for b in bm.build_bar_steps(steps, axis, [], text_mode=MODE_SOLUTION, show_ri=True)], ["H2O", "10perEG"])  # no table: nothing added
+        self.assertNotIn("(1.33300)", bm.build_bar_steps(steps, axis, [], ri_value=value, show_ri=True)[0].tooltip)
+
+    def test_with_ri_rounds_to_five_decimals_and_handles_no_text_and_no_index(self) -> None:
+        self.assertEqual(bm.with_ri("H2O", 1.333), "H2O (1.33300)")
+        self.assertEqual(bm.with_ri("H2O", 1.3326849), "H2O (1.33268)")
+        self.assertEqual(bm.with_ri("", 1.333), "(1.33300)")
+        self.assertEqual(bm.with_ri("H2O", None), "H2O")
+        self.assertEqual(bm.with_ri("", None), "")
+
 
 def _bars(*ranges) -> list[bm.PlanBarStep]:
     return [bm.PlanBarStep(index=i, x_start=a, x_end=b, text="", color="#ffffff", tooltip="", levels=None) for i, (a, b) in enumerate(ranges)]

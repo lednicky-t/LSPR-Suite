@@ -35,6 +35,7 @@ try:
     from lspr_imaging_app import app_rewrite
     from lspr_imaging_app.analysis import scan_trace
     from lspr_imaging_app.analysis import step_stats
+    from lspr_imaging_app.analysis import step_table as st
     from lspr_imaging_app.analysis.scan_trace import DISPLAY_BY_GROUP
     from lspr_imaging_app.analysis.step_table import UNGROUPED, GroupMembers
     from lspr_imaging_app.selection.step_table_module import StepTableModule
@@ -299,6 +300,47 @@ class StepTableModuleTest(StepTableBase):
             self.assertAlmostEqual(cell.sd, (signal.sd**2 + base.sd**2) ** 0.5, places=9)
             self.assertEqual(cell.n, min(base.n, signal.n))
             self.assertTrue(cell.current)
+
+    # -- the S_bulk column (2026-11-12) ---------------------------------------------------------------------------------------------
+
+    def _bulk_ready(self, *, ri=(1.33300, 1.34531), std=(None, None)) -> object:
+        from lspr_imaging_app.plan.refractive_index import RiTable, SolutionRi
+
+        table = RiTable("RIs.txt", "0" * 64, "2026-11-12T00:00:00+00:00", 589.3, (SolutionRi("H2O", ri[0], std[0]), SolutionRi("10perEG", ri[1], std[1])))
+        self.m.experiment_plan.restore_ri_table(table)
+        self.m.experiment_plan.add_to_bulk([0, 1])
+        self.table.set_bulk_shown(True)
+        return next(c for c in self.table.columns() if c.op == st.OP_BULK).ref
+
+    def test_the_s_bulk_column_is_the_slope_of_the_two_step_means_against_their_refractive_indices(self) -> None:
+        ref = self._bulk_ready()
+        self.assertEqual(sum(c.op == st.OP_BULK for c in self.table.columns()), 1)
+        self.table.set_bulk_shown(True)  # one at most
+        self.assertEqual(sum(c.op == st.OP_BULK for c in self.table.columns()), 1)
+        self._calculate(rois=(1, 2))
+        steps = self._refs()[:2]
+        for roi in (1, 2):
+            water, eg = self.table.roi_cell(roi, steps[0]), self.table.roi_cell(roi, steps[1])
+            cell = self.table.roi_cell(roi, ref)
+            self.assertAlmostEqual(cell.mean, (eg.mean - water.mean) / (1.34531 - 1.33300), places=6)
+            # two points: no scatter check, the uncertainty is the two SEMs (SDs) carried into the slope
+            self.assertAlmostEqual(cell.sem, float(np.hypot(water.sem, eg.sem)) / (1.34531 - 1.33300), places=6)
+            self.assertAlmostEqual(cell.sd, float(np.hypot(water.sd, eg.sd)) / (1.34531 - 1.33300), places=6)
+            self.assertTrue(cell.current)
+
+    def test_the_s_bulk_column_is_empty_without_refractive_indices_and_follows_the_weighting(self) -> None:
+        ref = self._bulk_ready()
+        self._calculate(rois=(1,))
+        weighted = self.table.roi_cell(1, ref)
+        changes: list[int] = []
+        self.table.numbers_changed.connect(lambda: changes.append(1))
+        self.table.set_bulk_weighting("equal")
+        self.assertTrue(changes)
+        self.assertAlmostEqual(self.table.roi_cell(1, ref).mean, weighted.mean, places=9)  # two points: the same line whatever the weights
+        self.m.experiment_plan.restore_ri_table(None)
+        self.assertIsNone(self.table.roi_cell(1, ref))
+        self.table.set_bulk_shown(False)
+        self.assertFalse(any(c.op == st.OP_BULK for c in self.table.columns()))
 
     def test_a_group_has_a_comparison_value_too(self) -> None:
         self._set_pair()
@@ -695,6 +737,29 @@ class StepTablePanelTest(StepTableBase):
         header.mousePressEvent(press)
         header.mouseReleaseEvent(release)
         return press
+
+    def test_the_s_bulk_button_adds_and_removes_its_column_and_the_cell_shows_the_slope(self) -> None:
+        from lspr_imaging_app.panels.roi_table.step_columns import cell_tooltip
+        from lspr_imaging_app.plan.refractive_index import RiTable, SolutionRi
+
+        self._show_steps()
+        self.m.experiment_plan.restore_ri_table(RiTable("RIs.txt", "0" * 64, "", 589.3, (SolutionRi("H2O", 1.333), SolutionRi("10perEG", 1.3453))))
+        self.m.experiment_plan.add_to_bulk([0, 1])
+        button = self._controls().bulk_button
+        self.assertFalse(button.isHidden())
+        button.click()
+        self.assertTrue(button.isChecked())
+        column = self.view._model.step_columns()[-1]
+        self.assertEqual((column.title, column.unit, column.op), ("S_bulk", "nm/RIU", st.OP_BULK))
+        self._pick(DISPLAY_MEAN)
+        cell = self.table.roi_cell(1, column.ref)
+        self.assertEqual(self._shown(1, COLUMN_COUNT + 2), f"{cell.mean:.1f}")
+        tip = cell_tooltip("ROI 1", column, cell, is_group=False)
+        self.assertIn("S_bulk", tip)
+        self.assertIn("two steps", tip)
+        button.click()
+        self.assertFalse(any(c.op == st.OP_BULK for c in self.view._model.step_columns()))
+        self.assertFalse(button.isChecked())
 
     def test_the_add_button_makes_a_comparison_column_that_shows_the_difference_and_its_sd(self) -> None:
         self._show_steps()

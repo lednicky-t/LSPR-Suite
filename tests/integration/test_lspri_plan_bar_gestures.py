@@ -650,7 +650,7 @@ class PlanBarActionsTest(unittest.TestCase):
         _menu, actions = self._actions_of(0)
         self.assertEqual(
             list(actions)[5:],
-            ["Reset all steps", "Remove step", "Add step", "Unify selected steps", "Restore removed steps", "Use as"],
+            ["Reset all steps", "Remove step", "Add step", "Unify selected steps", "Restore removed steps", "Use as", "Use for S_bulk (Sb)"],
         )
         self.assertFalse(actions["Unify selected steps"].isEnabled())  # one step is nothing to unify
         self.assertFalse(actions["Restore removed steps"].isEnabled())
@@ -747,6 +747,23 @@ class PlanBarActionsTest(unittest.TestCase):
         self.assertEqual(self._pair_titles(0), ["Pair 1 (B1 / S1)", "Pair 2 (B2 / S2)", "New pair 3 (B3 / S3)"])
         undo_manager.undo()  # S2 gone again: pair 3 is not offered any more
         self.assertEqual(self._pair_titles(0), ["Pair 1 (B1 / S1)", "Pair 2 (B2 / S2)"])
+
+    def test_use_for_s_bulk_takes_the_whole_selection_and_takes_it_out_again(self) -> None:
+        """Unlike the pair roles, the S_bulk set takes several steps at once (2026-11-12)."""
+        self.plot.plan_bar().select_many((0, 1), anchor=0)
+        menu, actions = self._actions_of(0)
+        self._menus.append(menu)
+        item = actions["Use for S_bulk (Sb)"]
+        self.assertTrue(item.isEnabled())
+        self.assertFalse(item.isChecked())
+        item.trigger()
+        self.assertEqual([s.order for s in self.module.bulk_steps()], [1, 2])
+        self.assertEqual(undo_manager.undo_label, "Use for S_bulk")
+        menu, actions = self._actions_of(0)
+        self._menus.append(menu)
+        self.assertTrue(actions["Use for S_bulk (Sb)"].isChecked())
+        actions["Use for S_bulk (Sb)"].trigger()  # all in: the item takes them out
+        self.assertEqual(self.module.bulk_steps(), ())
 
     def test_the_roles_are_for_one_step_so_use_as_is_greyed_out_for_a_selection(self) -> None:
         self.plot.plan_bar().select_many((0, 1), anchor=0)
