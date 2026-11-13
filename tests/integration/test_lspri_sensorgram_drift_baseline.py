@@ -1,5 +1,5 @@
 """The Sensorgram's drift baseline in the panel (2026-11-09, anchor points only): the Baseline group's controls, the dashed curve while Subtract is off,
-adding and removing points in the edit mode, the Anchors menu, per-ROI points following a ROI renumber, the anchor marks and the plan bar lock.
+adding and removing points in the edit mode, the anchor tools (the Anchors drop-down until 2026-11-13), per-ROI points following a ROI renumber, the anchor marks and the plan bar lock.
 
 Real modules and a real scan on the small two-step dataset of `test_lspri_plan_bar` (6 cubes; steps = cubes 0-2 "H2O_--_ch1F" and 3-5 "10perEG_-_ch1F").
 Driven through methods and signals, never by screen coordinate."""
@@ -94,25 +94,56 @@ class DriftBaselinePanelTest(unittest.TestCase):
     def _lines(self):
         return self.panel._last[1]
 
-    def _menu_texts(self) -> list[str]:
-        menu = QMenu()
-        self.drift.fill_anchor_menu(menu)
-        return [a.text() for a in menu.actions() if not a.isSeparator()] + [label.text() for label in menu.findChildren(QLabel)]
+    def _fit_notes(self) -> str:
+        """What the last fit said: the tool tip of the anchor tools' number of points (there is no text list in the tools any more)."""
+        return self.drift.tools.count.toolTip()
 
     def test_the_controls_sit_in_the_baseline_group_and_follow_the_method(self) -> None:
         self.assertEqual(self.drift.method.currentData(), METHOD_WINDOW)  # a new session keeps the method it always had
-        for widget in (self.drift.shape, self.drift.anchors, self.drift.edit):
+        for widget in (self.drift.shape, self.drift.tools, self.drift.edit):
             self.assertTrue(widget.isHidden())
         self.assertFalse(self.panel._band_menu.isHidden())
         self.drift.method.setCurrentIndex(self.drift.method.findData(METHOD_ANCHORS))
         self._settle()
         self.assertEqual(self.m.analysis_settings.statistics_settings().baseline_method, METHOD_ANCHORS)
-        for widget in (self.drift.shape, self.drift.anchors, self.drift.edit):
+        for widget in (self.drift.shape, self.drift.edit):
             self.assertFalse(widget.isHidden())
+        self.assertTrue(self.drift.tools.isHidden())  # the anchor tools roll out only while the pencil is on
         self.assertTrue(self.panel._band_menu.isHidden())
         self.assertFalse(hasattr(self.drift, "settle"))  # no step anchors any more: no settled-tail box
-        self.assertEqual(self.drift.anchors.text(), "0")  # beside the anchor icon
-        self.assertFalse(self.drift.anchors.icon().isNull())
+        self.assertFalse(hasattr(self.drift, "anchors"))  # the Anchors drop-down is gone (2026-11-13)
+        self.assertEqual(self.drift.tools.count.text(), "0")  # beside the anchor icon
+
+    def test_the_anchor_tools_roll_out_with_the_pencil_and_go_when_it_is_off_or_the_method_changes(self) -> None:
+        """Maintainer, 2026-11-13: the Anchors drop-down became tools that stay in view exactly while the edit is on."""
+        self._set(baseline_method=METHOD_ANCHORS)
+        tools = self.drift.tools
+        self.assertTrue(tools.isHidden())
+        self.drift.edit.setChecked(True)
+        self.assertFalse(tools.isHidden())
+        self.assertIs(tools.parentWidget(), self.drift.edit.parentWidget())  # in the Baseline group's row, beside the pencil
+        self.drift.add_point_at(self._x_of(2))  # editing does not close them: no menu to dismiss
+        self._settle()
+        self.assertFalse(tools.isHidden())
+        self.assertEqual(tools.count.text(), "1")
+        self.drift.edit.setChecked(False)
+        self.assertTrue(tools.isHidden())
+        self.drift.edit.setChecked(True)
+        self.assertFalse(tools.isHidden())
+        self._set(baseline_method=METHOD_WINDOW)  # the window method has no anchor points: the pencil goes off and so do the tools
+        self.assertFalse(self.drift.edit.isChecked())
+        self.assertTrue(tools.isHidden())
+
+    def test_the_tools_hold_no_text_list_of_the_points(self) -> None:
+        """Maintainer, 2026-11-13: the dim text that listed the anchor points is gone; the only text left is the number."""
+        self._set(baseline_method=METHOD_ANCHORS)
+        self.drift.add_point_at(self._x_of(1))
+        self.drift.set_point_scope("shown")
+        self.drift.add_point_at(self._x_of(4))
+        self._settle()
+        labels = [label.text() for label in self.drift.tools.findChildren(QLabel) if label.text()]
+        self.assertEqual(labels, ["2"])
+        self.assertEqual([a for a in self.drift.tools.findChildren(QToolButton) if a.text()], [])
 
     def test_the_window_method_has_a_pencil_that_shows_the_baseline_band(self) -> None:
         """2026-11-09: the window baseline got an edit pencil like the anchors; it is the band's show / hide, so the band menu has no toggle of its own."""
@@ -136,8 +167,8 @@ class DriftBaselinePanelTest(unittest.TestCase):
         self._settle()
         for line in self._lines():
             self.assertIn("linear needs 2", line.baseline_note)
-        self.assertTrue(any("linear needs 2" in t for t in self._menu_texts()))
-        self.assertEqual(self.drift.anchors.text(), "1")
+        self.assertIn("linear needs 2", self._fit_notes())  # the number's tool tip carries what the fit said
+        self.assertEqual(self.drift.tools.count.text(), "1")
 
     def test_constant_subtracts_and_the_dashed_curve_shows_while_subtract_is_off(self) -> None:
         self._set(baseline_method=METHOD_ANCHORS, baseline_shape="constant", baseline_point_halfwidth=1)
@@ -296,23 +327,117 @@ class DriftBaselinePanelTest(unittest.TestCase):
         act("Stop editing anchor points")
         self.assertFalse(self.drift.edit.isChecked())
 
-    def test_the_menu_is_one_row_of_icons_for_scope_width_and_clear(self) -> None:
+    def test_the_tools_are_one_row_of_icons_for_scope_width_and_clear(self) -> None:
         self._set(baseline_method=METHOD_ANCHORS)
         self.drift.add_point_at(self._x_of(2))
-        menu = QMenu()
-        self.drift.fill_anchor_menu(menu)
-        self.assertEqual(len(menu.actions()), 1)  # one compact row, no text entries
-        scope_all = menu.findChild(QToolButton, "anchor_scope_all")
-        scope_shown = menu.findChild(QToolButton, "anchor_scope_shown")
+        tools = self.drift.tools
+        scope_all = tools.findChild(QToolButton, "anchor_scope_all")
+        scope_shown = tools.findChild(QToolButton, "anchor_scope_shown")
         self.assertTrue(scope_all.isChecked() and not scope_shown.isChecked())
         self.assertFalse(scope_all.icon().isNull())
         scope_shown.click()
         self.assertEqual(self.drift.point_scope, "shown")
         self.assertTrue(scope_shown.isChecked() and not scope_all.isChecked())
-        menu.findChild(QSpinBox, "anchor_halfwidth").setValue(4)
+        tools.findChild(QSpinBox, "anchor_halfwidth").setValue(4)
         self.assertEqual(self.m.analysis_settings.statistics_settings().baseline_point_halfwidth, 4)
-        menu.findChild(QToolButton, "anchor_clear").click()
+        self._settle()
+        self.assertEqual(tools.findChild(QSpinBox, "anchor_halfwidth").value(), 4)  # the redraw's sync leaves the typed value alone
+        clear = tools.findChild(QToolButton, "anchor_clear")
+        self.assertTrue(clear.isEnabled())
+        clear.click()
         self.assertEqual(self.m.analysis_settings.statistics_settings().baseline_anchor_points, ())
+        self._settle()
+        self.assertFalse(clear.isEnabled())  # nothing to clear
+        self.assertEqual(tools.count.text(), "0")
+
+    def test_the_tools_follow_a_scope_set_by_code_as_when_it_is_restored_at_start_up(self) -> None:
+        self._set(baseline_method=METHOD_ANCHORS)
+        self.drift.set_point_scope("shown")
+        self.assertTrue(self.drift.tools.findChild(QToolButton, "anchor_scope_shown").isChecked())
+        self.drift.set_point_scope("all")
+        self.assertTrue(self.drift.tools.findChild(QToolButton, "anchor_scope_all").isChecked())
+
+    # -- handing the selected lines' points on to every ROI (2026-11-13) ----------------------------------------------------------
+
+    def _points(self):
+        return self.m.analysis_settings.statistics_settings().baseline_anchor_points
+
+    def _share_button(self) -> QToolButton:
+        button = self.drift.tools.findChild(QToolButton, "anchor_share")
+        self.assertIsNotNone(button)
+        return button
+
+    def test_the_share_button_hands_the_selected_lines_points_to_every_roi(self) -> None:
+        """The maintainer's report: points placed with "lines shown only" stay with those lines, and switching to "all ROIs" later does not change that,
+        so the other lines had no anchors. The share button makes the selected lines' own points shared."""
+        self._set(baseline_method=METHOD_ANCHORS, baseline_shape="linear", baseline_enabled=True, baseline_point_halfwidth=0)
+        self.m.selection.set_roi_selection({1})
+        self._settle()
+        self.drift.set_point_scope("shown")
+        first, last = self.drift.add_point_at(self._x_of(0)), self.drift.add_point_at(self._x_of(5))
+        self.drift.set_point_scope("all")  # governs new points only: ROI 1's two stay its own
+        self.assertEqual(self._points(), ((1, first), (1, last)))
+        self.m.selection.set_roi_selection({2})
+        self._settle()
+        self.assertIn("no anchors", self._lines()[0].baseline_note)  # ROI 2 sees none of them
+        self.assertFalse(self._share_button().isEnabled())  # and ROI 2 has none to hand on
+
+        self.m.selection.set_roi_selection({1})
+        self._settle()
+        said: list[str] = []
+        self.drift.say = said.append
+        button = self._share_button()
+        self.assertFalse(button.icon().isNull())
+        self.assertTrue(button.isEnabled())
+        self.assertNotIn("Nothing to apply", button.toolTip())
+        button.click()
+        self.assertEqual(self._points(), ((0, first), (0, last)))  # one shared point per cube; no own copy left behind
+        self.assertEqual(len(said), 1)
+        self.assertIn("2 anchor points", said[0])
+
+        self.m.selection.set_roi_selection({2})
+        self._settle()
+        self.assertEqual(self._lines()[0].baseline_note, "")  # ROI 2 is corrected with them now
+        self.assertAlmostEqual(float(self._lines()[0].y[0]), 0.0, places=9)  # a line through its two anchors: zero at both
+        self.assertAlmostEqual(float(self._lines()[0].y[5]), 0.0, places=9)
+        button = self._share_button()
+        self.assertFalse(button.isEnabled())  # nothing own left to hand on
+        self.assertIn("Nothing to apply", button.toolTip())  # and the tool tip says why
+
+    def test_sharing_keeps_the_other_rois_own_points_at_other_cubes(self) -> None:
+        self._set(baseline_method=METHOD_ANCHORS, baseline_point_halfwidth=0)
+        self.drift.set_point_scope("shown")
+        self.m.selection.set_roi_selection({2})
+        self._settle()
+        mine = self.drift.add_point_at(self._x_of(4))
+        self.m.selection.set_roi_selection({1})
+        self._settle()
+        theirs = self.drift.add_point_at(self._x_of(1))
+        self.assertEqual(self._points(), ((1, theirs), (2, mine)))  # the settings keep the pairs sorted
+        self.assertEqual(self.drift.share_points_of_shown(), 1)  # ROI 1's one point
+        self.assertEqual(self._points(), ((0, theirs), (2, mine)))  # ROI 2 keeps its own and gets ROI 1's
+        self.assertEqual(self.drift.share_points_of_shown(), 0)  # nothing own left among the lines shown: nothing changes
+        self.assertEqual(self._points(), ((0, theirs), (2, mine)))
+
+    def test_the_anchor_context_menu_has_the_share_entry_too(self) -> None:
+        self._set(baseline_method=METHOD_ANCHORS, baseline_point_halfwidth=0)
+        self.m.selection.set_roi_selection({1})
+        self._settle()
+        self.drift.set_point_scope("shown")
+        cube = self.drift.add_point_at(self._x_of(2))
+        text = "Apply the lines' anchor points to all ROIs"
+
+        def entry() -> object:
+            menu = QMenu()
+            self.drift.fill_context_menu(menu, self._x_of(3))
+            self._keep_menu = menu
+            return next(a for a in menu.actions() if a.text() == text)
+
+        self.assertFalse(entry().icon().isNull())
+        self.assertTrue(entry().isEnabled())
+        entry().trigger()
+        self.assertEqual(self._points(), ((0, cube),))
+        self.assertFalse(entry().isEnabled())
 
 
     # -- anchor marks and the plan bar during the edit mode ---------------------------------------------------------------------

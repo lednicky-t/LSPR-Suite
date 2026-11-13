@@ -32,6 +32,31 @@ def _settings(**changes) -> bm.PlanBarSettings:
     return bm.PlanBarSettings(**changes)
 
 
+class RolesPlaceTest(unittest.TestCase):
+    """The Evaluation menu's dice (2026-11-13): five places, each an (edge, side) of the plan bar's settings."""
+
+    def test_the_five_places_are_the_four_corners_and_the_middle(self) -> None:
+        self.assertEqual(
+            bm.ROLES_PLACES,
+            {
+                "top-left": (bm.POSITION_TOP, bm.SIDE_LEFT), "top-right": (bm.POSITION_TOP, bm.SIDE_RIGHT), "auto": (bm.ROLES_AUTO, bm.SIDE_LEFT),
+                "bottom-left": (bm.POSITION_BOTTOM, bm.SIDE_LEFT), "bottom-right": (bm.POSITION_BOTTOM, bm.SIDE_RIGHT),
+            },
+        )
+        self.assertEqual(len(set(bm.ROLES_PLACES.values())), 5)  # no two places are the same
+
+    def test_the_middle_is_exactly_the_default_of_the_settings(self) -> None:
+        """So a session that never touched the Evaluation menu draws its chips where they always were."""
+        default = bm.PlanBarSettings()
+        self.assertEqual((default.roles_edge, default.roles_side), bm.ROLES_PLACES[bm.PLACE_AUTO])
+        self.assertTrue(default.show_roles)
+
+    def test_a_place_and_its_edge_and_side_go_both_ways(self) -> None:
+        for place, (edge, side) in bm.ROLES_PLACES.items():
+            self.assertEqual(bm.roles_place_of(edge, side), place)
+        self.assertEqual(bm.roles_place_of(bm.ROLES_AUTO, bm.SIDE_RIGHT), bm.PLACE_AUTO)  # auto at the right end is not a place of its own: the middle
+
+
 class SettingsTest(unittest.TestCase):
     def test_height_is_a_percentage_up_to_ten_then_full(self) -> None:
         self.assertEqual(_settings(height_stop=1).height_fraction, 0.01)

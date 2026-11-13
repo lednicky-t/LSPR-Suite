@@ -707,10 +707,9 @@ class SensorgramPanelTests(unittest.TestCase):
         self.assertGreater(high, float(np.max(y + 2.0)))
 
     def test_the_control_row_is_a_ribbon_that_does_not_set_the_panels_width(self) -> None:
-        self.assertEqual([label.text() for label in self.panel._ribbon._captions], ["Live", "Statistic", "Smoothing", "Baseline", "View", "Export"])  # the Plot tab
-        self.assertEqual(
-            [label.text() for label in self.panel._plan_ribbon._captions], ["View steps", "View stats", "Edit", "Evaluation", "Checks"]
-        )  # the Experimental plan tab (the Edit group and the new names: 2026-11-10; Edit right of the two View groups)
+        self.assertEqual([label.text() for label in self.panel._ribbon._captions], ["Live", "Statistic", "Smoothing", "Baseline", "Export"])  # the Plot tab (its View group moved to the View tab: 2026-11-13)
+        self.assertEqual([label.text() for label in self.panel._view_ribbon._captions], ["Show", "Points & lines", "Legend", "Steps", "Evaluation", "Stats"])  # the View tab
+        self.assertEqual([label.text() for label in self.panel._plan_ribbon._captions], ["Edit", "Evaluation", "Checks"])  # the Experimental plan tab
         self.assertLess(self.panel.minimumSizeHint().width(), 250)  # it was ~960 px before the row could scroll
 
     # -- mask marks ------------------------------------------------------------------------------------------------------------------

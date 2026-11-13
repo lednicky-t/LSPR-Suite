@@ -262,13 +262,25 @@ class PlanBarControlsTest(unittest.TestCase):
         c._height.setValue(4)
         self.assertFalse(c._position.isHidden())
 
-    def test_the_text_controls_live_in_the_one_step_labels_menu(self) -> None:
+    def test_every_control_lives_in_the_one_steps_menu(self) -> None:
+        """2026-11-13: the plan bar's fields and its "Step labels" pop-up became one menu, like the Legend menu."""
         c = self.controls
-        inside = c._labels.findChildren(QtWidgets.QWidget)  # recursive, and through the menu's own window (isAncestorOf stops at a window)
-        for control in (c._content, c._show_ri, c._align, c._stop, c._size):
-            self.assertNotIn(control, c.widgets())
+        self.assertEqual(c.widgets(), (c.menu,))  # the ribbon shows one icon
+        inside = c.menu.findChildren(QtWidgets.QWidget)  # recursive, and through the menu's own window (isAncestorOf stops at a window)
+        for control in (c._show, c._height, c._position, c._alpha, c._content, c._show_ri, c._align, c._stop, c._size):
             self.assertIn(control, inside)
-        self.assertIn(c._labels, c.widgets())
+        self.assertFalse(c.menu.icon().isNull())
+        captions = [label.text() for label in c.menu.findChildren(QtWidgets.QLabel) if label.text()]
+        self.assertEqual(captions[:5], ["Show", "Height", "Edge", "Transparency", "Step labels"])  # the labels are a heading of the same panel
+
+    def test_the_edge_row_goes_with_its_caption_while_the_bar_is_full(self) -> None:
+        c = self.controls
+        caption = next(label for label in c.menu.findChildren(QtWidgets.QLabel) if label.text() == "Edge")
+        self.assertFalse(caption.isHidden())
+        c._height.setValue(bm.HEIGHT_FULL)
+        self.assertTrue(caption.isHidden())  # not a caption without its control
+        c._height.setValue(4)
+        self.assertFalse(caption.isHidden())
 
     def test_the_height_box_has_one_more_stop_that_reads_full(self) -> None:
         box = self.controls._height
@@ -700,11 +712,12 @@ class PlanBarPanelTest(unittest.TestCase):
 
     # -- the Experimental plan tab, the Evaluation pickers and the structure tools (2026-10-29) ------------------------------------------
 
-    def test_the_control_row_has_a_plot_tab_and_an_experimental_plan_tab(self) -> None:
+    def test_the_control_row_has_a_plot_tab_a_view_tab_and_an_experimental_plan_tab(self) -> None:
         tabs = self.panel._ribbon_tabs
-        self.assertEqual(tabs._category_names, ["Plot", "Experimental plan"])
+        self.assertEqual(tabs._category_names, ["Plot", "View", "Experimental plan"])  # the View tab: 2026-11-13
         self.assertEqual(self.panel.current_ribbon_tab(), "Plot")  # the first one is shown at the start
-        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["View steps", "View stats", "Edit", "Evaluation", "Checks"])  # 2026-11-10
+        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["Edit", "Evaluation", "Checks"])  # the two View groups moved to the View tab (2026-11-13)
+        self.assertEqual([c.text() for c in self.panel._view_ribbon._captions], ["Show", "Points & lines", "Legend", "Steps", "Evaluation", "Stats"])  # "View steps" / "View stats" until 2026-11-13; Evaluation the same day
 
     def test_the_structure_tools_are_live_only_while_the_experimental_plan_tab_is_shown(self) -> None:
         self._open_scan_and_draw()

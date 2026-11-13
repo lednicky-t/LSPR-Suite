@@ -192,6 +192,35 @@ class AnchorPointsTest(unittest.TestCase):
         regions = bd.regions_by_roi((1, 3), CUBES, points, 1)
         self.assertEqual((len(regions[1]), len(regions[3])), (2, 3))
 
+    def test_sharing_turns_the_own_points_of_some_rois_into_shared_points(self) -> None:
+        """2026-11-13: the own points of the selected lines go to every ROI; nothing any ROI used is lost, and a cube is kept in one place only."""
+        points = ((0, 120), (2, 180), (3, 150), (2, 120))  # ROI 2 keeps 180 and 120 for itself, and 120 is shared as well
+        shared = bd.share_points(points, [2])
+        self.assertEqual(shared, ((0, 120), (3, 150), (0, 180)))  # 180 is shared now; ROI 2's own 120 would only repeat the shared one
+        for roi in (1, 2, 3, 4):
+            before, after = set(bd.points_for(roi, points)), set(bd.points_for(roi, shared))
+            self.assertLessEqual(before, after, f"ROI {roi} lost a point")  # nothing a ROI used is lost
+            self.assertLessEqual(after - before, {120, 180}, f"ROI {roi} got a point that was not ROI 2's")  # only ROI 2's cubes were handed on
+        self.assertEqual(bd.points_for(1, shared), (120, 180))  # a ROI that had only the shared ones now has ROI 2's too
+        self.assertEqual(bd.points_for(3, shared), (120, 150, 180))  # and keeps its own 150
+
+    def test_sharing_leaves_another_rois_own_copy_of_the_cube_out_so_removing_the_shared_one_removes_it_for_all(self) -> None:
+        shared = bd.share_points(((2, 180), (3, 180), (3, 150)), [2])
+        self.assertEqual(shared, ((3, 150), (0, 180)))
+        self.assertEqual(bd.points_for(3, shared), (150, 180))  # ROI 3 sees the same cubes as before
+
+    def test_sharing_several_rois_hands_on_the_union_of_their_own_points_each_once(self) -> None:
+        shared = bd.share_points(((1, 130), (2, 130), (2, 110), (0, 190)), [1, 2])
+        self.assertEqual(shared, ((0, 190), (0, 110), (0, 130)))  # kept points first, new shared ones in cube order, 130 once
+
+    def test_sharing_without_own_points_among_the_rois_changes_nothing(self) -> None:
+        points = ((0, 120), (3, 150))
+        self.assertEqual(bd.share_points(points, [1, 2]), points)  # the ROIs keep nothing of their own
+        self.assertEqual(bd.share_points(points, []), points)  # none selected
+        self.assertEqual(bd.share_points(points, [bd.ALL_ROIS]), points)  # "shared" is not a ROI whose points could be handed on
+        self.assertEqual(bd.share_points((), [1]), ())
+        self.assertEqual(bd.share_points([[0, 120], [3, 150]], [1]), points)  # lists (a loaded session) come back as tuples of ints
+
 
 class ApplyStatisticsTest(unittest.TestCase):
     def setUp(self) -> None:
