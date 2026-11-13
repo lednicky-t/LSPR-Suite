@@ -18,7 +18,7 @@ import numpy as np
 import tifffile
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import QPointF, QRectF
-from PyQt6.QtGui import QTransform
+from PyQt6.QtGui import QFontMetricsF, QTransform
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
 
@@ -142,14 +142,30 @@ class PlanBarItemTest(unittest.TestCase):
         self.assertEqual(first.right_edge, 260.0)
         self.assertIsNone(second.right_edge)
 
-    def test_text_is_dropped_when_the_bar_is_too_narrow_or_too_low(self) -> None:
+    def test_text_is_dropped_when_the_bar_is_too_narrow_but_a_low_bar_grows_to_keep_it(self) -> None:
         self._show([_step(0, 0, 0.3)], height_stop=10)
         to_device = QTransform(60.0, 0.0, 0.0, -2.0, 20.0, 220.0)
         drawn = self.bar.layout(to_device, QRectF(0.0, 0.0, 10.0, 100.0))
         self.assertEqual((drawn[0].text, drawn[0].text_rect), ("", None))  # 18 px wide: under the 40 px limit
-        self._show([_step(0, 0, 8)], height_stop=1, text_pt=12)  # a 2 px strip cannot hold a line of text in the Bar mode
+        # Maintainer, 2026-11-13: "when the bar is reduced to 5 % or less the step name disappears; I would like the text to keep there". A 1 % bar (2 px here) used to drop its
+        # text; now the strip is never lower than one line of text with its padding, and the text sits inside it.
+        self._show([_step(0, 0, 8)], height_stop=1, text_pt=12)
         drawn = self.bar.layout(to_device, QRectF(0.0, 0.0, 10.0, 100.0))
-        self.assertIsNone(drawn[0].text_rect)
+        text_height = QFontMetricsF(self.bar.font()).height()
+        self.assertIsNotNone(drawn[0].text_rect)
+        self.assertAlmostEqual(drawn[0].rect.height(), text_height + 2 * bm.BAR_TEXT_PADDING_PX, delta=1e-6)  # the strip grew to hold its line
+        self.assertGreaterEqual(drawn[0].text_rect.top(), drawn[0].rect.top())
+        self.assertLessEqual(drawn[0].text_rect.bottom(), drawn[0].rect.bottom())  # inside it, at every stop below
+        for stop in (1, 2, 3, 4, 5):
+            self._show([_step(0, 0, 8)], height_stop=1, text_pt=12, text_stop=stop)
+            text_rect = self.bar.layout(to_device, QRectF(0.0, 0.0, 10.0, 100.0))[0].text_rect
+            self.assertIsNotNone(text_rect, f"stop {stop}")
+
+    def test_the_bars_height_is_the_chosen_percentage_unless_that_is_lower_than_its_text(self) -> None:
+        settings = bm.PlanBarSettings(height_stop=5)
+        self.assertEqual(settings.strip_height_px(400.0, 10.0), 20.0)  # 5 % of 400 px holds a 10 px line with its padding (14 px): the percentage
+        self.assertEqual(settings.strip_height_px(200.0, 16.0), 16.0 + 2 * bm.BAR_TEXT_PADDING_PX)  # 5 % of 200 px is 10 px: raised to hold a 16 px line
+        self.assertEqual(bm.PlanBarSettings(height_stop=bm.HEIGHT_FULL).strip_height_px(300.0, 16.0), 300.0)  # a full bar is the whole plot
 
     def test_data_mode_puts_the_label_next_to_the_traces_of_the_step(self) -> None:
         levels = bm.SectionLevels(low=20.0, median=30.0, high=40.0)

@@ -15,9 +15,11 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+from unittest.mock import patch
+
 from PyQt6 import QtWidgets
 from PyQt6.QtCore import QCoreApplication, QEvent, QRectF
-from PyQt6.QtGui import QColor, QFontMetricsF, QImage
+from PyQt6.QtGui import QColor, QFontMetricsF, QImage, QTransform
 from PyQt6.QtWidgets import QToolButton
 
 from lspr_ui import get_active_theme
@@ -47,6 +49,7 @@ try:
     from lspr_imaging_app.analysis.settings import MetricSettings, StatisticsSettings
     from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
     from lspr_imaging_app.panels.sensorgram import plot as plot_module
+    from lspr_imaging_app.panels.sensorgram import view_controls as view_controls_module
     from lspr_imaging_app.panels.sensorgram.curve_smoothing import SUBDIVISIONS, smooth_line, smooth_run
     from lspr_imaging_app.panels.sensorgram.group_menu import PICTURE_CHOICE_PX, icon_choice_buttons
     from lspr_imaging_app.panels.sensorgram.line_icons import joint_picture, lines_toggle_icon, points_lines_icon, points_toggle_icon
@@ -56,6 +59,7 @@ try:
     from lspr_imaging_app.panels.sensorgram.plan_bar import DrawnStep, PlanBarItem
     from lspr_imaging_app.panels.sensorgram.plot import SensorgramPlot
     from lspr_imaging_app.panels.sensorgram.view_settings import (
+        DOTS_MAX_LINES_RANGE,
         LEGEND_SPACING_RANGE,
         LEGEND_TEXT_RANGE,
         LINE_WIDTH_RANGE,
@@ -65,7 +69,7 @@ try:
     )
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.plan import role_colors
-    from lspr_imaging_app.plan.bar_model import HEIGHT_FULL, POSITION_BOTTOM, POSITION_TOP, PlanBarSettings, PlanBarStep, SectionLevels
+    from lspr_imaging_app.plan.bar_model import ALIGN_BAR, ALIGN_DATA, HEIGHT_FULL, POSITION_BOTTOM, POSITION_TOP, PlanBarSettings, PlanBarStep, SectionLevels
     from lspr_imaging_app.plan.stats_table import StatsLine, StatsTableSettings, build_stats_table
     from lspr_imaging_app.selection.cube_display_module import MODE_CUBE
     from lspr_imaging_app.undo import undo_manager
@@ -91,6 +95,12 @@ def _averages(n: int) -> list[Series]:
         y = 600.0 + i + 0.1 * x
         out.append(Series(f"group:{i}", f"G{i} (n=4)", "#0088ff", x, y, y - 0.3, y + 0.3, n_members=4, short_label=f"G{i}"))
     return out
+
+
+def _bar_text_padding() -> float:
+    from lspr_imaging_app.plan.bar_model import BAR_TEXT_PADDING_PX
+
+    return float(BAR_TEXT_PADDING_PX)
 
 
 def _parts(plot: SensorgramPlot, layer: str) -> list:
@@ -239,8 +249,19 @@ class ViewPlotTest(unittest.TestCase):
         self._draw(_lines(2), show_points=False)
         self.assertEqual(_parts(self.plot, "Points"), [])
         self.assertEqual(len(_parts(self.plot, "Lines")), 2)  # the lines stay
-        self._draw(_lines(plot_module.DOTS_MAX_LINES + 1), point_size=8)  # the guard against 64,000 dots a redraw is not the View tab's to lift
+        self._draw(_lines(plot_module.DOTS_MAX_LINES + 1), point_size=8)  # the guard against 64,000 dots a redraw: the default Dot limit
         self.assertEqual(_parts(self.plot, "Points"), [])
+
+    def test_the_dot_limit_is_a_setting_the_user_can_raise_and_it_is_kept_in_range(self) -> None:
+        """Maintainer, 2026-11-13: the cap on dots became the View tab's Dot limit (10 at first)."""
+        self.assertEqual(SensorgramViewSettings().dots_max_lines, plot_module.DOTS_MAX_LINES)
+        self._draw(_lines(11), dots_max_lines=11)
+        self.assertEqual(len(_parts(self.plot, "Points")), 11)  # at the limit: drawn
+        self._draw(_lines(11), dots_max_lines=10)
+        self.assertEqual(_parts(self.plot, "Points"), [])  # one over: none, whatever the Points toggle's choice
+        self.assertEqual(len(_parts(self.plot, "Lines")), 11)  # the lines are not touched by it
+        self.assertEqual(SensorgramViewSettings(dots_max_lines=0).sanitized().dots_max_lines, DOTS_MAX_LINES_RANGE[0])
+        self.assertEqual(SensorgramViewSettings(dots_max_lines=10**6).sanitized().dots_max_lines, DOTS_MAX_LINES_RANGE[1])
 
     def test_the_spline_joins_the_points_with_a_denser_curve_and_leaves_the_dots_on_the_points(self) -> None:
         series = _lines(2)
@@ -378,7 +399,7 @@ class ViewPlotTest(unittest.TestCase):
         """Maintainer, 2026-11-13: with the stats table on, the legend sat just inside (under) the plan bar; now it can ignore the bar and sit at the edge."""
         series = _lines(3)
         self._draw(series)
-        self._table_and_bar()
+        self._table_and_bar(text_align=ALIGN_DATA)  # the names are not in the bar (the tick does not apply to a bar that holds them: see the test below)
         bar_height = self.plot._bar_height_px(POSITION_TOP)
         under = self._legend_top_offset()
         self.assertGreater(bar_height, 10.0)
@@ -389,10 +410,113 @@ class ViewPlotTest(unittest.TestCase):
         self._draw(series)  # and back
         self.assertAlmostEqual(self._legend_top_offset(), under)
 
+    def _first_row_top_below_the_plots_top(self) -> float:
+        """Plot pixels from the top edge of the plot to the top of the legend's first row (its label; the stats numbers are on the same line)."""
+        label = self.plot._legend.items[0][1]
+        return float(label.sceneBoundingRect().top() - self.plot._item.getViewBox().sceneBoundingRect().top())
+
+    def test_the_legends_inner_margin_is_tight_so_the_first_row_sits_higher_and_the_free_legend_stays_put(self) -> None:
+        """Maintainer, 2026-11-13: "why 25 px if the padding is only 6": the first row's text was 6 (edge) + 9 (pyqtgraph's inner margin) + half a row below the top.
+        Now the inner margin is 3 px: the row starts 6 + 3 = 9 px below the top with the table on (6 px higher than before). Maintainer, same day: "when I hide stats the gap gets
+        bigger" (with the table off it stayed at 8 + 9 = 17 px), so with the table off the legend is at the same 9 px: hiding the stats does not move it."""
+        series = _lines(3)
+        self._draw(series)
+        self._table_and_bar(height_stop=HEIGHT_FULL)  # a full bar: the legend sits at the edge itself
+        self.assertAlmostEqual(self._first_row_top_below_the_plots_top(), plot_module._LEGEND_EDGE_PX + plot_module._LEGEND_MARGIN_PX, delta=0.1)
+        self.assertEqual(plot_module._LEGEND_MARGIN_PX + plot_module._LEGEND_MARGIN_GIVEN_UP_PX, 9.0)  # pyqtgraph's own margin, which the offset below makes up for
+        self.plot.set_stats_table(None, StatsTableSettings(visible=False))
+        self._draw(series)
+        self.assertAlmostEqual(self._first_row_top_below_the_plots_top(), plot_module._LEGEND_EDGE_PX + plot_module._LEGEND_MARGIN_PX, delta=0.1)  # the same place: nothing moved
+
+    def test_the_legends_height_is_what_its_layout_needs_so_a_row_gap_moves_the_rows_by_exactly_the_gap(self) -> None:
+        """pyqtgraph makes the legend as high as its rows added up, ignoring the row gap and the margins. With the tighter margin a negative row gap made the layout need less than
+        that, and the spare height was shared out between the rows (a gap of -3 px moved four rows by -2.25 px; found while making the margin tighter; with the old 9 px margin
+        the same happened from 6 rows on: a gap of -6 px with 12 rows put the rows 34 px apart instead of 16). The legend is now exactly as high as its layout needs."""
+        for count in (3, 4, 6, 12):
+            self._draw(_lines(count), legend_mode="show")
+            base_pitch = self._pitch()
+            row_height = float(self.plot._legend.items[0][1].sceneBoundingRect().height())
+            self.assertAlmostEqual(base_pitch, row_height, delta=0.1)  # at gap 0 a row is its own height: nothing spare, as before the margin change
+            for gap in (-6, -3, 3, 12):
+                self._draw(_lines(count), legend_mode="show", legend_spacing_px=gap)
+                self.assertAlmostEqual(self._pitch() - base_pitch, float(gap), delta=0.1, msg=f"{count} rows, gap {gap}")
+                legend = self.plot._legend
+                for _sample, label in legend.items:  # no row is stretched
+                    self.assertAlmostEqual(float(label.sceneBoundingRect().height()), row_height, delta=0.1, msg=f"{count} rows, gap {gap}")
+                _left, top, _right, bottom = legend.layout.getContentsMargins()
+                self.assertAlmostEqual(float(legend.height()), count * row_height + gap * (count - 1) + top + bottom, delta=0.1, msg=f"{count} rows, gap {gap}")
+
+    def test_with_the_names_in_the_bar_the_edge_tick_changes_nothing_so_the_rows_never_overlap_them(self) -> None:
+        """Maintainer, 2026-11-13: "stats overlap when I set the steps to align on top of the bar". The tick puts the rows over the bar; with the names inside the bar that is on
+        top of them, so then the rows stay under the bar whatever the tick says."""
+        series = _lines(3)
+        self._draw(series)
+        self._table_and_bar(text_align=ALIGN_BAR, text_stop=5)  # the names at the top of the bar
+        under = (self._legend_top_offset(), self.plot._room())
+        self._draw(series, legend_over_bar=True)
+        self.assertEqual((self._legend_top_offset(), self.plot._room()), under)
+        self.assertGreaterEqual(self._legend_top_offset(), self.plot._bar_height_px(POSITION_TOP) + plot_module._LEGEND_EDGE_PX - 1e-6)  # beyond the whole bar
+        self._table_and_bar(text_align=ALIGN_DATA)  # names in the data: the tick works again
+        self._draw(series, legend_over_bar=True)
+        self.assertAlmostEqual(self._legend_top_offset(), plot_module._LEGEND_EDGE_PX)
+
+    def _names_clear_of_the_rows(self, stop: int, stats_position: str) -> None:
+        """A Full bar with its names aligned to the bar at `stop`: no name is inside the band at the plot's edge that the stats rows take."""
+        bars = [PlanBarStep(index=i, x_start=4.0 * i, x_end=4.0 * (i + 1), text=f"step {i}", color="#4e79a7", tooltip="", levels=None) for i in range(2)]
+        rows = [StatsLine(f"ROI {i}", "#ff8800", (600.0 + i, 601.0 + i), (0.1, 0.1), (5, 5), False) for i in range(3)]
+        self.plot.set_plan(bars, PlanBarSettings(height_stop=HEIGHT_FULL, text_align=ALIGN_BAR, text_stop=stop))
+        self.plot.set_stats_table(build_stats_table(bars, rows), StatsTableSettings(position=stats_position, text_pt=9))
+        _APP.processEvents()
+        bar = self.plot._plan_bar
+        keep_top, keep_bottom = bar._keep_out
+        self.assertGreater(keep_top if stats_position == POSITION_TOP else keep_bottom, 20.0, "the rows take a real band")
+        transform, view = bar._device_transform(), bar.view_rect()
+        area = transform.mapRect(view)
+        named = [d for d in bar.layout(transform, view) if d.text_rect is not None]
+        self.assertEqual(len(named), 2, f"stop {stop}, stats {stats_position}: both names are still drawn")
+        for d in named:
+            self.assertGreaterEqual(d.text_rect.top() - area.top(), keep_top - 1e-6, f"stop {stop}, stats {stats_position}: under the rows at the top")
+            self.assertLessEqual(d.text_rect.bottom(), area.bottom() - keep_bottom + 1e-6, f"stop {stop}, stats {stats_position}: over the rows at the bottom")
+
+    def test_in_a_full_bar_the_names_stay_out_of_the_stats_rows_at_every_position(self) -> None:
+        """Maintainer, 2026-11-13: names aligned to the top of a bar that fills the plot sat on the stats rows at the top ("in all positions"). The band the rows take is kept out of."""
+        self._draw(_lines(3))
+        for stop in (1, 2, 3, 4, 5):
+            for stats_position in (POSITION_TOP, POSITION_BOTTOM):
+                self._names_clear_of_the_rows(stop, stats_position)
+
+    def test_without_the_stats_a_full_bars_names_use_the_whole_plot_and_the_band_is_given_back(self) -> None:
+        self._draw(_lines(3))
+        self._names_clear_of_the_rows(5, POSITION_TOP)
+        self.plot.set_stats_table(None, StatsTableSettings(visible=False))
+        self.assertEqual(self.plot._plan_bar._keep_out, (0.0, 0.0))
+        bar = self.plot._plan_bar
+        transform, view = bar._device_transform(), bar.view_rect()
+        first = next(d for d in bar.layout(transform, view) if d.text_rect is not None)
+        self.assertAlmostEqual(first.text_rect.top() - transform.mapRect(view).top(), _bar_text_padding(), delta=1e-6)  # the top of the bar, as it was
+
+    def test_a_low_bar_keeps_its_names_and_the_stats_rows_go_under_what_it_really_takes(self) -> None:
+        """Maintainer, 2026-11-13: "when the bar is 5 % or less the step name disappears; I would like the text to keep there"."""
+        series = _lines(3)
+        self._draw(series)
+        self._table_and_bar(height_stop=1, text_align=ALIGN_BAR, text_stop=3)  # 1 % of the plot is far lower than a line of text
+        bar = self.plot._plan_bar
+        text_height = QFontMetricsF(bar.font()).height()
+        strip = self.plot._bar_height_px(POSITION_TOP)
+        self.assertAlmostEqual(strip, text_height + 2 * _bar_text_padding(), delta=1e-6)  # the strip holds one line, not 1 %
+        self.assertAlmostEqual(self._legend_top_offset(), strip + plot_module._LEGEND_EDGE_PX, delta=1e-6)  # the legend and the rows are under it
+        transform, view = bar._device_transform(), bar.view_rect()
+        drawn = bar.layout(transform, view)
+        self.assertTrue(all(d.text_rect is not None for d in drawn))  # the names stay
+        top = transform.mapRect(view).top()
+        self.assertTrue(all(top <= d.text_rect.top() and d.text_rect.bottom() <= top + strip + 1e-6 for d in drawn))  # inside the strip
+        room = self.plot._room()[0] * float(self.plot._item.getViewBox().height())
+        self.assertGreaterEqual(room, strip - 1e-6)  # and the plot keeps that room, not 1 % of it
+
     def test_the_stats_rows_go_to_the_edge_with_the_legend_they_line_up_with(self) -> None:
         series = _lines(3)
         self._draw(series)
-        self._table_and_bar()
+        self._table_and_bar(text_align=ALIGN_DATA)
         before = self.plot._legend_rows().centers_scene_y
         self._draw(series, legend_over_bar=True)
         after = self.plot._legend_rows().centers_scene_y
@@ -402,9 +526,9 @@ class ViewPlotTest(unittest.TestCase):
     def test_at_the_edge_the_room_for_the_bar_and_the_rows_is_the_larger_of_the_two_not_their_sum(self) -> None:
         series = _lines(3)
         self._draw(series)
-        self._table_and_bar()
+        self._table_and_bar(text_align=ALIGN_DATA)
         top_sum = self.plot._room()[0]
-        bar = self.plot._plan_bar.settings().height_fraction
+        bar = self.plot._bar_height_px(POSITION_TOP) / float(self.plot._item.getViewBox().height())  # the bar's real share (never lower than a line of text)
         self._draw(series, legend_over_bar=True)
         top_over = self.plot._room()[0]
         rows = top_sum - bar  # the room the rows need on their own (the default adds it to the bar's)
@@ -477,6 +601,134 @@ class ViewPlotTest(unittest.TestCase):
         before = cell_pitch()
         self._draw(series, legend_spacing_px=8)
         self.assertAlmostEqual(cell_pitch() - before, 8.0, delta=1.0)  # the maintainer: "vertical spacing also influencing the stats spacing"
+
+
+# -- the Points toggle and the Dot limit (2026-11-13) ---------------------------------------------------------------------------------------
+
+
+class DotLimitControlsTest(unittest.TestCase):
+    """Maintainer, 2026-11-13: with more lines than the limit the Points toggle switches itself off (the choice is kept), a click on it prompts about the limit, and the limit is a setting."""
+
+    def setUp(self) -> None:
+        self.parent = QtWidgets.QWidget()
+        self.controls = SensorgramViewControls(self.parent)
+        self.points = self.controls.show_points
+        self.changes: list[int] = []
+        self.controls.settings_changed.connect(lambda: self.changes.append(1))
+
+    def tearDown(self) -> None:
+        self.parent.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def _icon(self):
+        return self.points.icon().pixmap(36, 36).toImage()
+
+    def _ask(self, answer: bool):
+        return patch.object(view_controls_module, "ask_to_raise_dots_limit", return_value=answer)
+
+    def test_above_the_limit_it_shows_itself_off_keeps_the_choice_and_comes_back_by_itself(self) -> None:
+        on = self._icon()
+        self.controls.set_line_count(10)
+        self.assertFalse(self.points.is_capped())  # at the limit the dots are drawn
+        self.assertEqual(self._icon(), on)
+        self.controls.set_line_count(11)
+        self.assertTrue(self.points.is_capped())
+        self.assertNotEqual(self._icon(), on)
+        self.assertIn("11 lines are drawn and the Dot limit is 10", self.points.toolTip())
+        self.assertTrue(self.points.isChecked() and self.controls.settings().show_points)  # the choice is untouched
+        capped = self._icon()
+        self.controls.set_line_count(3)
+        self.assertEqual(self._icon(), on)  # fewer lines: on again, nobody pressed anything
+        self.assertNotIn("Dot limit is", self.points.toolTip())
+        self.points.setChecked(False)
+        self.assertEqual(self._icon(), capped)  # the capped picture is the off picture, not a third one
+        self.assertEqual(self.changes, [1])  # only that last press reported a change: the display follows the draw, it asks for no redraw
+
+    def test_changing_the_limit_updates_the_toggle_and_is_reported(self) -> None:
+        self.controls.set_line_count(40)
+        self.assertTrue(self.points.is_capped())
+        self.controls.dots_limit.setValue(40)
+        self.assertFalse(self.points.is_capped())
+        self.controls.dots_limit.setValue(39)
+        self.assertTrue(self.points.is_capped())
+        self.assertEqual((self.controls.settings().dots_max_lines, len(self.changes)), (39, 2))
+
+    def test_a_click_while_capped_prompts_and_keeps_everything_when_declined(self) -> None:
+        for chosen in (True, False):
+            with self.subTest(choice=chosen):
+                self.points.setChecked(chosen)
+                self.changes.clear()
+                self.controls.set_line_count(160)
+                with self._ask(False) as ask:
+                    self.points.click()
+                ask.assert_called_once()
+                self.assertEqual(ask.call_args.args[1:], (160, 10))  # the lines drawn and the limit, for the text of the prompt
+                self.assertEqual((self.points.isChecked(), self.controls.dots_limit.value(), self.changes), (chosen, 10, []))  # the click did not toggle
+                self.assertTrue(self.points.is_capped())
+
+    def test_agreeing_raises_the_limit_to_the_lines_drawn_turns_the_choice_on_and_reports_one_change(self) -> None:
+        self.points.setChecked(False)
+        self.controls.set_line_count(160)
+        self.changes.clear()
+        with self._ask(True):
+            self.points.click()
+        self.assertEqual((self.points.isChecked(), self.controls.dots_limit.value()), (True, 160))
+        self.assertFalse(self.points.is_capped())
+        self.assertEqual(len(self.changes), 1)
+        self.assertEqual((self.controls.settings().show_points, self.controls.settings().dots_max_lines), (True, 160))
+
+    def test_not_capped_a_click_just_toggles_and_asks_nothing(self) -> None:
+        self.controls.set_line_count(3)
+        with self._ask(True) as ask:
+            self.points.click()
+        ask.assert_not_called()
+        self.assertFalse(self.points.isChecked())
+
+    def test_the_prompt_is_a_box_with_a_raise_button_and_a_keep_button_and_keeping_is_the_default(self) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        from lspr_imaging_app.panels.sensorgram.points_toggle import ask_to_raise_dots_limit
+
+        seen: dict[str, object] = {}
+
+        def fake_exec(box: QMessageBox) -> int:
+            seen["text"] = box.text() + " " + box.informativeText()
+            seen["buttons"] = [button.text() for button in box.buttons()]
+            seen["default"] = box.defaultButton().text()
+            return 0
+
+        with patch.object(QMessageBox, "exec", fake_exec):
+            self.assertFalse(ask_to_raise_dots_limit(self.parent, 160, 10))  # no button was clicked
+        self.assertIn("160 lines", str(seen["text"]))
+        self.assertIn("up to 10 lines", str(seen["text"]))
+        self.assertEqual(seen["buttons"], ["Raise the limit to 160", "Keep the limit"])
+        self.assertEqual(seen["default"], "Keep the limit")
+
+    def test_the_limit_and_the_choice_are_remembered_and_a_capped_look_is_not_saved_as_off(self) -> None:
+        store = UiStateStore({"sensorgram/view_points": True})
+        self.controls.restore_ui_state(store)
+        self.controls.dots_limit.setValue(40)
+        self.controls.set_line_count(100)  # the toggle looks off now ...
+        self.assertTrue(self.points.is_capped())
+        self.assertEqual(store._values["sensorgram/view_points"], True)  # ... and what is remembered is still the user's choice
+        self.assertEqual(store._values["sensorgram/view_dots_limit"], 40)
+        other_parent = QtWidgets.QWidget()  # kept: a parent nobody holds is collected and takes its children with it
+        other = SensorgramViewControls(other_parent)
+        other.restore_ui_state(UiStateStore(dict(store._values)))
+        self.assertEqual((other.dots_limit.value(), other.show_points.isChecked()), (40, True))
+        other.set_line_count(3)
+        self.assertFalse(other.show_points.is_capped())  # fewer lines in the next session: dots, as chosen
+
+    def test_the_limit_has_its_own_row_in_the_menu_and_the_reset_puts_it_back(self) -> None:
+        self.assertIn(self.controls.dots_limit, self.controls.lines_menu.findChildren(QtWidgets.QSpinBox))
+        self.assertEqual(self.controls.dots_limit.maximum(), DOTS_MAX_LINES_RANGE[1])
+        self.controls.dots_limit.setValue(99)
+        self.controls.set_line_count(150)
+        self.assertTrue(self.points.is_capped())
+        self.changes.clear()
+        self.controls.lines_menu.findChild(QToolButton, "view_lines_reset").click()
+        self.assertEqual((self.controls.dots_limit.value(), len(self.changes)), (10, 1))
+        self.assertTrue(self.points.is_capped())  # 150 lines are still more than 10
 
 
 # -- the pictures of the Points & lines menu, and the text-size link (2026-11-13) -------------------------------------------------------
@@ -608,81 +860,91 @@ class LineIconsTest(unittest.TestCase):
 
 
 class TextSizeLinkTest(unittest.TestCase):
-    """`TextSizeLink` on bare boxes and buttons: the rule, without a panel."""
+    """`TextSizeLink` on bare boxes and buttons: the rule, without a panel. Three menus (maintainer, 2026-11-13: the Steps menu joined the Legend and Stats ones)."""
 
     def setUp(self) -> None:
         self.parent = QtWidgets.QWidget()
-        self.legend = QtWidgets.QSpinBox(self.parent)
-        self.legend.setRange(6, 24)
-        self.legend.setValue(9)
-        self.stats = QtWidgets.QSpinBox(self.parent)
-        self.stats.setRange(6, 24)
-        self.stats.setValue(14)
-        self.legend_toggle, self.stats_toggle = make_link_toggle(self.parent), make_link_toggle(self.parent)
-        self.link = TextSizeLink(self.legend, self.legend_toggle, self.stats, self.stats_toggle, self.parent)
+        self.legend, self.stats, self.steps = (QtWidgets.QSpinBox(self.parent) for _ in range(3))
+        for box, value in ((self.legend, 9), (self.stats, 14), (self.steps, 11)):
+            box.setRange(6, 24)
+            box.setValue(value)
+        self.legend_toggle, self.stats_toggle, self.steps_toggle = (make_link_toggle(self.parent) for _ in range(3))
+        self.link = TextSizeLink(((self.legend, self.legend_toggle), (self.stats, self.stats_toggle), (self.steps, self.steps_toggle)), self.parent)
 
     def tearDown(self) -> None:
         self.parent.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
-    def test_unlinked_the_two_sizes_are_independent_as_they_always_were(self) -> None:
+    def _sizes(self) -> tuple[int, int, int]:
+        return self.legend.value(), self.stats.value(), self.steps.value()
+
+    def test_unlinked_the_sizes_are_independent_as_they_always_were(self) -> None:
         self.assertFalse(self.link.is_linked())
         self.legend.setValue(20)
-        self.assertEqual((self.legend.value(), self.stats.value()), (20, 14))
+        self.assertEqual(self._sizes(), (20, 14, 11))
         self.stats.setValue(7)
-        self.assertEqual((self.legend.value(), self.stats.value()), (20, 7))
+        self.steps.setValue(8)
+        self.assertEqual(self._sizes(), (20, 7, 8))
 
-    def test_turning_it_on_gives_both_the_size_of_the_menu_it_was_pressed_in(self) -> None:
+    def test_turning_it_on_gives_all_the_size_of_the_menu_it_was_pressed_in(self) -> None:
         self.legend_toggle.click()
-        self.assertEqual((self.legend.value(), self.stats.value()), (9, 9))  # pressed in the Legend menu: the legend's size
+        self.assertEqual(self._sizes(), (9, 9, 9))  # pressed in the Legend menu: the legend's size
         self.legend_toggle.click()
         self.stats.setValue(16)
         self.stats_toggle.click()
-        self.assertEqual((self.legend.value(), self.stats.value()), (16, 16))  # pressed in the Stats menu: the stats' size
+        self.assertEqual(self._sizes(), (16, 16, 16))  # pressed in the Stats menu: the stats' size
+        self.stats_toggle.click()
+        self.steps.setValue(13)
+        self.steps_toggle.click()
+        self.assertEqual(self._sizes(), (13, 13, 13))  # pressed in the Steps menu: the step names' size
 
-    def test_linked_changing_either_changes_both_and_unlinking_frees_them(self) -> None:
+    def test_linked_changing_any_changes_all_and_unlinking_frees_them(self) -> None:
         self.legend_toggle.click()
         self.legend.setValue(12)
-        self.assertEqual(self.stats.value(), 12)
+        self.assertEqual(self._sizes(), (12, 12, 12))
         self.stats.setValue(18)
-        self.assertEqual(self.legend.value(), 18)
+        self.assertEqual(self._sizes(), (18, 18, 18))
+        self.steps.setValue(7)  # the Steps menu's box drags the other two along too
+        self.assertEqual(self._sizes(), (7, 7, 7))
         self.legend_toggle.click()  # off
         self.legend.setValue(8)
-        self.assertEqual((self.legend.value(), self.stats.value()), (8, 18))
+        self.assertEqual(self._sizes(), (8, 7, 7))
 
-    def test_the_two_buttons_show_one_state(self) -> None:
+    def test_the_buttons_show_one_state(self) -> None:
+        self.steps_toggle.click()
+        self.assertTrue(all(t.isChecked() for t in (self.legend_toggle, self.stats_toggle, self.steps_toggle)) and self.link.is_linked())
         self.stats_toggle.click()
-        self.assertTrue(self.legend_toggle.isChecked() and self.stats_toggle.isChecked() and self.link.is_linked())
-        self.legend_toggle.click()
-        self.assertFalse(self.legend_toggle.isChecked() or self.stats_toggle.isChecked() or self.link.is_linked())
+        self.assertFalse(any(t.isChecked() for t in (self.legend_toggle, self.stats_toggle, self.steps_toggle)) or self.link.is_linked())
 
-    def test_linked_both_boxes_take_the_narrower_range_so_they_can_always_be_equal(self) -> None:
-        legend, stats = QtWidgets.QSpinBox(self.parent), QtWidgets.QSpinBox(self.parent)
+    def test_linked_the_boxes_take_the_narrowest_range_so_they_can_always_be_equal(self) -> None:
+        legend, stats, steps = (QtWidgets.QSpinBox(self.parent) for _ in range(3))
         legend.setRange(6, 24)
-        stats.setRange(8, 20)  # a stats box narrower than the legend's (today both are 6 - 24)
-        legend_toggle, stats_toggle = make_link_toggle(self.parent), make_link_toggle(self.parent)
-        TextSizeLink(legend, legend_toggle, stats, stats_toggle, self.parent)
-        legend_toggle.click()
-        self.assertEqual((legend.minimum(), legend.maximum(), stats.minimum(), stats.maximum()), (8, 20, 8, 20))
-        legend.setValue(24)  # past the common range: clamped in the box itself, so the pair stays equal
-        self.assertEqual((legend.value(), stats.value()), (20, 20))
-        legend_toggle.click()
-        self.assertEqual((legend.minimum(), legend.maximum(), stats.minimum(), stats.maximum()), (6, 24, 8, 20))  # each its own range again
+        stats.setRange(8, 20)  # narrower than the legend's (today all are 6 - 24)
+        steps.setRange(7, 22)
+        toggles = [make_link_toggle(self.parent) for _ in range(3)]
+        TextSizeLink(((legend, toggles[0]), (stats, toggles[1]), (steps, toggles[2])), self.parent)
+        toggles[0].click()
+        self.assertEqual([(b.minimum(), b.maximum()) for b in (legend, stats, steps)], [(8, 20)] * 3)
+        legend.setValue(24)  # past the common range: clamped in the box itself, so they stay equal
+        self.assertEqual((legend.value(), stats.value(), steps.value()), (20, 20, 20))
+        toggles[0].click()
+        self.assertEqual([(b.minimum(), b.maximum()) for b in (legend, stats, steps)], [(6, 24), (8, 20), (7, 22)])  # each its own range again
 
-    def test_sync_after_a_restore_makes_a_linked_pair_equal_and_leaves_an_unlinked_one_alone(self) -> None:
+    def test_sync_after_a_restore_makes_a_linked_set_equal_and_leaves_an_unlinked_one_alone(self) -> None:
         self.link.sync()
-        self.assertEqual((self.legend.value(), self.stats.value()), (9, 14))
+        self.assertEqual(self._sizes(), (9, 14, 11))
         # a restore: the link comes back first (it is the legend menu's remembered button), the sizes one after the other, and they disagree
         self.link.begin_restore()
         self.legend_toggle.setChecked(True)
-        self.assertEqual((self.legend.value(), self.stats.value()), (9, 14))  # turning the link on while restoring copies nothing
+        self.assertEqual(self._sizes(), (9, 14, 11))  # turning the link on while restoring copies nothing
         self.legend.setValue(10)
-        self.stats.setValue(7)  # the second size restored must not overwrite the first
-        self.assertEqual((self.legend.value(), self.stats.value()), (10, 7))
+        self.stats.setValue(7)  # the later sizes restored must not overwrite the first
+        self.steps.setValue(15)
+        self.assertEqual(self._sizes(), (10, 7, 15))
         self.link.end_restore()
-        self.assertEqual((self.legend.value(), self.stats.value()), (10, 10))  # the Legend menu's wins, whatever the order
-        self.stats.setValue(12)  # and it is a working link afterwards
-        self.assertEqual(self.legend.value(), 12)
+        self.assertEqual(self._sizes(), (10, 10, 10))  # the Legend menu's wins, whatever the order
+        self.steps.setValue(12)  # and it is a working link afterwards
+        self.assertEqual(self._sizes(), (12, 12, 12))
 
 
 # -- the evaluation chips on the plan bar (2026-11-13) -------------------------------------------------------------------------------
@@ -712,46 +974,134 @@ class EvaluationChipsTest(unittest.TestCase):
         metrics = QFontMetricsF(bar._chip_font())
         return metrics, metrics.height() + 2.0
 
-    def test_the_default_is_where_the_chips_always_were(self) -> None:
-        """Beside the bar at its left end: below a bar at the top, above a bar at the bottom, inside a full bar at its top; two pixels from the step's end, 3 px between chips."""
+    def test_the_default_is_inside_the_bar_in_the_middle_of_its_height(self) -> None:
+        """Maintainer, 2026-11-13: chips below a bar of a few percent were "not good"; their place has to work with the bar's height. A bar that is not full height holds them
+        (a bar at the top or at the bottom alike), in the middle of its height; inside a full bar they are at its top. Two pixels from the step's end, 3 px between chips."""
         step = _chip_step(0, ("B1", "S1"))
         bar = self._bar([step])
         metrics, height = self._metrics(bar)
         first, second = bar.role_chips([_drawn(step)], AREA)
         self.assertEqual((first.role, second.role), ("B1", "S1"))
         self.assertAlmostEqual(first.rect.left(), 102.0)
-        self.assertAlmostEqual(first.rect.top(), 26.0)  # the bar's bottom (24) + 2
+        self.assertAlmostEqual(first.rect.top(), (24.0 - height) / 2.0)  # the middle of a 24 px bar at the top of the plot
         self.assertAlmostEqual(first.rect.width(), metrics.horizontalAdvance("B1") + 8.0)
         self.assertAlmostEqual(first.rect.height(), height)
         self.assertAlmostEqual(second.rect.left(), first.rect.right() + 3.0)
         bottom = self._bar([step], position=POSITION_BOTTOM)
         chip = bottom.role_chips([_drawn(step, top=376.0, bottom=400.0)], AREA)[0]
-        self.assertAlmostEqual(chip.rect.top(), 376.0 - 2.0 - height)  # above a bar at the bottom
+        self.assertAlmostEqual(chip.rect.top(), 376.0 + (24.0 - height) / 2.0)  # a bar at the bottom: inside it too, not above it
         full = self._bar([step], height_stop=HEIGHT_FULL)
         chip = full.role_chips([_drawn(step, top=0.0, bottom=400.0)], AREA)[0]
-        self.assertAlmostEqual(chip.rect.top(), 2.0)  # inside a full bar, at its top
+        self.assertAlmostEqual(chip.rect.top(), 2.0)  # inside a full bar, at its top: the middle of the plot is where the data is
 
-    def test_every_edge_and_side_puts_the_chips_in_that_corner_of_the_step(self) -> None:
+    def test_every_edge_and_side_puts_the_chips_in_that_corner_of_the_steps_bar(self) -> None:
         step = _chip_step(0, ("B1", "S1", "Sb"))
         probe = self._bar([step])
         _metrics, height = self._metrics(probe)
-        # (bar position, chips edge) -> top of the chips
-        expected_top = {
-            (POSITION_TOP, "auto"): 26.0, (POSITION_TOP, POSITION_TOP): 26.0, (POSITION_TOP, POSITION_BOTTOM): 400.0 - 2.0 - height,
-            (POSITION_BOTTOM, "auto"): 376.0 - 2.0 - height, (POSITION_BOTTOM, POSITION_BOTTOM): 376.0 - 2.0 - height, (POSITION_BOTTOM, POSITION_TOP): 2.0,
-        }
-        for (position, edge), top in expected_top.items():
-            bar_top, bar_bottom = (0.0, 24.0) if position == POSITION_TOP else (376.0, 400.0)
-            for side in ("left", "right"):
-                with self.subTest(bar=position, edge=edge, side=side):
-                    bar = self._bar([step], position=position, roles_edge=edge, roles_side=side)
-                    chips = bar.role_chips([_drawn(step, top=bar_top, bottom=bar_bottom)], AREA)
-                    self.assertEqual([c.role for c in chips], ["B1", "S1", "Sb"])  # the same order read left to right on either side
-                    self.assertTrue(all(abs(c.rect.top() - top) < 1e-6 for c in chips))
-                    if side == "left":
-                        self.assertAlmostEqual(chips[0].rect.left(), 102.0)
+        margin = min(2.0, (24.0 - height) / 2.0)
+        for position, (bar_top, bar_bottom) in ((POSITION_TOP, (0.0, 24.0)), (POSITION_BOTTOM, (376.0, 400.0))):
+            # chips edge -> top of the chips, whichever edge of the plot the bar is on: they stay in the bar
+            expected_top = {"auto": bar_top + (24.0 - height) / 2.0, POSITION_TOP: bar_top + margin, POSITION_BOTTOM: bar_bottom - margin - height}
+            for edge, top in expected_top.items():
+                for side in ("left", "right"):
+                    with self.subTest(bar=position, edge=edge, side=side):
+                        bar = self._bar([step], position=position, roles_edge=edge, roles_side=side)
+                        chips = bar.role_chips([_drawn(step, top=bar_top, bottom=bar_bottom)], AREA)
+                        self.assertEqual([c.role for c in chips], ["B1", "S1", "Sb"])  # the same order read left to right on either side
+                        self.assertTrue(all(abs(c.rect.top() - top) < 1e-6 for c in chips))
+                        self.assertTrue(all(bar_top <= c.rect.top() and c.rect.bottom() <= bar_bottom for c in chips))
+                        if side == "left":
+                            self.assertAlmostEqual(chips[0].rect.left(), 102.0)
+                        else:
+                            self.assertAlmostEqual(chips[-1].rect.right(), 298.0)  # two pixels in from the step's right end
+
+    def test_the_chips_follow_the_height_of_the_bar(self) -> None:
+        """A taller bar moves the middle, the top and the bottom with it; a bar barely higher than a chip keeps the chip inside (the margin gives way first)."""
+        step = _chip_step(0, ("S1",))
+        _m, height = self._metrics(self._bar([step]))
+        for bar_height in (height, height + 1.0, 24.0, 40.0, 80.0):
+            for edge in ("auto", POSITION_TOP, POSITION_BOTTOM):
+                with self.subTest(bar_height=bar_height, edge=edge):
+                    chip = self._bar([step], roles_edge=edge).role_chips([_drawn(step, bottom=bar_height)], AREA)[0]
+                    self.assertGreaterEqual(chip.rect.top(), -1e-6)
+                    self.assertLessEqual(chip.rect.bottom(), bar_height + 1e-6)
+                    if edge == "auto":
+                        self.assertAlmostEqual(chip.rect.center().y(), bar_height / 2.0)
+                    elif edge == POSITION_TOP:
+                        self.assertAlmostEqual(chip.rect.top(), min(2.0, (bar_height - height) / 2.0))
                     else:
-                        self.assertAlmostEqual(chips[-1].rect.right(), 298.0)  # two pixels in from the step's right end
+                        self.assertAlmostEqual(chip.rect.bottom(), bar_height - min(2.0, (bar_height - height) / 2.0))
+
+    def test_a_bar_of_one_line_of_text_holds_the_chips(self) -> None:
+        """The thinnest bar is one line of its text plus padding (`strip_height_px`); a chip is a little smaller than that line at every text size, so it never leaves the bar."""
+        for pt in (6, 9, 12, 18, 24):
+            bar = self._bar([_chip_step(0, ("B1",))], text_pt=pt)
+            _m, height = self._metrics(bar)
+            strip = PlanBarSettings(height_stop=1, text_pt=pt).strip_height_px(300.0, QFontMetricsF(bar.font()).height())
+            self.assertLessEqual(height, strip + 1.0, f"{pt} pt")  # within a pixel: the margin shrinks to nothing
+
+    def test_a_step_with_an_anchor_mark_starts_its_left_chips_after_it_on_a_thin_bar(self) -> None:
+        """The anchor mark sits in the lower left corner; on a bar one chip high both are on the same line, so the chips start after the mark."""
+        step = _chip_step(0, ("B1",))
+        bar = self._bar([step])
+        bar.set_baseline_anchors({0})
+        item = _drawn(step, bottom=22.0)
+        spot = bar._anchor_spot(step, item.rect)
+        self.assertIsNotNone(spot)
+        chip = bar.role_chips([item], AREA)[0]
+        self.assertAlmostEqual(chip.rect.left(), spot.right() + 3.0)
+        tall = bar.role_chips([_drawn(step, bottom=120.0)], AREA)[0]  # a tall bar: the chips are at its middle, the anchor is far below them
+        self.assertAlmostEqual(tall.rect.left(), 102.0)
+        other = self._bar([_chip_step(1, ("B1",))])  # a step that is not an anchor
+        self.assertAlmostEqual(other.role_chips([_drawn(_chip_step(1, ("B1",)), bottom=22.0)], AREA)[0].rect.left(), 102.0)
+
+    def _names(self, step: PlanBarStep, **settings) -> tuple[PlanBarItem, DrawnStep]:
+        """A bar with this one step laid out through the real transform: 60 px per x unit from x = 20, the y range 0 - 100 over 200 px (so a 10 % bar is 20 px high)."""
+        bar = self._bar([step], **settings)
+        to_device = QTransform(60.0, 0.0, 0.0, -2.0, 20.0, 220.0)
+        return bar, bar.layout(to_device, QRectF(0.0, 0.0, 10.0, 100.0))[0]
+
+    def _step_with_room(self, text: str, roles: tuple[str, ...], room: float, **settings) -> PlanBarStep:
+        """A step (at x = 0, 60 px per unit in `_names`) just wide enough that `room` pixels are left for its name beside its chips: 2 px margin, the chips, 3 px gap, the room, 4 px margin."""
+        metrics = QFontMetricsF(self._bar([_chip_step(0, roles)], **settings)._chip_font())
+        total = sum(metrics.horizontalAdvance(role) + 8.0 for role in roles) + 3.0 * (len(roles) - 1)
+        return replace(_chip_step(0, roles), text=text, x_end=(2.0 + total + 3.0 + room + 4.0) / 60.0)
+
+    def test_a_name_on_the_chips_line_gives_way_to_them_sideways(self) -> None:
+        step = self._step_with_room("10perEG", ("B1", "S1"), 60.0, height_stop=5)
+        area = QRectF(20.0, 20.0, 600.0, 200.0)
+        _bar, plain = self._names(replace(step, roles=()), height_stop=5)
+        bar, drawn = self._names(step, height_stop=5)
+        chips = bar.role_chips([drawn], area)
+        self.assertEqual(len(chips), 2)
+        self.assertIsNotNone(drawn.text_rect)
+        self.assertGreaterEqual(drawn.text_rect.left(), chips[-1].rect.right() + 3.0 - 1e-6)  # the name's rectangle starts after the chips
+        self.assertLessEqual(drawn.text_rect.right(), drawn.rect.right() - 4.0 + 1e-6)
+        self.assertAlmostEqual(plain.text_rect.left(), plain.rect.left() + 4.0)  # without chips it had the whole step
+        bar, drawn = self._names(step, height_stop=5, roles_side="right")  # on the right side the rectangle ends before the chips
+        chips = bar.role_chips([drawn], area)
+        self.assertLessEqual(drawn.text_rect.right(), chips[0].rect.left() - 3.0 + 1e-6)
+        self.assertGreaterEqual(drawn.text_rect.left(), drawn.rect.left() + 4.0 - 1e-6)
+
+    def test_a_short_name_that_clears_the_chips_stays_centred_on_the_step(self) -> None:
+        step = self._step_with_room("H2O", ("S1",), 300.0, height_stop=5)  # plenty of room beside the chip: the name is centred on the whole step
+        _bar, drawn = self._names(step, height_stop=5)
+        self.assertAlmostEqual(drawn.text_rect.left(), drawn.rect.left() + 4.0)
+        self.assertAlmostEqual(drawn.text_rect.width(), drawn.rect.width() - 8.0)
+
+    def test_a_name_on_another_line_than_the_chips_keeps_the_whole_step(self) -> None:
+        """A full bar is two lines or more: chips at its top, the name at its bottom stop: not the same line, so nothing is taken from the name."""
+        step = self._step_with_room("10perEG", ("B1", "S1"), 60.0, height_stop=HEIGHT_FULL, roles_edge=POSITION_TOP)
+        _bar, drawn = self._names(step, height_stop=HEIGHT_FULL, roles_edge=POSITION_TOP, text_stop=1)  # stop 1 of a bar's names: its bottom
+        self.assertAlmostEqual(drawn.text_rect.left(), drawn.rect.left() + 4.0)
+        self.assertAlmostEqual(drawn.text_rect.width(), drawn.rect.width() - 8.0)
+        _bar, same_line = self._names(step, height_stop=HEIGHT_FULL, roles_edge=POSITION_TOP, text_stop=5)  # stop 5: the top, the chips' line: it gives way
+        self.assertGreater(same_line.text_rect.left(), same_line.rect.left() + 4.0 + 1.0)
+
+    def test_no_text_is_left_when_the_chips_take_the_room_of_a_narrow_step(self) -> None:
+        step = self._step_with_room("10perEG", ("B1", "S1", "Sb"), 30.0, height_stop=5)  # 30 px beside the chips: under the 40 px limit
+        _bar, drawn = self._names(step, height_stop=5)
+        self.assertIsNone(drawn.text_rect)
 
     def test_a_full_bar_can_have_its_chips_at_the_bottom_too(self) -> None:
         step = _chip_step(0, ("S1",))
@@ -883,6 +1233,7 @@ class ViewTabPanelTest(unittest.TestCase):
     def test_the_options_reach_the_plot_and_the_resets_put_the_defaults_back_in_one_change(self) -> None:
         self.assertEqual(self.panel._plot.view(), SensorgramViewSettings())  # untouched: the plot looks as it always did
         self.view.point_size.setValue(8)
+        self.view.dots_limit.setValue(30)
         self.view.line_width.setValue(2.5)
         self.view.show_points.setChecked(False)
         self.view.show_lines.setChecked(False)
@@ -896,7 +1247,7 @@ class ViewTabPanelTest(unittest.TestCase):
         self.assertEqual(
             self.panel._plot.view(),
             SensorgramViewSettings(
-                show_band=False, show_anchors=False, show_points=False, show_lines=False, point_size=8, line_width=2.5, line_style="spline",
+                show_band=False, show_anchors=False, show_points=False, show_lines=False, point_size=8, dots_max_lines=30, line_width=2.5, line_style="spline",
                 legend_mode="show", legend_text_pt=12, legend_spacing_px=5, legend_counts=False,
             ),
         )
@@ -904,8 +1255,8 @@ class ViewTabPanelTest(unittest.TestCase):
         self.view.settings_changed.connect(lambda: changes.append(1))
         self.view.lines_menu.findChild(QToolButton, "view_lines_reset").click()
         view = self.panel._plot.view()
-        self.assertEqual((view.show_points, view.show_lines, view.point_size, view.line_width, view.line_style), (True, True, 4, 1.0, "straight"))
-        self.assertEqual(len(changes), 1)  # five controls, one change
+        self.assertEqual((view.show_points, view.show_lines, view.point_size, view.dots_max_lines, view.line_width, view.line_style), (True, True, 4, 10, 1.0, "straight"))
+        self.assertEqual(len(changes), 1)  # six controls, one change
         self.view.legend_menu.findChild(QToolButton, "view_legend_reset").click()
         self.assertEqual(
             (self.view.legend_mode(), self.panel._plot.view().legend_text_pt, self.panel._plot.view().legend_spacing_px, self.panel._plot.view().legend_counts),
@@ -913,6 +1264,24 @@ class ViewTabPanelTest(unittest.TestCase):
         )
         self.assertEqual(len(changes), 2)
         self.assertEqual((self.panel._plot.view().show_band, self.panel._plot.view().show_anchors), (False, False))  # a reset touches only its own menu
+
+    def test_the_points_toggle_follows_the_number_of_lines_the_panel_draws_against_the_dot_limit(self) -> None:
+        """The panel draws two lines here: a limit of 1 caps them (maintainer, 2026-11-13: the toggle switches itself off and a click prompts)."""
+        self.assertEqual(len(_parts(self.panel._plot, "Points")), 2)
+        self.assertFalse(self.view.show_points.is_capped())
+        self.view.dots_limit.setValue(1)
+        self.assertTrue(self.view.show_points.is_capped())
+        self.assertTrue(self.view.show_points.isChecked())  # still the user's choice
+        self.assertEqual(_parts(self.panel._plot, "Points"), [])  # and the plot draws none
+        self.assertEqual(len(_parts(self.panel._plot, "Lines")), 2)
+        with patch.object(view_controls_module, "ask_to_raise_dots_limit", return_value=False):
+            self.view.show_points.click()
+        self.assertEqual((self.view.dots_limit.value(), _parts(self.panel._plot, "Points")), (1, []))
+        with patch.object(view_controls_module, "ask_to_raise_dots_limit", return_value=True) as ask:
+            self.view.show_points.click()
+        self.assertEqual(ask.call_args.args[1:], (2, 1))  # the two lines drawn, the limit of 1
+        self.assertEqual((self.view.dots_limit.value(), self.view.show_points.is_capped()), (2, False))
+        self.assertEqual(len(_parts(self.panel._plot, "Points")), 2)  # the dots are back
 
     def test_the_band_toggle_is_only_for_an_average_and_hides_its_band(self) -> None:
         self.assertFalse(self.view.band.isEnabled())  # one line per ROI: no band to show
@@ -970,6 +1339,7 @@ class ViewTabPanelTest(unittest.TestCase):
         store = UiStateStore({})
         self.panel.restore_ui_state(store)
         self.view.point_size.setValue(7)
+        self.view.dots_limit.setValue(25)
         self.view.line_width.setValue(1.5)
         self.view.show_points.setChecked(False)
         self.view.show_lines.setChecked(False)
@@ -992,7 +1362,7 @@ class ViewTabPanelTest(unittest.TestCase):
         self.assertEqual(
             other._plot.view(),
             SensorgramViewSettings(
-                show_band=False, show_anchors=False, show_points=False, show_lines=False, point_size=7, line_width=1.5, line_style="spline",
+                show_band=False, show_anchors=False, show_points=False, show_lines=False, point_size=7, dots_max_lines=25, line_width=1.5, line_style="spline",
                 legend_mode="hide", legend_text_pt=11, legend_spacing_px=-2, legend_counts=False,
             ),
         )
@@ -1029,6 +1399,26 @@ class ViewTabPanelTest(unittest.TestCase):
         self._settle()
         self.assertEqual((self.view.legend_text.value(), self.panel._plot.view().legend_text_pt), (11, 11))  # and the other way round
 
+    def test_the_steps_menu_has_a_size_row_with_a_link_to_the_legend_and_stats_sizes(self) -> None:
+        """Maintainer, 2026-11-13: "the step font size control ... should be in the step menu, with a link icon in the step and stats menus linked to the legend text size"."""
+        plan = self.panel._steps.plan_controls
+        stats = self.panel._steps.stats_controls
+        inside = plan.menu.findChildren(QtWidgets.QWidget)
+        self.assertIn(plan.size_box, inside)
+        self.assertIn(plan.text_link, inside)  # the chain beside the size box
+        self.assertIn("Size", [label.text() for label in plan.menu.findChildren(QtWidgets.QLabel)])
+        self.assertTrue(self.panel._view_ribbon.isAncestorOf(plan.menu))
+        self.view.legend_text.setValue(14)
+        plan.size_box.setValue(8)
+        self.assertEqual((self.view.legend_text.value(), stats.size_box.value(), plan.size_box.value()), (14, 9, 8))  # independent until linked
+        plan.text_link.click()  # pressed in the Steps menu: its size is the one all three take
+        self.assertEqual((self.view.legend_text.value(), stats.size_box.value(), plan.size_box.value()), (8, 8, 8))
+        self.assertTrue(self.view.text_link.isChecked() and stats.text_link.isChecked() and plan.text_link.isChecked())  # one state in the three menus
+        self.view.legend_text.setValue(12)
+        self._settle()
+        self.assertEqual(plan.size_box.value(), 12)
+        self.assertEqual(self.panel._plot.plan_bar().settings().text_pt, 12)  # and the names on the plot are drawn at it
+
     def test_the_legend_can_ignore_the_bar_from_its_menu_and_the_reset_puts_that_and_the_link_back(self) -> None:
         self.assertIn("Position", [label.text() for label in self.view.legend_menu.findChildren(QtWidgets.QLabel)])
         self.assertFalse(self.panel._plot.view().legend_over_bar)  # as the legend always was
@@ -1041,7 +1431,7 @@ class ViewTabPanelTest(unittest.TestCase):
         self.assertEqual(stats.size_box.value(), 15)
         self.view.legend_menu.findChild(QToolButton, "view_legend_reset").click()
         self.assertFalse(self.panel._plot.view().legend_over_bar)
-        self.assertFalse(self.view.text_link.isChecked() or stats.text_link.isChecked())  # unlinked, in both menus
+        self.assertFalse(self.view.text_link.isChecked() or stats.text_link.isChecked() or self.panel._steps.plan_controls.text_link.isChecked())  # unlinked, in all three menus
         self.assertEqual(self.view.legend_text.value(), 9)  # the legend's size is back at its default ...
         self.assertEqual(stats.size_box.value(), 15)  # ... and the stats size is not part of the legend's reset: it keeps what it had (unlinked first, so it was not dragged along)
 
@@ -1057,9 +1447,9 @@ class ViewTabPanelTest(unittest.TestCase):
         other = self._new_panel()
         self._others.append(other)
         other.restore_ui_state(UiStateStore(saved))
-        self.assertTrue(other._view_controls.text_link.isChecked() and other._steps.stats_controls.text_link.isChecked())
+        self.assertTrue(all(c.isChecked() for c in (other._view_controls.text_link, other._steps.stats_controls.text_link, other._steps.plan_controls.text_link)))
         self.assertTrue(other._plot.view().legend_over_bar)
-        self.assertEqual((other._view_controls.legend_text.value(), other._steps.stats_controls.size_box.value()), (13, 13))
+        self.assertEqual((other._view_controls.legend_text.value(), other._steps.stats_controls.size_box.value(), other._steps.plan_controls.size_box.value()), (13, 13, 13))
 
     def test_the_stats_menu_has_a_legend_room_in_steps_of_25_percent_with_off_and_remembers_it(self) -> None:
         stats = self.panel._steps.stats_controls

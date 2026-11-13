@@ -33,6 +33,7 @@ try:
     from lspr_imaging_app.analysis.scan_trace import Series
     from lspr_imaging_app.analysis.step_stats import LineStepValues
     from lspr_imaging_app.panels.image.analysis_tab import AnalysisTab
+    from lspr_imaging_app.panels.sensorgram import plot as plot_module
     from lspr_imaging_app.panels.sensorgram.panel import SensorgramPanel
     from lspr_imaging_app.panels.sensorgram.plot import SensorgramPlot
     from lspr_imaging_app.panels.sensorgram.stat_icons import step_stats_icon
@@ -351,7 +352,7 @@ class StepStatsPanelTest(unittest.TestCase):
         self.controls._show.setChecked(False)
         self._settle()
         self.assertFalse(self.item.is_shown())
-        self.assertEqual(tuple(self.plot._legend.opts["offset"]), (8, 8))
+        self.assertEqual(tuple(self.plot._legend.opts["offset"]), tuple(plot_module._LEGEND_OFFSET_PX))  # back at its home offset (its text where it always was: see test_lspri_sensorgram_view_tab, legend margin)
         self.assertGreater(self.plot._item.getViewBox().viewRange()[0][0], shown_low)  # no room kept on the left
 
     def test_switching_it_on_asks_for_the_numbers(self) -> None:
