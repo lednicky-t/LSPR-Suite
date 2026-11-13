@@ -860,7 +860,8 @@ class LineIconsTest(unittest.TestCase):
 
 
 class TextSizeLinkTest(unittest.TestCase):
-    """`TextSizeLink` on bare boxes and buttons: the rule, without a panel. Three menus (maintainer, 2026-11-13: the Steps menu joined the Legend and Stats ones)."""
+    """`TextSizeLink` on bare boxes and buttons: the rule, without a panel. Maintainer, 2026-11-13: two independent chains, one in Steps and one in Stats, each linking its size
+    to the Legend's text size (the Legend has none)."""
 
     def setUp(self) -> None:
         self.parent = QtWidgets.QWidget()
@@ -868,83 +869,83 @@ class TextSizeLinkTest(unittest.TestCase):
         for box, value in ((self.legend, 9), (self.stats, 14), (self.steps, 11)):
             box.setRange(6, 24)
             box.setValue(value)
-        self.legend_toggle, self.stats_toggle, self.steps_toggle = (make_link_toggle(self.parent) for _ in range(3))
-        self.link = TextSizeLink(((self.legend, self.legend_toggle), (self.stats, self.stats_toggle), (self.steps, self.steps_toggle)), self.parent)
+        self.stats_toggle = make_link_toggle(self.parent, "the stats numbers")
+        self.steps_toggle = make_link_toggle(self.parent, "the step names")
+        self.link = TextSizeLink(self.legend, ((self.stats, self.stats_toggle), (self.steps, self.steps_toggle)), self.parent)
 
     def tearDown(self) -> None:
         self.parent.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def _sizes(self) -> tuple[int, int, int]:
+        """(legend, stats, steps)"""
         return self.legend.value(), self.stats.value(), self.steps.value()
 
     def test_unlinked_the_sizes_are_independent_as_they_always_were(self) -> None:
-        self.assertFalse(self.link.is_linked())
+        self.assertFalse(self.link.is_linked(0) or self.link.is_linked(1))
         self.legend.setValue(20)
         self.assertEqual(self._sizes(), (20, 14, 11))
         self.stats.setValue(7)
         self.steps.setValue(8)
         self.assertEqual(self._sizes(), (20, 7, 8))
 
-    def test_turning_it_on_gives_all_the_size_of_the_menu_it_was_pressed_in(self) -> None:
-        self.legend_toggle.click()
-        self.assertEqual(self._sizes(), (9, 9, 9))  # pressed in the Legend menu: the legend's size
-        self.legend_toggle.click()
-        self.stats.setValue(16)
+    def test_each_chain_gives_its_own_menu_the_legends_size_and_leaves_the_other_alone(self) -> None:
         self.stats_toggle.click()
-        self.assertEqual(self._sizes(), (16, 16, 16))  # pressed in the Stats menu: the stats' size
-        self.stats_toggle.click()
-        self.steps.setValue(13)
+        self.assertEqual(self._sizes(), (9, 9, 11))  # the stats took the legend's size; the steps did not move
+        self.assertTrue(self.stats_toggle.isChecked() and not self.steps_toggle.isChecked())  # one button, one state
         self.steps_toggle.click()
-        self.assertEqual(self._sizes(), (13, 13, 13))  # pressed in the Steps menu: the step names' size
+        self.assertEqual(self._sizes(), (9, 9, 9))
+        self.stats_toggle.click()  # off again
+        self.assertTrue(self.steps_toggle.isChecked() and not self.stats_toggle.isChecked())
 
-    def test_linked_changing_any_changes_all_and_unlinking_frees_them(self) -> None:
-        self.legend_toggle.click()
+    def test_a_linked_size_follows_the_legend_and_moves_it_an_unlinked_one_does_neither(self) -> None:
+        self.stats_toggle.click()
         self.legend.setValue(12)
-        self.assertEqual(self._sizes(), (12, 12, 12))
+        self.assertEqual(self._sizes(), (12, 12, 11))  # the legend drags the linked stats along, not the unlinked steps
         self.stats.setValue(18)
-        self.assertEqual(self._sizes(), (18, 18, 18))
-        self.steps.setValue(7)  # the Steps menu's box drags the other two along too
-        self.assertEqual(self._sizes(), (7, 7, 7))
-        self.legend_toggle.click()  # off
-        self.legend.setValue(8)
-        self.assertEqual(self._sizes(), (8, 7, 7))
-
-    def test_the_buttons_show_one_state(self) -> None:
+        self.assertEqual(self._sizes(), (18, 18, 11))  # and the other way round
+        self.steps.setValue(7)
+        self.assertEqual(self._sizes(), (18, 18, 7))  # the unlinked steps move nothing
         self.steps_toggle.click()
-        self.assertTrue(all(t.isChecked() for t in (self.legend_toggle, self.stats_toggle, self.steps_toggle)) and self.link.is_linked())
-        self.stats_toggle.click()
-        self.assertFalse(any(t.isChecked() for t in (self.legend_toggle, self.stats_toggle, self.steps_toggle)) or self.link.is_linked())
+        self.assertEqual(self._sizes(), (18, 18, 18))
+        self.steps.setValue(8)
+        self.assertEqual(self._sizes(), (8, 8, 8))  # both linked: the steps' box moves the legend, and the legend the stats
+        self.stats_toggle.click()  # stats off: free again
+        self.legend.setValue(10)
+        self.assertEqual(self._sizes(), (10, 8, 10))  # the steps still follow the legend, the stats keep their own
 
     def test_linked_the_boxes_take_the_narrowest_range_so_they_can_always_be_equal(self) -> None:
         legend, stats, steps = (QtWidgets.QSpinBox(self.parent) for _ in range(3))
         legend.setRange(6, 24)
         stats.setRange(8, 20)  # narrower than the legend's (today all are 6 - 24)
         steps.setRange(7, 22)
-        toggles = [make_link_toggle(self.parent) for _ in range(3)]
-        TextSizeLink(((legend, toggles[0]), (stats, toggles[1]), (steps, toggles[2])), self.parent)
-        toggles[0].click()
-        self.assertEqual([(b.minimum(), b.maximum()) for b in (legend, stats, steps)], [(8, 20)] * 3)
+        stats_toggle, steps_toggle = make_link_toggle(self.parent, "a"), make_link_toggle(self.parent, "b")
+        TextSizeLink(legend, ((stats, stats_toggle), (steps, steps_toggle)), self.parent)
+        stats_toggle.click()
+        self.assertEqual([(b.minimum(), b.maximum()) for b in (legend, stats, steps)], [(8, 20), (8, 20), (7, 22)])  # the unlinked steps keep their own range
         legend.setValue(24)  # past the common range: clamped in the box itself, so they stay equal
-        self.assertEqual((legend.value(), stats.value(), steps.value()), (20, 20, 20))
-        toggles[0].click()
+        self.assertEqual((legend.value(), stats.value()), (20, 20))
+        steps_toggle.click()
+        self.assertEqual([(b.minimum(), b.maximum()) for b in (legend, stats, steps)], [(8, 20)] * 3)
+        stats_toggle.click()
+        steps_toggle.click()
         self.assertEqual([(b.minimum(), b.maximum()) for b in (legend, stats, steps)], [(6, 24), (8, 20), (7, 22)])  # each its own range again
 
-    def test_sync_after_a_restore_makes_a_linked_set_equal_and_leaves_an_unlinked_one_alone(self) -> None:
+    def test_a_restore_copies_nothing_until_the_end_then_a_linked_menu_takes_the_legends_size(self) -> None:
         self.link.sync()
-        self.assertEqual(self._sizes(), (9, 14, 11))
-        # a restore: the link comes back first (it is the legend menu's remembered button), the sizes one after the other, and they disagree
+        self.assertEqual(self._sizes(), (9, 14, 11))  # nothing linked: nothing changes
+        # a restore: the chain comes back first (it is the menu's remembered button), the sizes one after the other, and they disagree
         self.link.begin_restore()
-        self.legend_toggle.setChecked(True)
+        self.stats_toggle.setChecked(True)
         self.assertEqual(self._sizes(), (9, 14, 11))  # turning the link on while restoring copies nothing
         self.legend.setValue(10)
-        self.stats.setValue(7)  # the later sizes restored must not overwrite the first
+        self.stats.setValue(7)  # the sizes restored later must not overwrite the legend's
         self.steps.setValue(15)
         self.assertEqual(self._sizes(), (10, 7, 15))
         self.link.end_restore()
-        self.assertEqual(self._sizes(), (10, 10, 10))  # the Legend menu's wins, whatever the order
-        self.steps.setValue(12)  # and it is a working link afterwards
-        self.assertEqual(self._sizes(), (12, 12, 12))
+        self.assertEqual(self._sizes(), (10, 10, 15))  # the legend's wins for the linked stats; the unlinked steps keep their saved size
+        self.stats.setValue(12)  # and it is a working link afterwards
+        self.assertEqual(self._sizes(), (12, 12, 15))
 
 
 # -- the evaluation chips on the plan bar (2026-11-13) -------------------------------------------------------------------------------
@@ -1378,18 +1379,19 @@ class ViewTabPanelTest(unittest.TestCase):
         self.view.lines_menu.findChild(QToolButton, "view_lines_reset").click()  # and Straight
         self.assertEqual((store._values["sensorgram/legend_mode"], store._values["sensorgram/line_style"]), ("auto", "straight"))
 
-    def test_the_chain_in_both_menus_links_the_legend_and_stats_text_sizes(self) -> None:
-        """Maintainer, 2026-11-13: link the legend's text size and the stats' text size together."""
+    def test_the_stats_chain_links_the_stats_text_size_to_the_legends(self) -> None:
+        """Maintainer, 2026-11-13: a chain in the Stats menu linking the stats' text size to the Legend's (and none in the Legend menu)."""
         stats = self.panel._steps.stats_controls
-        self.assertIn(self.view.text_link, self.view.legend_menu.findChildren(QtWidgets.QWidget))  # a chain beside each size box
-        self.assertIn(stats.text_link, stats.menu.findChildren(QtWidgets.QWidget))
-        self.assertFalse(self.view.text_link.isChecked() or stats.text_link.isChecked())  # off at the start: nothing changes until it is used
+        plan = self.panel._steps.plan_controls
+        self.assertEqual(self.view.legend_menu.findChildren(QtWidgets.QWidget, "text_size_link"), [])  # the Legend's size is the reference: no chain of its own
+        self.assertIn(stats.text_link, stats.menu.findChildren(QtWidgets.QWidget))  # a chain beside the stats' size box
+        self.assertFalse(stats.text_link.isChecked())  # off at the start: nothing changes until it is used
         self.view.legend_text.setValue(12)
         stats.size_box.setValue(9)
         self.assertEqual((self.view.legend_text.value(), stats.size_box.value()), (12, 9))  # independent as ever
-        stats.text_link.click()  # pressed in the Stats menu: the stats' size is the one both take
-        self.assertEqual((self.view.legend_text.value(), stats.size_box.value()), (9, 9))
-        self.assertTrue(self.view.text_link.isChecked())  # one state in both menus
+        stats.text_link.click()  # the stats take the legend's size
+        self.assertEqual((self.view.legend_text.value(), stats.size_box.value()), (12, 12))
+        self.assertFalse(plan.text_link.isChecked())  # the Steps chain is a switch of its own
         self.view.legend_text.setValue(15)
         self._settle()
         self.assertEqual(stats.settings().text_pt, 15)  # the stats numbers follow ...
@@ -1399,8 +1401,9 @@ class ViewTabPanelTest(unittest.TestCase):
         self._settle()
         self.assertEqual((self.view.legend_text.value(), self.panel._plot.view().legend_text_pt), (11, 11))  # and the other way round
 
-    def test_the_steps_menu_has_a_size_row_with_a_link_to_the_legend_and_stats_sizes(self) -> None:
-        """Maintainer, 2026-11-13: "the step font size control ... should be in the step menu, with a link icon in the step and stats menus linked to the legend text size"."""
+    def test_the_steps_chain_links_the_step_names_text_size_to_the_legends_and_leaves_the_stats_alone(self) -> None:
+        """Maintainer, 2026-11-13: "the step font size control ... should be in the step menu, with a link icon in the step and stats menus linked to the legend text size"
+        (two independent chains, not one shared state)."""
         plan = self.panel._steps.plan_controls
         stats = self.panel._steps.stats_controls
         inside = plan.menu.findChildren(QtWidgets.QWidget)
@@ -1409,47 +1412,65 @@ class ViewTabPanelTest(unittest.TestCase):
         self.assertIn("Size", [label.text() for label in plan.menu.findChildren(QtWidgets.QLabel)])
         self.assertTrue(self.panel._view_ribbon.isAncestorOf(plan.menu))
         self.view.legend_text.setValue(14)
+        stats.size_box.setValue(9)
         plan.size_box.setValue(8)
         self.assertEqual((self.view.legend_text.value(), stats.size_box.value(), plan.size_box.value()), (14, 9, 8))  # independent until linked
-        plan.text_link.click()  # pressed in the Steps menu: its size is the one all three take
-        self.assertEqual((self.view.legend_text.value(), stats.size_box.value(), plan.size_box.value()), (8, 8, 8))
-        self.assertTrue(self.view.text_link.isChecked() and stats.text_link.isChecked() and plan.text_link.isChecked())  # one state in the three menus
+        plan.text_link.click()  # the step names take the legend's size; the stats are not part of it
+        self.assertEqual((self.view.legend_text.value(), stats.size_box.value(), plan.size_box.value()), (14, 9, 14))
+        self.assertTrue(plan.text_link.isChecked() and not stats.text_link.isChecked())
         self.view.legend_text.setValue(12)
         self._settle()
-        self.assertEqual(plan.size_box.value(), 12)
-        self.assertEqual(self.panel._plot.plan_bar().settings().text_pt, 12)  # and the names on the plot are drawn at it
+        self.assertEqual((plan.size_box.value(), stats.size_box.value()), (12, 9))
+        self.assertEqual(self.panel._plot.plan_bar().settings().text_pt, 12)  # the names on the plot are drawn at it
+        stats.text_link.click()  # both chains on: each follows the legend on its own
+        self.assertEqual((self.view.legend_text.value(), stats.size_box.value(), plan.size_box.value()), (12, 12, 12))
+        stats.text_link.click()  # the stats off again: the steps keep following
+        self.view.legend_text.setValue(10)
+        self.assertEqual((stats.size_box.value(), plan.size_box.value()), (12, 10))
 
-    def test_the_legend_can_ignore_the_bar_from_its_menu_and_the_reset_puts_that_and_the_link_back(self) -> None:
+    def test_the_legend_can_ignore_the_bar_from_its_menu_and_its_reset_puts_that_back_and_a_linked_size_follows(self) -> None:
         self.assertIn("Position", [label.text() for label in self.view.legend_menu.findChildren(QtWidgets.QLabel)])
         self.assertFalse(self.panel._plot.view().legend_over_bar)  # as the legend always was
         self.view.legend_over_bar.setChecked(True)
         self.assertTrue(self.panel._plot.view().legend_over_bar)
         stats = self.panel._steps.stats_controls
+        plan = self.panel._steps.plan_controls
         self.view.legend_text.setValue(15)
-        self.view.text_link.click()  # linked: the stats size is 15 too
-        self.assertTrue(stats.text_link.isChecked())
+        stats.text_link.click()  # linked: the stats size is 15 too
         self.assertEqual(stats.size_box.value(), 15)
+        plan.size_box.setValue(13)  # not linked
         self.view.legend_menu.findChild(QToolButton, "view_legend_reset").click()
         self.assertFalse(self.panel._plot.view().legend_over_bar)
-        self.assertFalse(self.view.text_link.isChecked() or stats.text_link.isChecked() or self.panel._steps.plan_controls.text_link.isChecked())  # unlinked, in all three menus
         self.assertEqual(self.view.legend_text.value(), 9)  # the legend's size is back at its default ...
-        self.assertEqual(stats.size_box.value(), 15)  # ... and the stats size is not part of the legend's reset: it keeps what it had (unlinked first, so it was not dragged along)
+        self.assertTrue(stats.text_link.isChecked())  # ... the chain is the Stats menu's own setting, so the reset leaves it ...
+        self.assertEqual(stats.size_box.value(), 9)  # ... and the linked stats follow the legend, as a link means
+        self.assertEqual(plan.size_box.value(), 13)  # the unlinked step names are not part of it
 
-    def test_the_link_and_the_legend_position_are_remembered_and_a_restored_linked_pair_is_equal(self) -> None:
+    def test_each_link_is_remembered_on_its_own_and_a_restored_linked_size_is_the_legends(self) -> None:
         store = UiStateStore({})
         self.panel.restore_ui_state(store)
+        stats = self.panel._steps.stats_controls
         self.view.legend_over_bar.setChecked(True)
         self.view.legend_text.setValue(13)
-        self.view.text_link.click()
-        self.assertEqual((store._values["sensorgram/text_size_linked"], store._values["sensorgram/view_legend_over_bar"]), (True, True))
+        stats.text_link.click()
+        self.assertEqual((store._values["sensorgram/stats_text_size_linked"], store._values["sensorgram/view_legend_over_bar"]), (True, True))
+        self.assertFalse(store._values.get("sensorgram/plan_text_size_linked", False))  # the Steps chain was not pressed
         saved = dict(store._values)
-        saved["sensorgram/stats_text_pt"] = 7  # a stored pair that disagrees: the link makes it equal again (the Legend menu's size wins)
+        saved["sensorgram/stats_text_pt"] = 7  # a stored size that disagrees with the legend's: the link makes it equal again (the Legend menu's size wins)
+        saved["sensorgram/plan_text_pt"] = 21  # an unlinked size is left as it was saved
         other = self._new_panel()
         self._others.append(other)
         other.restore_ui_state(UiStateStore(saved))
-        self.assertTrue(all(c.isChecked() for c in (other._view_controls.text_link, other._steps.stats_controls.text_link, other._steps.plan_controls.text_link)))
+        other_stats, other_plan = other._steps.stats_controls, other._steps.plan_controls
+        self.assertTrue(other_stats.text_link.isChecked() and not other_plan.text_link.isChecked())
         self.assertTrue(other._plot.view().legend_over_bar)
-        self.assertEqual((other._view_controls.legend_text.value(), other._steps.stats_controls.size_box.value(), other._steps.plan_controls.size_box.value()), (13, 13, 13))
+        self.assertEqual((other._view_controls.legend_text.value(), other_stats.size_box.value(), other_plan.size_box.value()), (13, 13, 21))
+
+        saved["sensorgram/plan_text_size_linked"] = True  # and the Steps chain, remembered the same way
+        third = self._new_panel()
+        self._others.append(third)
+        third.restore_ui_state(UiStateStore(saved))
+        self.assertEqual((third._view_controls.legend_text.value(), third._steps.stats_controls.size_box.value(), third._steps.plan_controls.size_box.value()), (13, 13, 13))
 
     def test_the_stats_menu_has_a_legend_room_in_steps_of_25_percent_with_off_and_remembers_it(self) -> None:
         stats = self.panel._steps.stats_controls
