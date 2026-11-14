@@ -1535,26 +1535,28 @@ class ViewTabPanelTest(unittest.TestCase):
         self.assertEqual(picker.place(), "top-right")  # pressing the pressed pip again keeps it
         for button in picker.buttons.values():
             self.assertTrue(button.toolTip())
-            self.assertFalse(button.icon().isNull())
-        self.assertNotEqual(picker.buttons["top-right"].icon().pixmap(32, 32).toImage(), picker.buttons["top-left"].icon().pixmap(32, 32).toImage())  # solid against a ring
+        self.assertIn("border-radius: 4px", picker.buttons["auto"].styleSheet())  # the middle cell is round, the corners are squares (as in the ROI labels' picker)
+        self.assertIn("border-radius: 2px", picker.buttons["top-left"].styleSheet())
 
-    def test_the_dice_is_compact_and_stays_compact_after_a_theme_change(self) -> None:
-        """Maintainer, 2026-11-13: "it takes too much space, the points are far apart": 16 px cells with no gap (48 px), not ribbon-sized buttons with gaps (76 px)."""
+    def test_the_place_picker_has_the_size_of_the_roi_label_grid_and_keeps_it_after_a_theme_change(self) -> None:
+        """Maintainer, 2026-11-14: the Place row looks like the ROI labels' placement grid: 9 px cells, 2 px apart (31 px), not pips."""
+        from lspr_imaging_app.panels.image.label_placement_picker import CELL_SIZE, CELL_SPACING
+
         picker = self.panel._steps.plan_controls._roles_place
         self.panel._steps.plan_controls.evaluation_menu.show()
-        for _round in range(2):  # the second time after `refresh_theme`, which gives an `IconToggle` back the ribbon's 24 px unless the pip puts its size back
+        step = CELL_SIZE + CELL_SPACING
+        for _round in range(2):
             for place, button in picker.buttons.items():
-                self.assertEqual((button.width(), button.height()), (16, 16), place)
-                self.assertLessEqual(button.iconSize().width(), 14)
+                self.assertEqual((button.width(), button.height()), (CELL_SIZE, CELL_SIZE), place)
             hint = picker.sizeHint()
-            self.assertLessEqual((hint.width(), hint.height()), (48, 48))  # three cells of 16 px, nothing between them
+            self.assertLessEqual((hint.width(), hint.height()), (3 * CELL_SIZE + 2 * CELL_SPACING,) * 2)
             picker.refresh_theme()
         picker.setGeometry(0, 0, picker.sizeHint().width(), picker.sizeHint().height())  # the menu was never opened, so its layout has not run: lay it out
         picker.layout().activate()
         centres = {place: button.geometry().center() for place, button in picker.buttons.items()}
-        self.assertEqual(centres["top-right"].x() - centres["top-left"].x(), 32)  # corners two cells apart: the pips sit 16 px from each other
-        self.assertEqual(centres["bottom-left"].y() - centres["top-left"].y(), 32)
-        self.assertEqual((centres["auto"].x() - centres["top-left"].x(), centres["auto"].y() - centres["top-left"].y()), (16, 16))  # the middle one cell in
+        self.assertEqual(centres["top-right"].x() - centres["top-left"].x(), 2 * step)  # corners two cells apart
+        self.assertEqual(centres["bottom-left"].y() - centres["top-left"].y(), 2 * step)
+        self.assertEqual((centres["auto"].x() - centres["top-left"].x(), centres["auto"].y() - centres["top-left"].y()), (step, step))  # the middle one cell in
 
     def test_every_pip_gives_its_edge_and_side_to_the_plan_bar_and_a_changed_signal_goes_out_once(self) -> None:
         controls = self.panel._steps.plan_controls
