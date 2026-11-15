@@ -312,8 +312,10 @@ class ModifyBrushTest(unittest.TestCase):
         undo_manager.undo()
         self.assertFalse(self.area.has_selection(), "one drag, one step")
 
-    def test_a_second_stroke_adds_to_the_first(self) -> None:
+    def test_a_second_stroke_adds_to_the_first_in_the_add_mode(self) -> None:
+        """In the Add mode (picked in the mode picker); with Replace picked a stroke replaces the selection, like every tool (2026-11-16)."""
         self.form.size_spin.setValue(5)
+        self.area.set_combine_mode(ADD)
         self._arm_brush()
         self._drag([(20.5, 20.5), (25.5, 20.5), (40.5, 20.5)])
         self._drag([(20.5, 60.5), (25.5, 60.5), (40.5, 60.5)])
@@ -339,14 +341,60 @@ class ModifyBrushTest(unittest.TestCase):
         self.panel._on_scene_clicked(_Click(self._scene(50.5, 50.5), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
         self.assertFalse(self.area.has_selection(), "the Subtract mode erases the stamp it painted")
 
-    def test_replace_and_intersect_modes_paint_too_a_stroke_has_nothing_to_replace(self) -> None:
+    def test_replace_makes_each_stroke_the_new_selection_and_add_builds_one_up_from_several(self) -> None:
+        """Maintainer, 2026-11-16: "I select replace, and when I start drawing it switches to add mode". The brush does what the picked mode
+        says, like every selection tool: with Replace the second stroke replaces the first; with Add (or Shift) the strokes accumulate."""
         self.form.size_spin.setValue(5)
         self._arm_brush()
-        for how in (REPLACE, INTERSECT, ADD):
-            self.area.clear()
-            self.area.set_combine_mode(how)
-            self._drag([(30.5, 30.5), (35.5, 30.5), (50.5, 30.5)])
-            np.testing.assert_array_equal(self._selected(), stroke_region([(30.5, 30.5), (50.5, 30.5)], 5.0, SHAPE), how)
+        first = stroke_region([(30.5, 30.5), (50.5, 30.5)], 5.0, SHAPE)
+        second = stroke_region([(30.5, 60.5), (50.5, 60.5)], 5.0, SHAPE)
+        self.area.clear()
+        self.area.set_combine_mode(REPLACE)
+        self._drag([(30.5, 30.5), (35.5, 30.5), (50.5, 30.5)])
+        np.testing.assert_array_equal(self._selected(), first)
+        self._drag([(30.5, 60.5), (35.5, 60.5), (50.5, 60.5)])
+        np.testing.assert_array_equal(self._selected(), second, "Replace: the second stroke is the whole selection now")
+        self.assertEqual(self.area.combine_mode(), REPLACE, "and the picked mode is still Replace")
+        self.area.clear()
+        self.area.set_combine_mode(ADD)
+        self._drag([(30.5, 30.5), (35.5, 30.5), (50.5, 30.5)])
+        self._drag([(30.5, 60.5), (35.5, 60.5), (50.5, 60.5)])
+        np.testing.assert_array_equal(self._selected(), first | second, "Add: the strokes accumulate")
+        self.area.clear()
+        self.area.set_combine_mode(REPLACE)
+        self._drag([(30.5, 30.5), (35.5, 30.5), (50.5, 30.5)])
+        self._drag([(30.5, 60.5), (35.5, 60.5), (50.5, 60.5)], Qt.KeyboardModifier.ShiftModifier)
+        np.testing.assert_array_equal(self._selected(), first | second, "Shift adds to a Replace selection")
+
+    def test_the_intersect_mode_keeps_only_what_the_stroke_covers_it_does_not_jump_to_add(self) -> None:
+        """Maintainer, 2026-11-16: "when I select intersection of the selection, it will always jump to adding mode" (Draw). The picked mode
+        stays Intersect, a stroke intersects, and the toolbar's mode button never shows Add."""
+        self.form.size_spin.setValue(5)
+        box = np.zeros(SHAPE, dtype=bool)
+        box[20:70, 20:70] = True
+        self.area.combine_region(box, REPLACE)
+        self.area.set_combine_mode(INTERSECT)
+        self._arm_brush()
+        self._drag([(30.5, 40.5), (35.5, 40.5), (60.5, 40.5)])
+        stroke = stroke_region([(30.5, 40.5), (60.5, 40.5)], 5.0, SHAPE)
+        np.testing.assert_array_equal(self._selected(), box & stroke)
+        self.assertEqual(undo_manager.undo_label, "Brush intersect")
+        self.assertEqual(self.area.combine_mode(), INTERSECT, "the picked mode is untouched")
+        self.assertIsNone(self.panel._selection_tools.combine_badge.held_mode(), "no key is down, so the button shows the picked mode")
+
+    def test_shift_alt_intersects_for_the_brush_too_and_a_click_is_one_intersecting_stamp(self) -> None:
+        self.form.size_spin.setValue(9)
+        box = np.zeros(SHAPE, dtype=bool)
+        box[20:70, 20:70] = True
+        self.area.combine_region(box, REPLACE)
+        self._arm_brush()
+        self._drag([(30.5, 40.5), (35.5, 40.5), (60.5, 40.5)], Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.AltModifier)
+        stroke = stroke_region([(30.5, 40.5), (60.5, 40.5)], 9.0, SHAPE)
+        np.testing.assert_array_equal(self._selected(), box & stroke)
+        self.area.combine_region(box, REPLACE)
+        self.area.set_combine_mode(INTERSECT)
+        self.panel._on_scene_clicked(_Click(self._scene(50.5, 50.5), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        np.testing.assert_array_equal(self._selected(), box & stroke_region([(50.5, 50.5)], 9.0, SHAPE))
 
     def test_the_lock_clips_a_stroke_and_refuses_one_wholly_outside(self) -> None:
         box = self._lock_box(20, 90, 20, 120)

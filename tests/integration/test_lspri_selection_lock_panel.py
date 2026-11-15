@@ -368,7 +368,7 @@ class SelectionLockPanelTest(unittest.TestCase):
     def test_a_mode_set_from_elsewhere_changes_the_button_and_checks_its_menu_entry(self) -> None:
         self.area.set_combine_mode(SUBTRACT)  # as the restore of the saved mode does
         self.assertTrue(self.toolbar.mode_menu.actions()[2].isChecked())
-        self.assertIn("Take away", self.toolbar.mode_button.toolTip())
+        self.assertTrue(self.toolbar.mode_button.toolTip().startswith("Selection mode: Subtract"), "the short names (2026-11-16)")
 
     def test_the_button_shows_the_venn_diagram_of_the_picked_mode_and_the_menu_all_four(self) -> None:
         pictures = []
@@ -383,22 +383,22 @@ class SelectionLockPanelTest(unittest.TestCase):
                 self.assertNotEqual(pictures[i], pictures[j])
 
     def test_the_venn_icons_colour_what_the_mode_does(self) -> None:
-        """Blue where the result is selected, orange where the old selection is taken away, nothing elsewhere (the table `MODE_AREAS`, pinned
-        against the real combine rules in the unit test). Sampled at the middle of each of the three areas of the 24-unit design, on the 48 px
-        picture (so every sample is clear of the outlines)."""
+        """Grey where the result is selected (the fill was blue until 2026-11-16: too close to the pink and green circle lines), nothing elsewhere,
+        what is taken away included (it was orange; the table `MODE_AREAS` still tells it from "not selected", pinned against the real combine rules in the unit test). Sampled at
+        the middle of each of the three areas of the 24-unit design, on the 48 px picture (so every sample is clear of the outlines)."""
         from PyQt6.QtGui import QColor
 
-        from lspr_imaging_app.panels.image.combine_mode_icons import MODE_AREAS, NOT_SELECTED, REMOVED, SELECTED
-        from lspr_imaging_app.panels.mask_edit_common import ADD_COLOR, SUBTRACT_COLOR
+        from lspr_imaging_app.panels.image.combine_mode_icons import MODE_AREAS, SELECTED
+        from lspr_imaging_app.panels.image.selection_palette import ICON_SELECTED_FILL
 
-        colour = {SELECTED: QColor(ADD_COLOR), REMOVED: QColor(SUBTRACT_COLOR)}
+        colour = {SELECTED: QColor(ICON_SELECTED_FILL)}
         points = ((11, 24), (24, 24), (37, 24))  # A only, both, B only
         for how, action in zip(COMBINE_MODES, self.toolbar.mode_menu.actions()):
             image = action.icon().pixmap(48, 48, QIcon.Mode.Normal, QIcon.State.Off).toImage()
             for point, state in zip(points, MODE_AREAS[how]):
                 got = image.pixelColor(*point)
-                if state == NOT_SELECTED:
-                    self.assertEqual(got.alpha(), 0, (how, point, "nothing is drawn where nothing is selected"))
+                if state != SELECTED:  # not selected, or taken away (the orange fill is gone, 2026-11-16): the plain background
+                    self.assertEqual(got.alpha(), 0, (how, point, "nothing is drawn where nothing ends up selected: the circle's own colour shows it"))
                 else:
                     self.assertEqual((got.red(), got.green(), got.blue(), got.alpha()), (colour[state].red(), colour[state].green(), colour[state].blue(), 255), (how, point))
 

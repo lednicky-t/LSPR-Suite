@@ -351,10 +351,18 @@ class SelectByValueTest(unittest.TestCase):
         self.assertEqual(len({image.cacheKey() for image in pictures}), 3)
         modify = self.toolbar.modify_button.icon().pixmap(48, 48).toImage()
         self.assertEqual(modify, old_icons.morphology_icon().pixmap(48, 48).toImage(), "Modify selection: the old Morphology icon")
+        # Draw (2026-11-16): the Tabler pencil that turns blue while armed, like Rectangle / Lasso / Wand: no frame, no fixed grey
+        brush = self.toolbar.tool_button(AreaSelectionMode.BRUSH)
+        self.assertFalse(brush.isChecked())
+        idle = brush.icon().pixmap(48, 48, QIcon.Mode.Normal, QIcon.State.Off).toImage()
+        brush.click()
+        armed = brush.icon().pixmap(48, 48, QIcon.Mode.Normal, QIcon.State.Off).toImage()
+        self.assertNotEqual(idle, armed, "the armed Draw tool changes colour")
         self.assertEqual(
-            self.toolbar.tool_button(AreaSelectionMode.BRUSH).icon().pixmap(48, 48, QIcon.Mode.Normal, QIcon.State.Off).toImage(),
-            old_icons.draw_icon().pixmap(48, 48).toImage(), "Draw: the old pencil",
+            brush.icon().pixmap(48, 48, QIcon.Mode.Normal, QIcon.State.On).toImage(), armed, "and has no separate framed picture"
         )
+        brush.click()
+        self.assertEqual(brush.icon().pixmap(48, 48, QIcon.Mode.Normal, QIcon.State.Off).toImage(), idle)
 
     def test_a_tool_arms_with_its_button_and_a_second_click_leaves_it(self) -> None:
         button = self.toolbar.tool_button(AreaSelectionMode.THRESHOLD)
