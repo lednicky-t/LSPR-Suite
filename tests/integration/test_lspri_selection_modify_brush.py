@@ -234,6 +234,14 @@ class ModifyBrushTest(unittest.TestCase):
         self.assertFalse(self.menu.apply("dilate"))
         self.assertIn("nothing is selected", self.messages[-1])
 
+    def test_every_entry_of_the_modify_menu_has_an_icon(self) -> None:
+        """2026-11-16 (maintainer): Invert selection and Fill holes had none."""
+        for operation, action in self.menu.actions_by_operation.items():
+            self.assertFalse(action.icon().isNull(), operation)
+        self.assertFalse(self.menu.invert_action.icon().isNull())
+        pictures = {a.icon().pixmap(24, 24).toImage().cacheKey() for a in (*self.menu.actions_by_operation.values(), self.menu.invert_action)}
+        self.assertEqual(len(pictures), len(self.menu.actions_by_operation) + 1, "each entry has a picture of its own")
+
     def test_every_operation_gives_what_the_old_mask_tool_gave_on_the_same_pixels(self) -> None:
         shape = _disk(60, 80, 12) | _disk(60, 104, 5)
         for radius in (1, 3, 7):

@@ -78,7 +78,11 @@ class SelectionToolbarSectionsTest(unittest.TestCase):
 
     def test_a_horizontal_line_divides_each_pair_of_sections(self) -> None:
         lines = self.toolbar._separators
-        self.assertEqual(len(lines), 4)
+        self.assertEqual(len(lines), 5, "four between the five sections, and one above the View button pinned under the column")
+        self.assertFalse(self.toolbar.column.content.isAncestorOf(lines[-1]))
+        self.assertGreater(lines[-1].mapTo(self.toolbar, QPoint(0, 0)).y(), self.toolbar.column.geometry().bottom() - 1)
+        self.assertLess(lines[-1].mapTo(self.toolbar, QPoint(0, 0)).y(), self.toolbar.view_button.geometry().top(), "above the View button")
+        lines = lines[:4]
         sections = self._sections()
         for line, above, below in zip(lines, sections[:-1], sections[1:]):
             self.assertEqual(line.frameShape(), QtWidgets.QFrame.Shape.HLine)
@@ -90,7 +94,7 @@ class SelectionToolbarSectionsTest(unittest.TestCase):
     def test_no_line_sits_inside_a_section(self) -> None:
         for section in self._sections():
             ys = [self._y(w) for w in section]
-            for line in self.toolbar._separators:
+            for line in self.toolbar._separators[:4]:  # the fifth is outside the column
                 self.assertFalse(min(ys) < self._y(line) < max(ys), "a divider between two buttons of one section")
 
     def test_the_lines_are_drawn_in_the_themes_border_colour(self) -> None:

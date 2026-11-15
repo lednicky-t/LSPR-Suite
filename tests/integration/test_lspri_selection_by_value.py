@@ -44,6 +44,7 @@ try:
     from lspr_imaging_app.image_tools.preprocess import histogram_highlight_region
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image import mask_edit_tool_icons as old_icons
+    from lspr_imaging_app.panels.image.histogram_overlay_toggle import HistogramOverlayToggle
     from lspr_imaging_app.panels.image.selection_by_value import MODE_METHODS, ValueMethod
     from lspr_imaging_app.panels.mask_tool_settings import push_tool_settings
     from lspr_imaging_app.roi import RoiToolbox
@@ -406,6 +407,34 @@ class SelectByValueTest(unittest.TestCase):
             self.assertEqual(not self.form._threshold_box.isHidden(), method is ValueMethod.THRESHOLD)
             self.assertEqual(not self.form._contrast_box.isHidden(), method is ValueMethod.LOCAL_CONTRAST)
             self.assertIn(self.form.method_label(), self.form.title.text())
+
+    def test_the_histogram_pop_up_has_a_copy_of_the_view_tabs_show_hide_switch(self) -> None:
+        """2026-11-16: the Histogram range's pop-up holds a histogram-icon toggle for the highlight tint; it is the View tab -> Masks switch's
+        copy: a click goes to the real control (and the panel's tint), and the real control's changes come back."""
+        toggles = self.form.findChildren(HistogramOverlayToggle)
+        self.assertEqual(len(toggles), 1)
+        toggle = toggles[0]
+        controls = self.panel._view_tab.highlight_controls
+        tint = self.panel._highlight_tint
+        self.assertTrue(self.form._histogram_box.isAncestorOf(toggle), "inside the Histogram range's part, so Threshold / Local contrast do not show it")
+        self.assertEqual(toggle.isChecked(), controls.is_shown())
+
+        def picture() -> object:
+            return toggle.icon().pixmap(48, 48).toImage()
+
+        shown_picture = picture()
+        self.assertEqual(shown_picture, old_icons.histogram_selection_icon(True).pixmap(48, 48).toImage())
+        toggle.click()  # hide it from the pop-up
+        self.assertFalse(controls.is_shown())
+        self.assertFalse(tint.visible, "the panel's tint follows, as for a click on the View tab")
+        self.assertFalse(toggle.isChecked())
+        self.assertEqual(picture(), old_icons.histogram_selection_icon(False).pixmap(48, 48).toImage())
+        controls.set_visible(True)  # show it from the View tab (or Show all)
+        self.assertTrue(toggle.isChecked())
+        self.assertTrue(tint.visible)
+        self.assertEqual(picture(), shown_picture)
+        controls.set_visible(False)
+        self.assertFalse(toggle.isChecked(), "a change made elsewhere is followed without a click")
 
     # -- right-drag on the image changes the armed tool's numbers -----------------------------------------------------
 

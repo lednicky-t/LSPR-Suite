@@ -149,6 +149,34 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         self.assertIn("Invert selection", entries)
         self.assertFalse(self.area.has_selection())
 
+    def test_the_right_click_menu_keeps_invert_and_deselect_together_and_exit_tool_last(self) -> None:
+        """2026-11-16 (maintainer): Exit tool is always the last entry, Invert and Deselect sit side by side and wear icons."""
+        from unittest.mock import patch
+
+        from PyQt6.QtCore import QPointF
+
+        self.area.set_rectangle(5, 5, 20, 20)
+        scene = self.image_panel._plot.vb.mapViewToScene(QPointF(10.5, 10.5))
+        tool_entries = [("Select ROIs in selection", True), ("Lock to selection", True), ("Unlock", False), ("Exit tool", True)]
+        with patch("lspr_imaging_app.panels.image.interaction.show_tool_context_menu", return_value=None) as menu:
+            self.image_panel._interaction._context_menu(tool_entries, scene)
+        labels = [label for label, _enabled in menu.call_args.args[1]]
+        self.assertEqual(labels[-1], "Exit tool")
+        self.assertEqual(labels.count("Exit tool"), 1)
+        self.assertEqual(labels.index("Deselect"), labels.index("Invert selection") + 1, "together")
+        self.assertLess(labels.index("Lock to selection"), labels.index("Invert selection"))
+        icons = menu.call_args.kwargs["icons"]
+        self.assertFalse(icons["Invert selection"].isNull())
+        self.assertFalse(icons["Deselect"].isNull())
+        self.assertIn("Invert selection", menu.call_args.kwargs["separate_before"])
+        self.assertIn("Exit tool", menu.call_args.kwargs["separate_before"])
+
+        # With no tool entry at all (a plain right-click) the order is the same, Lock before the pair.
+        with patch("lspr_imaging_app.panels.image.interaction.show_tool_context_menu", return_value=None) as plain:
+            self.image_panel._interaction._context_menu([], scene)
+        plain_labels = [label for label, _enabled in plain.call_args.args[1]]
+        self.assertEqual(plain_labels[-2:], ["Invert selection", "Deselect"])
+
     def test_only_the_picked_tool_is_checked(self) -> None:
         self._pick(AreaSelectionMode.LASSO)
         self._pick(AreaSelectionMode.WAND)
