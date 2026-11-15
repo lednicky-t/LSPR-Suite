@@ -79,12 +79,12 @@ class WandMethodsTest(unittest.TestCase):
         self.assertIsNone(result.region)
         self.assertIn("less than the threshold", result.message)
 
-    def test_contrast_in_the_gaps_of_an_array_runs_into_max_size(self) -> None:
-        # The gaps between the disks are darker than the local mean (which includes the disks) and all connected:
-        # a click there would select the whole gap network, so it is refused instead.
+    def test_contrast_in_the_gaps_of_an_array_selects_the_whole_gap_network(self) -> None:
+        # The gaps between the disks are darker than the local mean (which includes the disks) and all connected: a click
+        # there selects the whole gap network. There is no size limit (2026-11-15: the selection is undoable instead).
         result = self._run(WandMethod.CONTRAST, 300, 450)
-        self.assertIsNone(result.region)
-        self.assertIn("Max size", result.message)
+        self.assertIsNotNone(result.region, result.message)
+        self.assertGreater(result.area_px, 20000, "more than the old Max size default")
 
     def test_edges_puts_the_border_on_the_steepest_point_of_the_edge(self) -> None:
         for row, col, radius in (_DUST, _PARTICLE):
@@ -101,10 +101,40 @@ class WandMethodsTest(unittest.TestCase):
         self.assertTrue(np.all(large.region[small.region]), "a larger tolerance keeps every pixel of a smaller one")
         self.assertGreater(large.area_px, small.area_px)
 
-    def test_a_region_larger_than_max_size_is_refused_not_cut(self) -> None:
-        result = self._run(WandMethod.BRIGHTNESS, 300, 450, brightness_tolerance=60.0, max_area_px=500)
-        self.assertIsNone(result.region)
-        self.assertIn("Max size", result.message)
+    def test_a_big_region_is_returned_whole_there_is_no_size_limit(self) -> None:
+        from scipy import ndimage
+
+        result = self._run(WandMethod.BRIGHTNESS, 300, 450, brightness_tolerance=60.0)
+        self.assertIsNotNone(result.region, result.message)
+        self.assertGreater(result.area_px, 20000)
+        _labels, count = ndimage.label(result.region, structure=np.ones((3, 3), dtype=bool))
+        self.assertEqual(count, 1, "still one connected region")
+        self.assertFalse(hasattr(WandSettings(), "max_area_px"), "the Max size setting is gone")
+
+    def test_edges_follows_a_feature_far_bigger_than_the_old_max_size(self) -> None:
+        # A disk of radius 90 px (25,000 px: over the old 20,000 px default) in plain noise. A click at its centre (flat
+        # inside) and a click just inside its edge (on the slope: no flat piece to start from) both find the whole disk.
+        # (A click exactly on the crest of the edge is not asked for: from a single pixel there the background floods over
+        # the crest first, as it did before the limit went.)
+        rng = np.random.default_rng(5)
+        yy, xx = np.mgrid[0:400, 0:500].astype(float)
+        image = 1000.0 + 600.0 / (1.0 + np.exp((np.hypot(yy - 200, xx - 250) - 90.0) / 1.0)) + rng.normal(0.0, _NOISE, yy.shape)
+        for row, col in ((200, 250), (200, 250 + 87)):
+            result = wand_region(image.astype(np.float32), row, col, WandSettings(method=WandMethod.EDGES, smoothing_px=1.5))
+            self.assertIsNotNone(result.region, (row, col, result.message))
+            self.assertAlmostEqual(_equivalent_radius(result.region), 90.0, delta=0.08 * 90.0, msg=(row, col))
+
+    def test_edges_on_plain_background_selects_the_open_ground_instead_of_refusing(self) -> None:
+        # Click in the plain background around a dark blob: the region is the edge-free ground connected to the click, as
+        # for the other methods (it was refused as "too big" while Max size existed). Ground enclosed by edges (the blob)
+        # is shared out to the region around it by the method's design, so it is part of this one.
+        rng = np.random.default_rng(6)
+        yy, xx = np.mgrid[0:200, 0:300].astype(float)
+        image = 1000.0 - 500.0 / (1.0 + np.exp((np.hypot(yy - 100, xx - 150) - 20.0) / 1.0)) + rng.normal(0.0, _NOISE, yy.shape)
+        result = wand_region(image.astype(np.float32), 10, 10, WandSettings(method=WandMethod.EDGES, smoothing_px=1.5))
+        self.assertIsNotNone(result.region, result.message)
+        self.assertGreater(result.area_px, 50000)
+        self.assertTrue(result.region[10, 10])
 
     def test_a_click_without_a_value_selects_nothing(self) -> None:
         for method in WandMethod:

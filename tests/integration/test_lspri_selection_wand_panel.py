@@ -13,7 +13,8 @@ import unittest
 from pathlib import Path
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtCore import QPoint, QPointF, QSize, Qt
+from PyQt6.QtGui import QContextMenuEvent, QWheelEvent
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -81,6 +82,39 @@ def _pump(seconds: float = 0.1) -> None:
     while time.monotonic() < deadline:
         _APP.processEvents()
         time.sleep(0.01)
+
+
+class _Drag:
+    """The slice of pyqtgraph's MouseDragEvent the view box and the wand's right-drag read."""
+
+    def __init__(self, down: QPointF, here: QPointF, *, start: bool, finish: bool,
+                 button: Qt.MouseButton = Qt.MouseButton.RightButton) -> None:
+        self._down, self._here, self._start, self._finish, self._button = down, here, start, finish, button
+        self.accepted = False
+
+    def button(self) -> Qt.MouseButton:
+        return self._button
+
+    def isStart(self) -> bool:  # noqa: N802
+        return self._start
+
+    def isFinish(self) -> bool:  # noqa: N802
+        return self._finish
+
+    def scenePos(self) -> QPointF:  # noqa: N802
+        return self._here
+
+    def buttonDownScenePos(self) -> QPointF:  # noqa: N802
+        return self._down
+
+    def modifiers(self) -> Qt.KeyboardModifier:
+        return Qt.KeyboardModifier.NoModifier
+
+    def accept(self) -> None:
+        self.accepted = True
+
+    def ignore(self) -> None:
+        self.accepted = False
 
 
 class _Click:
@@ -200,6 +234,186 @@ class SelectionWandPanelTest(unittest.TestCase):
             self.assertEqual(not self.form.brightness_tolerance.isHidden(), method is WandMethod.BRIGHTNESS)
             self.assertEqual(not self.form.edge_threshold.isHidden(), method is WandMethod.EDGES)
             self.assertEqual(self.form.background.isEnabled(), method is WandMethod.CONTRAST)
+
+    def test_a_right_click_on_the_wand_button_opens_its_settings_and_a_left_click_does_not(self) -> None:
+        toolbar = self.panel._selection_toolbar
+        button = toolbar.tool_button(AreaSelectionMode.WAND)
+        self.assertFalse(hasattr(toolbar, "settings_button"), "the gear button is gone")
+        button.click()  # a left click arms the wand, nothing more
+        self.assertFalse(toolbar.wand_menu.isVisible())
+        centre = button.rect().center()
+        QtWidgets.QApplication.sendEvent(
+            button, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, centre, button.mapToGlobal(centre))
+        )
+        self.assertTrue(toolbar.wand_menu.isVisible())
+        self.assertTrue(self.form.isVisible())
+        self.assertIs(self.active_tool.active(), ImageTool.SELECT_AREA, "the right-click leaves the armed tool alone")
+        toolbar.wand_menu.close()
+        # The other two tools have no pop-up.
+        other = toolbar.tool_button(AreaSelectionMode.RECTANGLE)
+        QtWidgets.QApplication.sendEvent(other, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, centre, other.mapToGlobal(centre)))
+        self.assertFalse(toolbar.wand_menu.isVisible())
+
+    def _wheel(self, button: QtWidgets.QWidget, delta_y: int) -> None:
+        point = QPointF(5.0, 5.0)
+        event = QWheelEvent(point, point, QPoint(0, 0), QPoint(0, delta_y), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                            Qt.ScrollPhase.NoScrollPhase, False)
+        QtWidgets.QApplication.sendEvent(button, event)
+
+    def test_the_wheel_over_the_wand_button_switches_the_method_and_wraps_round(self) -> None:
+        button = self.panel._selection_toolbar.tool_button(AreaSelectionMode.WAND)
+        order = [WandMethod(self.form.method.itemData(i)) for i in range(self.form.method.count())]
+        self.assertEqual(len(order), 3)
+        self.form.method.setCurrentIndex(0)
+        self._wheel(button, -120)  # towards the user: the next method
+        self.assertIs(self.form.settings().method, order[1])
+        self._wheel(button, -120)
+        self._wheel(button, -120)
+        self.assertIs(self.form.settings().method, order[0], "after the last one it wraps round to the first")
+        self._wheel(button, 120)  # away from the user: the previous method
+        self.assertIs(self.form.settings().method, order[2])
+        for _ in range(7):  # a smooth wheel sends small deltas: 8 x 15 make one notch
+            self._wheel(button, -15)
+        self.assertIs(self.form.settings().method, order[2])
+        self._wheel(button, -15)
+        self.assertIs(self.form.settings().method, order[0])
+        self.assertIn(self.form.method_label(), button.toolTip(), "the tool tip names the method in use")
+        self.assertFalse(self.area.has_selection(), "turning the wheel makes no selection")
+
+    def test_the_wand_button_shows_a_different_icon_for_each_method_and_none_is_another_tools(self) -> None:
+        toolbar = self.panel._selection_toolbar
+        wand = toolbar.tool_button(AreaSelectionMode.WAND)
+
+        def picture(button: QtWidgets.QAbstractButton):
+            return button.icon().pixmap(QSize(32, 32)).toImage()
+
+        icons = []
+        for index in range(self.form.method.count()):
+            self.form.method.setCurrentIndex(index)
+            image = picture(wand)
+            self.assertFalse(image.isNull(), "every method has a vendored icon")
+            icons.append(image)
+        others = [picture(toolbar.tool_button(AreaSelectionMode.RECTANGLE)), picture(toolbar.tool_button(AreaSelectionMode.LASSO)),
+                  toolbar.deselect_button.icon().pixmap(QSize(32, 32)).toImage()]
+        everything = icons + others
+        for i, first in enumerate(everything):
+            for second in everything[i + 1 :]:
+                self.assertNotEqual(first, second)
+
+    def test_the_icon_follows_the_method_when_it_is_switched_from_anywhere(self) -> None:
+        wand = self.panel._selection_toolbar.tool_button(AreaSelectionMode.WAND)
+        self.form.method.setCurrentIndex(0)
+        first = wand.icon().pixmap(QSize(32, 32)).toImage()
+        self._wheel(wand, -120)  # the wheel switches the method ...
+        second = wand.icon().pixmap(QSize(32, 32)).toImage()
+        self.assertNotEqual(first, second)
+        self.form.method.setCurrentIndex(0)  # ... and so does the pop-up's drop-down
+        self.assertEqual(wand.icon().pixmap(QSize(32, 32)).toImage(), first)
+
+    def _right_drag(self, down: tuple[float, float], here: tuple[float, float], *, start: bool = False, finish: bool = False) -> bool:
+        event = _Drag(QPointF(*down), QPointF(*here), start=start, finish=finish)
+        self.panel._plot.vb.mouseDragEvent(event)
+        return event.accepted
+
+    def test_a_right_drag_with_the_wand_armed_sets_the_threshold_and_grow(self) -> None:
+        self._arm_wand()
+        form = self.form
+        form.method.setCurrentIndex(0)
+        self.assertIs(form.settings().method, WandMethod.CONTRAST)
+        form.contrast_threshold.setValue(3.0)
+        form.grow.setValue(0)
+        centre = self.panel._plot.vb.mapViewToScene(QPointF(80.0, 60.0))
+        x0, y0 = centre.x(), centre.y()
+        self.assertTrue(self._right_drag((x0, y0), (x0 + 5, y0 - 2), start=True))
+        self.assertTrue(self.panel._wand_drag.readout.isVisible(), "the numbers are shown beside the cursor while the button is down")
+        self.assertTrue(self._right_drag((x0, y0), (x0 + 80, y0 - 30)))
+        # Right = a bigger region: for Contrast that is a lower threshold (80 px = one halving); up 30 px = 5 px of Grow.
+        self.assertAlmostEqual(form.contrast_threshold.value(), 1.5, places=1)
+        self.assertEqual(form.grow.value(), 5)
+        self.assertIn("1.5", self.panel._wand_drag.readout.text())
+        self.assertTrue(self._right_drag((x0, y0), (x0 + 80, y0 - 30), finish=True))
+        self.assertFalse(self.panel._wand_drag.readout.isVisible())
+        self.assertFalse(self.area.has_selection(), "adjusting selects nothing")
+        # The next drag starts from the new numbers; dragging left and down goes the other way.
+        self._right_drag((x0, y0), (x0 - 1, y0 + 1), start=True)
+        self._right_drag((x0, y0), (x0 - 80, y0 + 12), finish=True)
+        self.assertAlmostEqual(form.contrast_threshold.value(), 3.0, places=1)
+        self.assertEqual(form.grow.value(), 3)
+
+    def test_a_right_drag_makes_the_region_bigger_to_the_right_for_every_method(self) -> None:
+        self._arm_wand()
+        centre = self.panel._plot.vb.mapViewToScene(QPointF(80.0, 60.0))
+        x0, y0 = centre.x(), centre.y()
+        for index in range(self.form.method.count()):
+            self.form.method.setCurrentIndex(index)
+            box = self.form.threshold_box()
+            box.setValue(4.0)
+            self._right_drag((x0, y0), (x0, y0), start=True)
+            self._right_drag((x0, y0), (x0 + 80, y0), finish=True)
+            expected = 2.0 if self.form.settings().method is WandMethod.CONTRAST else 8.0
+            self.assertAlmostEqual(box.value(), expected, places=1, msg=self.form.settings().method)
+
+    def test_a_right_drag_stays_inside_the_ranges_of_the_spin_boxes(self) -> None:
+        self._arm_wand()
+        self.form.method.setCurrentIndex(1)  # Brightness
+        box = self.form.threshold_box()
+        self._right_drag((100, 100), (100, 100), start=True)
+        self._right_drag((100, 100), (5000, -5000), finish=True)
+        self.assertEqual(box.value(), box.maximum())
+        self.assertEqual(self.form.grow.value(), self.form.grow.maximum())
+        self._right_drag((100, 100), (100, 100), start=True)
+        self._right_drag((100, 100), (-5000, 5000), finish=True)
+        self.assertEqual(box.value(), box.minimum())
+        self.assertEqual(self.form.grow.value(), self.form.grow.minimum())
+
+    def test_a_right_drag_without_the_wand_armed_is_left_alone(self) -> None:
+        self.assertIsNone(self.active_tool.active())
+        before = self.form.settings()
+        self.assertFalse(self._right_drag((100, 100), (180, 70), start=True), "declined: the view box ignores it as before")
+        self.assertFalse(self._right_drag((100, 100), (180, 70), finish=True))
+        self.assertEqual(self.form.settings(), before)
+        self.assertFalse(self.panel._wand_drag.readout.isVisible())
+
+    # -- undo of the selection -------------------------------------------------------------------------------------
+
+    def test_undo_takes_back_each_wand_click_in_turn_and_redo_brings_it_again(self) -> None:
+        self._arm_wand()
+        self._click(*BRIGHT[:2])
+        first = self._selected().copy()
+        self._click(*DARK[:2], Qt.KeyboardModifier.ShiftModifier)
+        both = self._selected().copy()
+        self.assertEqual(undo_manager.undo_label, "Add to selection")
+        undo_manager.undo()
+        np.testing.assert_array_equal(self._selected(), first)
+        undo_manager.undo()
+        self.assertFalse(self.area.has_selection())
+        undo_manager.redo()
+        undo_manager.redo()
+        np.testing.assert_array_equal(self._selected(), both)
+
+    def test_a_wand_click_that_ran_into_the_background_is_one_undo_away(self) -> None:
+        # The case the removed Max size guard was for: Brightness with a huge tolerance selects (nearly) the whole image.
+        self._arm_wand()
+        self._click(*BRIGHT[:2])
+        small = self._selected().copy()
+        self.form.method.setCurrentIndex(1)  # Brightness
+        self.form.brightness_tolerance.setValue(100.0)
+        self._click(10, 140, Qt.KeyboardModifier.ShiftModifier)
+        self.assertGreater(int(self._selected().sum()), 10 * int(small.sum()), "no size limit: the leak is selected")
+        undo_manager.undo()
+        np.testing.assert_array_equal(self._selected(), small)
+
+    def test_the_selection_and_the_mask_undo_in_the_order_they_were_made(self) -> None:
+        actions = self.panel._mask_tab.selection_actions
+        self._arm_wand()
+        self._click(*BRIGHT[:2])
+        actions.add_button.click()
+        self.assertIsNotNone(self._mask_now())
+        undo_manager.undo()  # the mask edit goes first; the selection stays
+        self.assertIsNone(self._mask_now())
+        self.assertTrue(self.area.has_selection())
+        undo_manager.undo()  # then the selection
+        self.assertFalse(self.area.has_selection())
 
     # -- the Mask tab's Selection group and undo -------------------------------------------------------------------
 
