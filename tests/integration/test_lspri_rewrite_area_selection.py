@@ -40,7 +40,7 @@ try:
     )
     from lspr_imaging_app.panels.histogram import HistogramPanel
     from lspr_imaging_app.panels.image import ImagePanel
-    from lspr_imaging_app.panels.image.general_group import AreaSelectionPicker
+    from lspr_imaging_app.panels.image.selection_toolbar import SelectionToolbar
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import (
         AreaSelectionMode,
@@ -117,19 +117,42 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     # -- picker / gesture / ants -------------------------------------------
 
-    def _picker(self) -> AreaSelectionPicker:
-        return self.image_panel._area_picker
+    def _toolbar(self) -> SelectionToolbar:
+        return self.image_panel._selection_toolbar
 
     def _pick(self, mode: AreaSelectionMode) -> None:
-        self._picker()._actions[mode].trigger()
+        self._toolbar().tool_button(mode).click()
 
-    def test_picking_rectangle_arms_the_draw_tool_and_all_disarms_and_clears(self) -> None:
+    def test_picking_rectangle_arms_the_draw_tool_and_picking_it_again_leaves_it_keeping_the_selection(self) -> None:
         self._pick(AreaSelectionMode.RECTANGLE)
         self.assertIs(self.active_tool.active(), ImageTool.SELECT_AREA)
+        self.assertTrue(self._toolbar().tool_button(AreaSelectionMode.RECTANGLE).isChecked())
         self.area.set_rectangle(5, 5, 20, 20)
-        self._pick(AreaSelectionMode.ALL)
+        self._pick(AreaSelectionMode.RECTANGLE)
         self.assertIsNone(self.active_tool.active())
+        self.assertFalse(self._toolbar().tool_button(AreaSelectionMode.RECTANGLE).isChecked())
+        self.assertTrue(self.area.has_selection())
+
+    def test_deselect_clears_the_selection_and_is_enabled_only_with_one(self) -> None:
+        button = self._toolbar().deselect_button
+        self.assertFalse(button.isEnabled())
+        self.area.set_rectangle(5, 5, 20, 20)
+        self.assertTrue(button.isEnabled())
+        button.click()
         self.assertFalse(self.area.has_selection())
+        self.assertFalse(button.isEnabled())
+
+    def test_only_the_picked_tool_is_checked(self) -> None:
+        self._pick(AreaSelectionMode.LASSO)
+        self._pick(AreaSelectionMode.WAND)
+        checked = [mode for mode in (AreaSelectionMode.RECTANGLE, AreaSelectionMode.LASSO, AreaSelectionMode.WAND)
+                   if self._toolbar().tool_button(mode).isChecked()]
+        self.assertEqual(checked, [AreaSelectionMode.WAND])
+        self.assertIs(self.area.mode(), AreaSelectionMode.WAND)
+
+    def test_the_wand_does_not_drag(self) -> None:
+        self._pick(AreaSelectionMode.WAND)
+        self.assertFalse(self.image_panel._area_tool.begin_gesture(10.0, 10.0))
 
     def test_repicking_the_same_mode_rearms_after_another_tool(self) -> None:
         self._pick(AreaSelectionMode.LASSO)
@@ -248,24 +271,16 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     # -- ribbon / general group -------------------------------------------------
 
-    def test_the_picker_is_the_first_group_of_the_mask_and_rois_tabs_and_an_icon_of_the_view_tabs_image_group(self) -> None:
+    def test_the_selection_tools_sit_beside_the_image_not_in_the_ribbon_tabs(self) -> None:
         panel = self.image_panel
-        mask_picker, roi_picker, view_picker = panel._area_pickers
-        self.assertFalse(hasattr(panel, "_general_row"), "the always-visible General group is gone")
+        toolbar = panel._selection_toolbar
+        self.assertFalse(hasattr(panel, "_area_pickers"), "the per-tab pickers are gone (2026-11-14)")
+        self.assertTrue(toolbar.isVisible())
+        self.assertIs(toolbar.parentWidget(), panel._view.parentWidget(), "beside the image canvas")
+        self.assertLess(toolbar.geometry().right(), panel._view.geometry().left() + 1, "left of the image")
+        for tab in (panel._mask_tab, panel._roi_tab, panel._view_tab):
+            self.assertFalse(tab.isAncestorOf(toolbar))
         self.assertIs(panel._cursor_overlay.icon_label.parent(), panel._view_tab._display_range_controls)
-        for tab, picker in ((panel._mask_tab, mask_picker), (panel._roi_tab, roi_picker)):
-            self.assertIs(tab.layout().itemAt(0).widget(), picker.parentWidget(), "first group of the tab")
-            self.assertTrue(tab.layout().itemAt(0).widget().isAncestorOf(picker))
-        layout = panel._view_tab._display_range_controls.layout()
-        self.assertEqual([layout.itemAt(i).widget() for i in (0, 1)], [panel._cursor_overlay.icon_label, view_picker])
-        # Same icon-button size as the cursor toggle.
-        self.assertEqual(panel._cursor_overlay.icon_label.size(), mask_picker.size())
-
-    def test_every_copy_of_the_picker_shows_the_same_pick(self) -> None:
-        self.image_panel._area_pickers[2]._actions[AreaSelectionMode.LASSO].trigger()
-        self.assertIs(self.area.mode(), AreaSelectionMode.LASSO)
-        for picker in self.image_panel._area_pickers:
-            self.assertTrue(picker._actions[AreaSelectionMode.LASSO].isChecked())
 
     def test_cursor_readout_text_goes_to_the_canvas_not_the_button(self) -> None:
         overlay = self.image_panel._cursor_overlay
@@ -365,6 +380,41 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         self.assertAlmostEqual(self.roi_toolbox.roi_by_id(roi_id).center_x, 20.0)
         self.image_panel._on_drag(roi_id, 30.0, 25.0)  # inside
         self.assertAlmostEqual(self.roi_toolbox.roi_by_id(roi_id).center_x, 30.0)
+
+    def test_select_rois_in_selection_takes_the_ones_inside_or_partly_inside(self) -> None:
+        """Maintainer (2026-11-15): the selection tools' right-click "Select ROIs in selection" - ROIs inside or partly
+        inside. Selection = cols 0..39; ROIs of diameter 20 at x 20 (inside), 45 (reaches x 35: partly), 70 (outside)."""
+        inside = self.roi_toolbox.add_roi(20.0, 20.0)
+        partly = self.roi_toolbox.add_roi(45.0, 20.0)
+        outside = self.roi_toolbox.add_roi(70.0, 50.0)
+        self.area.set_rectangle(0, 0, 40, 64)
+        selection = self.image_panel._selection
+        selection.set_roi_selection({outside})
+        self.image_panel._interaction.select_rois_in_selection()
+        self.assertEqual(set(selection.selected_roi_ids()), {inside, partly}, "replaces the ROI selection")
+        self.area.invert()  # an inverted selection: the ROIs touching the outside
+        self.image_panel._interaction.select_rois_in_selection()
+        self.assertEqual(set(selection.selected_roi_ids()), {partly, outside})
+
+    def test_rois_touching_is_an_exact_disc_square_overlap(self) -> None:
+        roi_id = self.roi_toolbox.add_roi(30.5, 30.5)  # radius 10
+        queries = self.image_panel._roi_queries
+        mask = np.zeros(_SHAPE, dtype=bool)
+        mask[30, 41] = True  # square x 41..42: nearest point 10.5 px away - outside the disc
+        self.assertEqual(queries.rois_touching(mask), set())
+        mask[30, 40] = True  # square x 40..41: nearest point 9.5 px away - overlaps
+        self.assertEqual(queries.rois_touching(mask), {roi_id})
+        self.assertEqual(queries.rois_touching(np.zeros(_SHAPE, dtype=bool)), set())
+
+    def test_the_selection_toolbar_is_as_narrow_as_its_icons(self) -> None:
+        """Maintainer (2026-11-15): "as narrow as possible" - the icons had ~5 px to the left edge."""
+        toolbar = self._toolbar()
+        button = toolbar.tool_button(AreaSelectionMode.RECTANGLE)
+        self.assertEqual(toolbar.width(), button.width())
+        self.assertEqual(button.width(), button.iconSize().width() + 4, "2 px each side of the icon")
+        self.assertEqual(button.x(), 0)
+        # "not symmetric": pyqtgraph's 9 px layout margin no longer sits between the icons and the image.
+        self.assertLessEqual(self.image_panel._plot.vb.sceneBoundingRect().left(), 2.0)
 
     def test_in_selection_gate_used_by_add_roi(self) -> None:
         self.area.set_rectangle(0, 0, 40, 64)

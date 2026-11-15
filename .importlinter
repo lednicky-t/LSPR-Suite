@@ -141,6 +141,7 @@ source_modules =
     lspr_imaging_app.image_tools.mask.transient_gaps
     lspr_imaging_app.image_tools.mask.transient_masks
     lspr_imaging_app.image_tools.preprocess
+    lspr_imaging_app.image_tools.selection_wand
     lspr_imaging_app.roi.array_detection
     lspr_imaging_app.roi.array_pipeline
     lspr_imaging_app.roi.detection

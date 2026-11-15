@@ -296,8 +296,11 @@ class DriftBaselinePanelTest(unittest.TestCase):
         menus: list[tuple[float, object]] = []
         plot.anchor_menu_requested.disconnect()  # the panel would pop a real menu up
         plot.anchor_menu_requested.connect(lambda x, pos: menus.append((x, pos)))
-        top = view_box.viewRect().top() if view_box.viewRect().top() > view_box.viewRect().bottom() else view_box.viewRect().bottom()
-        far = view_box.mapViewToScene(QPointF(self._x_of(5), top))  # above cube 5 but far from its squares
+        rect = view_box.viewRect()
+        # Near the top, above cube 5 but far from its squares - 5 % inside the edge: the exact edge mapped to scene y
+        # 0.99999999999909 against a view box starting at 1.0, so the click fell outside by rounding (fixed 2026-11-15).
+        top = max(rect.top(), rect.bottom()) - 0.05 * abs(rect.height())
+        far = view_box.mapViewToScene(QPointF(self._x_of(5), top))
         self.assertTrue(plot._on_anchor_right_click(far))  # taken by the edit mode: the view's own menu does not open
         self.assertEqual(len(menus), 1)
         self.assertEqual(len(self.m.analysis_settings.statistics_settings().baseline_anchor_points), 2)  # nothing removed

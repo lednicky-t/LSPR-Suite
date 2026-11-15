@@ -1336,8 +1336,8 @@ class RewriteImagePanelTest(unittest.TestCase):
 
     def test_general_group_is_the_leftmost_group_in_the_mask_tab(self) -> None:
         """"put this icon [Clear] in solo section 'General' and put section
-        the most left" (2026-10-02, maintainer request). Since 2026-10-23 the area-selection "Select" group and its
-        divider come first (items 0 and 1); General is the next group."""
+        the most left" (2026-10-02, maintainer request). Since 2026-11-14 the "Selection" group (Add / Subtract the
+        area selection; it replaced the 2026-10-23 "Select" picker) and its divider come first; General is next."""
         page = self._ribbon_page("Mask")
         general_group = self.panel._mask_tab._clear_action.parentWidget()
         self.assertIs(general_group.parentWidget(), page)
@@ -1348,8 +1348,8 @@ class RewriteImagePanelTest(unittest.TestCase):
         separator_index = layout.indexOf(self.panel._mask_tab._separators[0])
         state_group = self.panel._mask_tab._scope_toggle.parentWidget()
         state_index = layout.indexOf(state_group)
-        self.assertEqual(general_index, 2, "General follows the Select group and its divider")
-        self.assertEqual(self.panel._mask_tab._select_group._label.text(), "Select")
+        self.assertEqual(general_index, 2, "General follows the Selection group and its divider")
+        self.assertEqual(self.panel._mask_tab._selection_label.text(), "Selection")
         self.assertLess(general_index, separator_index)
         self.assertLess(separator_index, state_index)
 
@@ -1782,7 +1782,12 @@ class RewriteImagePanelTest(unittest.TestCase):
                 canvas_column = sub_layout
                 break
         self.assertIsNotNone(canvas_column)
-        self.assertLess(canvas_column.indexOf(self.panel._top_bar), canvas_column.indexOf(self.panel._view))
+        # Since 2026-11-14 the view sits in a row with the selection toolbar, below the top bar.
+        canvas_row_index = next(
+            i for i in range(canvas_column.count())
+            if canvas_column.itemAt(i).layout() is not None and canvas_column.itemAt(i).layout().indexOf(self.panel._view) != -1
+        )
+        self.assertLess(canvas_column.indexOf(self.panel._top_bar), canvas_row_index)
         style = self.panel._top_bar.styleSheet()
         self.assertIn("border: none", style)
         self.assertNotIn("border-bottom", style)  # the edge line under the top ribbon was removed, 2026-10-18
