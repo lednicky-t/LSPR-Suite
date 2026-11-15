@@ -9,7 +9,7 @@ panel's Measure button (`panels/image/transforms_settings.py`).
 Same split and conventions as `test_lspri_rewrite_rotate_tool.py`/
 `test_lspri_rewrite_crop_tool.py`: driven by direct method calls
 (`MeasureLineTool.on_left_click`, `ImagePanel._on_scene_clicked`/
-`_on_measure_drag_event` with small stand-in events, real `QToolButton.
+`CanvasInteraction.on_measure_drag` with small stand-in events, real `QToolButton.
 click()`) and signal emissions, never screen coordinates. The calibration
 math itself (the symmetric/asymmetric-axis fallback, the three `ValueError`
 guards) is pinned in `tests/unit/test_lspri_rewrite_measurement_
@@ -114,7 +114,7 @@ class _Click:
 
 
 class _Drag:
-    """The slice of pyqtgraph's MouseDragEvent `_on_measure_drag_event`
+    """The slice of pyqtgraph's MouseDragEvent `CanvasInteraction.on_measure_drag`
     reads - same shape as `test_lspri_rewrite_crop_tool.py`'s own `_Drag`."""
 
     def __init__(self, scene_pos: QPointF, *, start: bool, finish: bool) -> None:
@@ -334,9 +334,9 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(10.0, 20.0)
         self._click(70.0, 22.0)
-        self.assertTrue(self.panel._on_measure_drag_event(self._drag_event(70.0, 22.0, start=True)))
-        self.panel._on_measure_drag_event(self._drag_event(80.0, 30.0))
-        self.panel._on_measure_drag_event(self._drag_event(80.0, 30.0, finish=True))
+        self.assertTrue(self.panel._interaction.on_measure_drag(self._drag_event(70.0, 22.0, start=True)))
+        self.panel._interaction.on_measure_drag(self._drag_event(80.0, 30.0))
+        self.panel._interaction.on_measure_drag(self._drag_event(80.0, 30.0, finish=True))
         self.assertPointAlmostEqual(self.tool.current_anchor_point(), (80.0, 30.0))
         self.assertPointAlmostEqual(
             (self.geometry.settings().measurement_anchor2_x_px, self.geometry.settings().measurement_anchor2_y_px),
@@ -347,9 +347,9 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(10.0, 20.0)
         self._click(70.0, 22.0)
-        self.panel._on_measure_drag_event(self._drag_event(10.0, 20.0, start=True))
-        self.panel._on_measure_drag_event(self._drag_event(0.0, 5.0))
-        self.panel._on_measure_drag_event(self._drag_event(0.0, 5.0, finish=True))
+        self.panel._interaction.on_measure_drag(self._drag_event(10.0, 20.0, start=True))
+        self.panel._interaction.on_measure_drag(self._drag_event(0.0, 5.0))
+        self.panel._interaction.on_measure_drag(self._drag_event(0.0, 5.0, finish=True))
         settings = self.geometry.settings()
         self.assertPointAlmostEqual((settings.measurement_anchor1_x_px, settings.measurement_anchor1_y_px), (0.0, 5.0))
         self.assertPointAlmostEqual(self.tool.current_anchor_point(), (70.0, 22.0))  # untouched
@@ -358,11 +358,11 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(10.0, 20.0)
         self._click(70.0, 22.0)
-        self.assertFalse(self.panel._on_measure_drag_event(self._drag_event(40.0, 40.0, start=True)))
+        self.assertFalse(self.panel._interaction.on_measure_drag(self._drag_event(40.0, 40.0, start=True)))
 
     def test_drag_before_a_pair_is_placed_is_not_claimed(self) -> None:
         self.active_tool.set_active(ImageTool.MEASURE, True)
-        self.assertFalse(self.panel._on_measure_drag_event(self._drag_event(10.0, 20.0, start=True)))
+        self.assertFalse(self.panel._interaction.on_measure_drag(self._drag_event(10.0, 20.0, start=True)))
 
     def test_dragging_does_not_reset_typed_um_fields(self) -> None:
         """Unlike a fresh two-click placement, a drag refinement must not
@@ -371,9 +371,9 @@ class MeasureToolTest(unittest.TestCase):
         self._click(10.0, 20.0)
         self._click(70.0, 22.0)
         self.controls._dx_um_spin.setValue(123.0)
-        self.panel._on_measure_drag_event(self._drag_event(70.0, 22.0, start=True))
-        self.panel._on_measure_drag_event(self._drag_event(80.0, 30.0))
-        self.panel._on_measure_drag_event(self._drag_event(80.0, 30.0, finish=True))
+        self.panel._interaction.on_measure_drag(self._drag_event(70.0, 22.0, start=True))
+        self.panel._interaction.on_measure_drag(self._drag_event(80.0, 30.0))
+        self.panel._interaction.on_measure_drag(self._drag_event(80.0, 30.0, finish=True))
         self.assertEqual(self.controls._dx_um_spin.value(), 123.0)
 
     def test_dragging_is_not_an_undo_step(self) -> None:
@@ -381,9 +381,9 @@ class MeasureToolTest(unittest.TestCase):
         self.active_tool.set_active(ImageTool.MEASURE, True)
         self._click(10.0, 20.0)
         self._click(70.0, 22.0)
-        self.panel._on_measure_drag_event(self._drag_event(70.0, 22.0, start=True))
-        self.panel._on_measure_drag_event(self._drag_event(80.0, 30.0))
-        self.panel._on_measure_drag_event(self._drag_event(80.0, 30.0, finish=True))
+        self.panel._interaction.on_measure_drag(self._drag_event(70.0, 22.0, start=True))
+        self.panel._interaction.on_measure_drag(self._drag_event(80.0, 30.0))
+        self.panel._interaction.on_measure_drag(self._drag_event(80.0, 30.0, finish=True))
         undo_manager.undo()
         self.assertEqual(self.geometry.settings().rotation_angle_deg, 0.0)
         self.assertPointAlmostEqual(self.tool.current_anchor_point(), (80.0, 30.0))
@@ -485,9 +485,9 @@ class MeasureToolTest(unittest.TestCase):
         self._click(0.0, 0.0)
         self._click(30.0, 0.0)
         self.assertAlmostEqual(self.controls._dx_um_spin.value(), 60.0)  # 30 * 2
-        self.panel._on_measure_drag_event(self._drag_event(30.0, 0.0, start=True))
-        self.panel._on_measure_drag_event(self._drag_event(40.0, 0.0))
-        self.panel._on_measure_drag_event(self._drag_event(40.0, 0.0, finish=True))
+        self.panel._interaction.on_measure_drag(self._drag_event(30.0, 0.0, start=True))
+        self.panel._interaction.on_measure_drag(self._drag_event(40.0, 0.0))
+        self.panel._interaction.on_measure_drag(self._drag_event(40.0, 0.0, finish=True))
         self.assertAlmostEqual(self.controls._dx_um_spin.value(), 80.0)  # 40 * 2 - tracks the drag
 
     def test_without_a_calibration_a_fresh_placement_still_resets_to_zero(self) -> None:

@@ -455,13 +455,13 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
 
     def test_drag_through_the_view_box_creates_a_rect(self) -> None:
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.assertTrue(self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True)))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.assertTrue(self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True)))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         self.assertEqual(self.tool.rect(), (10, 10, 40, 30))
 
     def test_left_drag_does_nothing_when_crop_is_not_active(self) -> None:
-        self.assertFalse(self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True)))
+        self.assertFalse(self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True)))
         self.assertIsNone(self.tool.rect())
 
     def test_plain_click_does_not_select_rois_while_crop_is_active(self) -> None:
@@ -474,9 +474,9 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
 
     def test_right_click_menu_apply_commits_the_crop(self) -> None:
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         # Both actions enabled (there is something pending) - the patched
         # QMenu.exec auto-picks the first enabled one: "Apply crop".
         self.panel._on_scene_clicked(_Click(self.panel._plot.vb.mapViewToScene(QPointF(0.0, 0.0)), Qt.MouseButton.RightButton))
@@ -541,9 +541,9 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
 
     def test_size_controls_widget_shows_and_tracks_the_rect(self) -> None:
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         self.assertTrue(self.panel._crop_controls.isVisible())
         self.assertEqual(self.panel._crop_controls._width_spin.value(), 40)
         self.assertEqual(self.panel._crop_controls._height_spin.value(), 30)
@@ -553,9 +553,9 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         rightmost widget in the layout - sits flush with the crop
         rectangle's right edge, not the old bottom-left anchor."""
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         expected_scene = self.panel._plot.vb.mapViewToScene(QPointF(50.0, 40.0))
         expected_view = self.panel._view.mapFromScene(expected_scene)
         controls = self.panel._crop_controls
@@ -601,17 +601,17 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
 
     def test_editing_the_size_fields_resizes_the_rect(self) -> None:
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         self.panel._crop_controls.size_edited.emit(20, 15)
         self.assertEqual(self.tool.rect(), (10, 10, 20, 15))
 
     def test_apply_button_click_applies_the_crop(self) -> None:
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         self.panel._crop_controls._apply_button.click()
         self.assertTrue(self.geometry.settings().crop.enabled)
 
@@ -622,9 +622,9 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         (`_PREVIEW_TOOLS`), so without exiting, apply would commit
         correctly but look like nothing happened."""
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         self.panel._crop_controls._apply_button.click()
         self.assertIsNone(self.active_tool.active())
         self.assertFalse(self.tool.is_active())
@@ -637,8 +637,8 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         follows) - and must not exit the tool over nothing having changed."""
         self.geometry.set_image_tools_enabled(False)
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         self.panel._crop_controls._apply_button.click()
         self.assertFalse(self.geometry.settings().crop.enabled)
         self.assertIs(self.active_tool.active(), ImageTool.CROP)
@@ -646,15 +646,15 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
 
     def test_deactivating_crop_hides_the_size_controls(self) -> None:
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         self.active_tool.set_active(ImageTool.CROP, False)
         self.assertFalse(self.panel._crop_controls.isVisible())
 
     def test_crop_and_rotate_remain_mutually_exclusive(self) -> None:
         self.active_tool.set_active(ImageTool.CROP, True)
-        self.panel._on_crop_drag_event(self._drag_event(10.0, 10.0, start=True))
-        self.panel._on_crop_drag_event(self._drag_event(50.0, 40.0, finish=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(10.0, 10.0, start=True))
+        self.panel._interaction.on_crop_drag(self._drag_event(50.0, 40.0, finish=True))
         self.active_tool.set_active(ImageTool.ROTATE, True)
         self.assertFalse(self.tool.is_active())
         self.assertIsNone(self.tool.rect())
@@ -691,7 +691,7 @@ class _Click:
 
 
 class _Drag:
-    """The slice of pyqtgraph's MouseDragEvent `_on_crop_drag_event` reads."""
+    """The slice of pyqtgraph's MouseDragEvent `CanvasInteraction.on_crop_drag` reads."""
 
     def __init__(self, scene_pos: QPointF, *, start: bool, finish: bool) -> None:
         self._pos, self._start, self._finish = scene_pos, start, finish

@@ -161,9 +161,9 @@ class SelectionWandPanelTest(unittest.TestCase):
         self.messages: list[str] = []
         self.panel.tool_status_changed.connect(self.messages.append)
         self.dataset.load_dataset(_write_dataset(Path(self._tmp.name)))
-        _pump_until(lambda: self.panel._wand._image is not None and self.panel._image_item.levels is not None)
+        _pump_until(lambda: self.panel._selection_tools.wand._image is not None and self.panel._image_item.levels is not None)
         _pump()
-        self.form = self.panel._selection_toolbar.wand_form
+        self.form = self.panel._selection_tools.toolbar.wand_form
 
     def tearDown(self) -> None:
         self.panel._renderer.stop()
@@ -172,12 +172,12 @@ class SelectionWandPanelTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def _arm_wand(self) -> None:
-        self.panel._selection_toolbar.tool_button(AreaSelectionMode.WAND).click()
+        self.panel._selection_tools.toolbar.tool_button(AreaSelectionMode.WAND).click()
 
     def _click(self, row: int, col: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier) -> None:
         scene = self.panel._plot.vb.mapViewToScene(QPointF(col + 0.5, row + 0.5))
         self.panel._on_scene_clicked(_Click(scene, Qt.MouseButton.LeftButton, modifiers))
-        self.assertTrue(_pump_until(lambda: not self.panel._wand.is_busy()), "the wand finished")
+        self.assertTrue(_pump_until(lambda: not self.panel._selection_tools.wand.is_busy()), "the wand finished")
         _pump(0.05)
 
     def _selected(self) -> np.ndarray:
@@ -236,7 +236,7 @@ class SelectionWandPanelTest(unittest.TestCase):
             self.assertEqual(self.form.background.isEnabled(), method is WandMethod.CONTRAST)
 
     def test_a_right_click_on_the_wand_button_opens_its_settings_and_a_left_click_does_not(self) -> None:
-        toolbar = self.panel._selection_toolbar
+        toolbar = self.panel._selection_tools.toolbar
         button = toolbar.tool_button(AreaSelectionMode.WAND)
         self.assertFalse(hasattr(toolbar, "settings_button"), "the gear button is gone")
         button.click()  # a left click arms the wand, nothing more
@@ -261,7 +261,7 @@ class SelectionWandPanelTest(unittest.TestCase):
         QtWidgets.QApplication.sendEvent(button, event)
 
     def test_the_wheel_over_the_wand_button_switches_the_method_and_wraps_round(self) -> None:
-        button = self.panel._selection_toolbar.tool_button(AreaSelectionMode.WAND)
+        button = self.panel._selection_tools.toolbar.tool_button(AreaSelectionMode.WAND)
         order = [WandMethod(self.form.method.itemData(i)) for i in range(self.form.method.count())]
         self.assertEqual(len(order), 3)
         self.form.method.setCurrentIndex(0)
@@ -281,7 +281,7 @@ class SelectionWandPanelTest(unittest.TestCase):
         self.assertFalse(self.area.has_selection(), "turning the wheel makes no selection")
 
     def test_the_wand_button_shows_a_different_icon_for_each_method_and_none_is_another_tools(self) -> None:
-        toolbar = self.panel._selection_toolbar
+        toolbar = self.panel._selection_tools.toolbar
         wand = toolbar.tool_button(AreaSelectionMode.WAND)
 
         def picture(button: QtWidgets.QAbstractButton):
@@ -294,14 +294,14 @@ class SelectionWandPanelTest(unittest.TestCase):
             self.assertFalse(image.isNull(), "every method has a vendored icon")
             icons.append(image)
         others = [picture(toolbar.tool_button(AreaSelectionMode.RECTANGLE)), picture(toolbar.tool_button(AreaSelectionMode.LASSO)),
-                  toolbar.deselect_button.icon().pixmap(QSize(32, 32)).toImage()]
+                  toolbar.tool_button(AreaSelectionMode.BRUSH).icon().pixmap(QSize(32, 32)).toImage()]
         everything = icons + others
         for i, first in enumerate(everything):
             for second in everything[i + 1 :]:
                 self.assertNotEqual(first, second)
 
     def test_the_icon_follows_the_method_when_it_is_switched_from_anywhere(self) -> None:
-        wand = self.panel._selection_toolbar.tool_button(AreaSelectionMode.WAND)
+        wand = self.panel._selection_tools.toolbar.tool_button(AreaSelectionMode.WAND)
         self.form.method.setCurrentIndex(0)
         first = wand.icon().pixmap(QSize(32, 32)).toImage()
         self._wheel(wand, -120)  # the wheel switches the method ...
@@ -325,14 +325,14 @@ class SelectionWandPanelTest(unittest.TestCase):
         centre = self.panel._plot.vb.mapViewToScene(QPointF(80.0, 60.0))
         x0, y0 = centre.x(), centre.y()
         self.assertTrue(self._right_drag((x0, y0), (x0 + 5, y0 - 2), start=True))
-        self.assertTrue(self.panel._wand_drag.readout.isVisible(), "the numbers are shown beside the cursor while the button is down")
+        self.assertTrue(self.panel._selection_tools.wand_drag.readout.isVisible(), "the numbers are shown beside the cursor while the button is down")
         self.assertTrue(self._right_drag((x0, y0), (x0 + 80, y0 - 30)))
         # Right = a bigger region: for Contrast that is a lower threshold (80 px = one halving); up 30 px = 5 px of Grow.
         self.assertAlmostEqual(form.contrast_threshold.value(), 1.5, places=1)
         self.assertEqual(form.grow.value(), 5)
-        self.assertIn("1.5", self.panel._wand_drag.readout.text())
+        self.assertIn("1.5", self.panel._selection_tools.wand_drag.readout.text())
         self.assertTrue(self._right_drag((x0, y0), (x0 + 80, y0 - 30), finish=True))
-        self.assertFalse(self.panel._wand_drag.readout.isVisible())
+        self.assertFalse(self.panel._selection_tools.wand_drag.readout.isVisible())
         self.assertFalse(self.area.has_selection(), "adjusting selects nothing")
         # The next drag starts from the new numbers; dragging left and down goes the other way.
         self._right_drag((x0, y0), (x0 - 1, y0 + 1), start=True)
@@ -372,7 +372,7 @@ class SelectionWandPanelTest(unittest.TestCase):
         self.assertFalse(self._right_drag((100, 100), (180, 70), start=True), "declined: the view box ignores it as before")
         self.assertFalse(self._right_drag((100, 100), (180, 70), finish=True))
         self.assertEqual(self.form.settings(), before)
-        self.assertFalse(self.panel._wand_drag.readout.isVisible())
+        self.assertFalse(self.panel._selection_tools.wand_drag.readout.isVisible())
 
     # -- undo of the selection -------------------------------------------------------------------------------------
 

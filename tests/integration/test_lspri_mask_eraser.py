@@ -260,7 +260,7 @@ class MaskEraserTest(unittest.TestCase):
         self._click(13.5, 12.5)
         np.testing.assert_array_equal(self._mask_now(), self.base)
         self.panel._tool_ribbon.set_category("Mask")
-        self.tab.edit_tool.set_tool(MaskEditTool.MORPHOLOGY)
+        self.tab.edit_tool.set_tool(MaskEditTool.FEATURE_MAP)
         self._click(13.5, 12.5)
         np.testing.assert_array_equal(self._mask_now(), self.base)
         self.tab.edit_tool.set_tool(MaskEditTool.ERASER)
@@ -272,7 +272,7 @@ class MaskEraserTest(unittest.TestCase):
         roi_id = self.toolbox.add_roi(13.5, 12.5, sample_diameter_px=8.0)
         self._click(13.5, 12.5)
         self.assertEqual(set(self.selection.selected_roi_ids()), set())  # the eraser took the click
-        self.tab.edit_tool.set_tool(MaskEditTool.THRESHOLD)
+        self.tab.edit_tool.set_tool(MaskEditTool.FEATURE_MAP)
         self._click(13.5, 12.5)
         self.assertEqual(set(self.selection.selected_roi_ids()), {roi_id})  # with another tool the ROI is selected as ever
 

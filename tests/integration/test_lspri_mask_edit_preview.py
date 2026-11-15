@@ -1,12 +1,18 @@
-"""The Mask tab's edit preview and Threshold / Local contrast Add / Subtract (2026-10-29).
+"""The Mask tab's edit preview and the Threshold / Local contrast candidates (2026-10-29; reduced 2026-11-15).
+
+2026-11-15: the Threshold, Local contrast and Morphology *previews* and the Mask-tab Add / Subtract buttons of those tools went when the
+tools moved into the selection toolbar ("Select by value" and "Modify selection": `test_lspri_selection_by_value.py`,
+`test_lspri_selection_modify_brush.py`). What is pinned here: the worker that computes candidates, `MaskEditPreview.request_candidate`
+(what "Select by value" asks), and that the preview tint now belongs to the Feature map tool alone (its own tests:
+`test_lspri_feature_map_tool.py`).
 
 **Only runs on the `apps/LSPRi/eva` submodule's `rewrite` branch** - see `test_lspri_rewrite_analysis_core.py`'s docstring.
 
-Three layers, each tested where it lives:
+Two layers, each tested where it lives:
 
 - `MaskCandidates` (the worker): computes off the calling thread, caches, drops stale results, keeps previews bounded.
-- `MaskEditPreview` + `EditPreviewLayer` on a real `ImagePanel`: which pixels are tinted for which tool, and when nothing is.
-- The panels' own buttons: Add / Subtract merge exactly the previewed pixels; hovering a Morphology button previews it.
+- `MaskEditPreview` on a real `ImagePanel`: `request_candidate` gives exactly the pixels the mask tools compute; nothing is tinted for the
+  Eraser; the eye is one remembered state.
 
 A real `QApplication` in-process, never `.exec()`, driven by direct calls and signals (same pattern as
 `test_lspri_rewrite_image_panel.py`, whose dataset fixture this repeats on a smaller scale).
@@ -22,7 +28,6 @@ import unittest
 from pathlib import Path
 
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QEvent
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -49,7 +54,7 @@ try:
     from lspr_imaging_app.image_tools.mask import raster_tools
     from lspr_imaging_app.image_tools.mask_candidates import MaskCandidates
     from lspr_imaging_app.panels.image import ImagePanel
-    from lspr_imaging_app.panels.image.mask_edit_panels import _push_tool_settings
+    from lspr_imaging_app.panels.mask_tool_settings import push_tool_settings as _push_tool_settings
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
@@ -240,166 +245,59 @@ class MaskEditPreviewPanelTest(unittest.TestCase):
         _pump_until(lambda: self.panel._image_item.image is not None and self.panel._image_item.levels is not None)
         _pump()
 
-    def _open_mask_tab_with(self, tool: MaskEditTool) -> None:
-        self.tab.edit_tool.set_tool(tool)
-        self.panel._tool_ribbon.set_category("Mask")
+    def _candidate(self, kind: str, frame=FRAME) -> np.ndarray | None:
+        got: list[object] = []
+        self.preview.request_candidate(kind, frame, got.append)
+        self.assertTrue(_pump_until(lambda: len(got) == 1))
+        return got[0]
 
-    def _expected_threshold(self) -> np.ndarray:
+    def test_a_threshold_candidate_is_exactly_what_the_mask_tool_computes(self) -> None:
+        self._load()
         plane = tifffile.imread(str(self.root / "c0_w500.tif"))
-        return raster_tools.create_relative_contrast_mask(plane, sigma_px=10.0, threshold_fraction=3.0)
-
-    # -- Threshold ---------------------------------------------------------------------------------------------------
-
-    def test_threshold_preview_tints_exactly_the_candidate_pixels(self) -> None:
-        self._load()
-        self._open_mask_tab_with(MaskEditTool.THRESHOLD)
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-        shown = self.preview.current()
-        self.assertEqual(shown.frame, FRAME)
-        expected = self._expected_threshold()
+        expected = raster_tools.create_relative_contrast_mask(plane, sigma_px=10.0, threshold_fraction=3.0)
         self.assertTrue(expected[30, 40])  # the fixture really selects the patch
-        np.testing.assert_array_equal(shown.pixels, expected)
-        # And it is on the image: opaque over the patch, clear elsewhere (no rotation or crop: screen == raw pixels).
-        self.assertTrue(self.layer.item.isVisible())
-        layer = self.layer.item.image
-        self.assertGreater(layer[30, 40, 3], 0)
-        self.assertEqual(layer[2, 2, 3], 0)
+        np.testing.assert_array_equal(self._candidate("relative"), expected)
 
-    def test_nothing_is_tinted_for_the_histogram_tool_or_off_the_mask_tab_or_with_the_eye_off(self) -> None:
-        self._load()
-        self._open_mask_tab_with(MaskEditTool.THRESHOLD)
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-        self.panel._tool_ribbon.set_category("View")  # another tab is open
-        self.assertIsNone(self.preview.current())
-        _pump(0.2)
-        self.assertFalse(self.layer.item.isVisible())
-        self.panel._tool_ribbon.set_category("Mask")
-        self.assertTrue(_pump_until(lambda: self.layer.item.isVisible()))
-        self.preview.set_shown(False)  # the eye
-        _pump(0.2)
-        self.assertFalse(self.layer.item.isVisible())
-        self.preview.set_shown(True)
-        self.assertTrue(_pump_until(lambda: self.layer.item.isVisible()))
-        self.tab.edit_tool.set_tool(MaskEditTool.HISTOGRAM_SELECTION)  # that tool has its own highlight
-        _pump(0.2)
-        self.assertFalse(self.layer.item.isVisible())
-
-    def test_changing_a_number_replaces_the_preview_with_the_new_pixels(self) -> None:
-        self._load()
-        self._open_mask_tab_with(MaskEditTool.THRESHOLD)
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-        first = int(np.count_nonzero(self.preview.current().pixels))
-        _push_tool_settings(self.mask, relative_threshold_fraction=0.02)  # 2 %: now the noise is selected too
-        self.assertIsNone(self.preview.current())  # the old pixels do not describe the new numbers: hidden at once
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-        self.assertGreater(int(np.count_nonzero(self.preview.current().pixels)), first)
-
-    def test_no_preview_while_play_runs_and_it_comes_back_after(self) -> None:
-        self._load()
-        self._open_mask_tab_with(MaskEditTool.THRESHOLD)
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-        self.preview.set_playing(True)
-        self.assertIsNone(self.preview.current())
-        self.preview.set_playing(False)
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-
-    def test_a_pixel_set_made_for_another_frame_is_never_shown(self) -> None:
-        self._load()
-        self._open_mask_tab_with(MaskEditTool.THRESHOLD)
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-        self.preview.set_frame((1, 600.0))
-        self.assertIsNone(self.preview.current())
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-        self.assertEqual(self.preview.current().frame, (1, 600.0))
-
-    # -- Local contrast ------------------------------------------------------------------------------------------------
-
-    def test_local_contrast_preview_matches_its_candidate(self) -> None:
+    def test_a_local_contrast_candidate_is_exactly_what_the_mask_tool_computes(self) -> None:
         self._load()
         _push_tool_settings(self.mask, local_contrast_sigma_px=5.0, local_contrast_z_threshold=4.0)
-        self._open_mask_tab_with(MaskEditTool.LOCAL_CONTRAST)
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
         plane = tifffile.imread(str(self.root / "c0_w500.tif"))
         expected = raster_tools.create_local_contrast_mask(plane, sigma_px=5.0, z_threshold=4.0)
-        np.testing.assert_array_equal(self.preview.current().pixels, expected)
+        np.testing.assert_array_equal(self._candidate("local_contrast"), expected)
 
-    # -- Add / Subtract ------------------------------------------------------------------------------------------------
-
-    def test_add_and_subtract_merge_exactly_the_previewed_pixels(self) -> None:
+    def test_a_candidate_is_cached_and_follows_the_numbers_and_the_frame(self) -> None:
         self._load()
-        self._open_mask_tab_with(MaskEditTool.THRESHOLD)
-        panel = self.tab._threshold_panel
-        self.assertTrue(panel._add_button.isEnabled())  # no longer "not wired yet"
-        expected = self._expected_threshold()
+        first = self._candidate("relative")
+        again = self._candidate("relative")
+        self.assertIs(again, first, "the same frame and numbers: the cached array")
+        _push_tool_settings(self.mask, relative_threshold_fraction=0.02)  # 2 %: now the noise is selected too
+        self.assertGreater(int(np.count_nonzero(self._candidate("relative"))), int(np.count_nonzero(first)))
+        other = self._candidate("relative", (1, 600.0))
+        self.assertEqual(other.shape, first.shape)
 
-        panel._add_button.click()
-        self.assertFalse(panel._add_button.isEnabled())  # busy while the pixels are made
-        self.assertTrue(_pump_until(lambda: self.mask.resolve_mask_source(FRAME) is not None))
-        _pump(0.1)
-        _frame, added, _scope = self.mask.resolve_mask_source(FRAME)
-        np.testing.assert_array_equal(added, expected)
-        self.assertTrue(panel._add_button.isEnabled())  # free again
+    def test_an_unknown_kind_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            self.preview.request_candidate("morphology", FRAME, lambda _pixels: None)
 
-        panel._subtract_button.click()
-        self.assertTrue(_pump_until(lambda: not np.any(self.mask.resolve_mask_source(FRAME)[1])))
-        self.assertFalse(np.any(self.mask.resolve_mask_source(FRAME)[1]))
-
-    # -- Morphology ----------------------------------------------------------------------------------------------------
-
-    def _mask_with_square(self) -> np.ndarray:
-        base = np.zeros((64, 80), dtype=bool)
-        base[20:40, 30:50] = True
-        self.mask.set_mask_change(FRAME, "persistent", base)
-        return base
-
-    def test_hovering_a_morphology_button_previews_the_pixels_it_would_change(self) -> None:
+    def test_nothing_is_tinted_for_the_eraser_or_off_the_mask_tab(self) -> None:
         self._load()
-        base = self._mask_with_square()
-        _push_tool_settings(self.mask, morphology_radius_px=3)
-        self._open_mask_tab_with(MaskEditTool.MORPHOLOGY)
-        self.assertIsNone(self.preview.current())  # nothing is under the mouse yet
-        button = self.tab._morphology_panel._operation_buttons["dilate"]
-        QtWidgets.QApplication.sendEvent(button, QEvent(QEvent.Type.Enter))  # the mouse arrives
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None))
-        expected = raster_tools.morphology_changed_pixels(base, "dilate", 3)
-        np.testing.assert_array_equal(self.preview.current().pixels, expected)
-        self.assertTrue(self.layer.item.isVisible())
-        # Erode is the other way round: it changes pixels inside the mask, a different set.
-        erode = self.tab._morphology_panel._operation_buttons["erode"]
-        QtWidgets.QApplication.sendEvent(button, QEvent(QEvent.Type.Leave))
-        QtWidgets.QApplication.sendEvent(erode, QEvent(QEvent.Type.Enter))
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None and self.preview.current().pixels.any()))
-        np.testing.assert_array_equal(
-            self.preview.current().pixels, raster_tools.morphology_changed_pixels(base, "erode", 3)
-        )
-        QtWidgets.QApplication.sendEvent(erode, QEvent(QEvent.Type.Leave))  # the mouse leaves
+        self.tab.edit_tool.set_tool(MaskEditTool.ERASER)
+        self.panel._tool_ribbon.set_category("Mask")
+        _pump(0.3)
         self.assertIsNone(self.preview.current())
-        _pump(0.2)
         self.assertFalse(self.layer.item.isVisible())
 
-    def test_clicking_a_morphology_button_still_applies_at_once(self) -> None:
-        self._load()
-        base = self._mask_with_square()
-        _push_tool_settings(self.mask, morphology_radius_px=2)
-        self._open_mask_tab_with(MaskEditTool.MORPHOLOGY)
-        self.tab._morphology_panel._operation_buttons["dilate"].click()
-        _frame, result, _scope = self.mask.resolve_mask_source(FRAME)
-        np.testing.assert_array_equal(result, raster_tools.apply_morphology_to_mask(base, "dilate", 2))
-
-    # -- The eye ---------------------------------------------------------------------------------------------------------
-
-    def test_the_three_eye_buttons_share_one_state_and_it_is_remembered(self) -> None:
-        eyes = [self.tab._threshold_panel._toggle, self.tab._local_contrast_panel._toggle, self.tab._morphology_panel._toggle]
-        self.assertTrue(all(eye.isChecked() for eye in eyes))
-        eyes[2].click()
+    def test_the_eye_button_is_one_remembered_state(self) -> None:
+        eye = self.tab.features_panel._toggle
+        self.assertTrue(eye.isChecked())
+        eye.click()
         self.assertFalse(self.preview.shown())
-        self.assertTrue(all(not eye.isChecked() for eye in eyes))
 
         store = UiStateStore({"image/mask_edit_preview": True})
         self.panel.restore_ui_state(store)  # a saved "on" comes back
         self.assertTrue(self.preview.shown())
-        self.assertTrue(all(eye.isChecked() for eye in eyes))
-        eyes[0].click()  # and a later change is written down
+        self.assertTrue(eye.isChecked())
+        eye.click()  # and a later change is written down
         self.assertIs(store.get("image/mask_edit_preview"), False)
 
 

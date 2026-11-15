@@ -377,7 +377,7 @@ class FeatureMapToolTest(unittest.TestCase):
         found = np.array(self.task.pixels_for(FRAME))
         region = np.zeros(SHAPE, dtype=bool)
         region[:, : SHAPE[1] // 2] = True
-        self.panel.selection_raw_mask = lambda shape: region  # the area selection, as the editors ask for it
+        self.panel.selection_regions.selection_raw_mask = lambda shape: region  # the area selection, as the editors ask for it
         self.tool._apply_button.click()
         _pump(0.2)
         _frame, mask, _scope = self.mask.resolve_mask_source(FRAME)
@@ -513,11 +513,14 @@ class FeatureMapToolTest(unittest.TestCase):
         self.assertEqual(set(self.tool.kinds_popover().kind_checks), set(fm.KINDS))
         self.assertIn("Kinds", self.tool._kinds_button.toolTip())
 
-    def test_the_two_new_controls_do_not_widen_the_mask_tab(self) -> None:
-        # the tool rows share one stacked widget, as wide as the widest row: the Feature map row must fit inside it
+    def test_the_tool_rows_share_one_stack_as_wide_as_the_widest_row(self) -> None:
+        # (2026-11-15: the Threshold / Local contrast / Morphology rows are gone, so the Feature map row is the widest and sets the
+        # width; the caption "Manual edit" still stays put when the Eraser is picked.)
         stack = self.tab._edit_stack
-        others = {type(stack.widget(i)).__name__: stack.widget(i).sizeHint().width() for i in range(stack.count()) if stack.widget(i) is not self.tool}
-        self.assertLessEqual(self.tool.sizeHint().width(), max(others.values()), (self.tool.sizeHint().width(), others))
+        widths = [stack.widget(i).sizeHint().width() for i in range(stack.count())]
+        self.assertEqual(stack.count(), 2)
+        self.assertEqual(max(widths), self.tool.sizeHint().width())
+        self.assertGreaterEqual(stack.sizeHint().width(), max(widths))
 
     def test_the_settings_are_remembered_and_have_working_defaults(self) -> None:
         pop = self.tool.popover()

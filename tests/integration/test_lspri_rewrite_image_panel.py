@@ -1434,116 +1434,47 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(scope, "persistent")
         np.testing.assert_array_equal(resolved_mask, mask)
 
-    def test_mask_edit_picker_defaults_to_histogram_selection(self) -> None:
+    def test_mask_edit_picker_defaults_to_the_feature_map_and_offers_two_tools(self) -> None:
         from lspr_imaging_app.image_tools import MaskEditTool
-        from lspr_imaging_app.panels.image.mask_edit_panels import HistogramSelectionEditPanel
+        from lspr_imaging_app.panels.image.mask_edit_panels import FeatureMapEditPanel
 
-        self.assertIs(self.panel._mask_tab.edit_tool.tool(), MaskEditTool.HISTOGRAM_SELECTION)
-        self.assertIsInstance(self.panel._mask_tab._edit_stack.currentWidget(), HistogramSelectionEditPanel)
+        self.assertIs(self.panel._mask_tab.edit_tool.tool(), MaskEditTool.FEATURE_MAP)
+        self.assertIsInstance(self.panel._mask_tab._edit_stack.currentWidget(), FeatureMapEditPanel)
+        self.assertEqual(set(self.panel._mask_tab._edit_picker._actions), {MaskEditTool.FEATURE_MAP, MaskEditTool.ERASER})
+        self.assertEqual(self.panel._mask_tab._edit_stack.count(), 2, "the other five tools moved into the selection toolbar (2026-11-15)")
 
     def test_picking_a_tool_switches_the_edit_stack(self) -> None:
         from lspr_imaging_app.image_tools import MaskEditTool
-        from lspr_imaging_app.panels.image.mask_edit_panels import MorphologyEditPanel
+        from lspr_imaging_app.panels.image.mask_edit_panels import EraserEditPanel
 
-        self.panel._mask_tab._edit_picker._actions[MaskEditTool.MORPHOLOGY].trigger()
-        self.assertIsInstance(self.panel._mask_tab._edit_stack.currentWidget(), MorphologyEditPanel)
-        self.assertIs(self.panel._mask_tab._edit_stack.currentWidget(), self.panel._mask_tab._edit_stack.widget(3))
+        self.panel._mask_tab._edit_picker._actions[MaskEditTool.ERASER].trigger()
+        self.assertIsInstance(self.panel._mask_tab._edit_stack.currentWidget(), EraserEditPanel)
+        self.assertIs(self.panel._mask_tab._edit_stack.currentWidget(), self.panel._mask_tab._edit_stack.widget(1))
 
-    def test_histogram_selection_edit_panel_adds_the_highlighted_patch_in_raw_space(self) -> None:
-        """Same assertion shape as `test_lspri_rewrite_mask_highlight_
-        actions.py`'s own `test_add_masks_exactly_the_highlighted_patch_in_
-        raw_space` - this is the Image panel's second front door onto the
-        exact same `HistogramHighlightMaskEditor` logic, not a copy."""
-        self._load()
-        self.highlight_range.set_range(3000.0, 5000.0)
-        panel = self.panel._mask_tab._edit_stack.widget(0)
-        panel._add_button.click()
+    def test_the_removed_tools_are_in_the_selection_toolbar_instead(self) -> None:
+        """2026-11-15: Histogram selection, Threshold, Local contrast -> "Select by value"; Morphology -> "Modify selection"; Draw -> the
+        selection brush. Each is a button of the toolbar beside the image."""
+        from lspr_imaging_app.selection import AreaSelectionMode
 
-        resolution = self.mask.resolve_mask_source((0, 500.0))
-        self.assertIsNotNone(resolution)
-        _frame, resolved_mask, scope = resolution
-        expected = np.zeros((64, 80), dtype=bool)
-        expected[28:33, 38:43] = True
-        np.testing.assert_array_equal(resolved_mask, expected)
-
-    def test_morphology_edit_panel_erode_shrinks_the_mask(self) -> None:
-        """Regression pin for the 2026-10-02 `MaskModule.apply_morphology`
-        correctness fix (see that method's own docstring): erode must
-        actually shrink the mask, not leave it unchanged (the old OR-merge
-        behavior) or replace it with the removed boundary ring (the old
-        AND-NOT-merge behavior)."""
-        self._load()
-        base = np.zeros((64, 80), dtype=bool)
-        base[20:30, 20:30] = True  # a 10x10 filled square
-        self.mask.set_mask_change((0, 500.0), "persistent", base)
-        _pump()
-
-        panel = self.panel._mask_tab._edit_stack.widget(3)
-        panel._radius_spin.setValue(1)
-        panel._operation_buttons["erode"].click()
-
-        _frame, eroded, _scope = self.mask.resolve_mask_source((0, 500.0))
-        self.assertEqual(int(eroded.sum()), 64)  # an 8x8 interior survives a 1px erosion
-        self.assertTrue(bool(eroded[25, 25]))  # center still set
-        self.assertFalse(bool(eroded[20, 25]))  # the boundary row is gone
-
-    def test_morphology_open_close_icons_match_the_stable_app(self) -> None:
-        """"copy the icons from the stable app (open book, closed book)" -
-        2026-10-02 maintainer request."""
-        from lspr_imaging_app.panels.image.mask_edit_panels import _MORPHOLOGY_OPERATIONS
-
-        icons_by_operation = {operation: icon_name for operation, icon_name, _tooltip in _MORPHOLOGY_OPERATIONS}
-        self.assertEqual(icons_by_operation["open"], "book")
-        self.assertEqual(icons_by_operation["close"], "book-2")
+        toolbar = self.panel._selection_tools.toolbar
+        for mode in (AreaSelectionMode.HISTOGRAM, AreaSelectionMode.THRESHOLD, AreaSelectionMode.CONTRAST):
+            self.assertIsNotNone(toolbar.tool_button(mode))
+        self.assertIsNotNone(toolbar.modify_button)
+        self.assertIsNotNone(toolbar.tool_button(AreaSelectionMode.BRUSH))
 
     def test_disabled_action_buttons_keep_the_same_icon_color_as_enabled_ones(self) -> None:
-        """"Not all +/- icons are same, you change only those in histogram
-        selection. All other should be changed as well and same as
-        histogram" (2026-10-02 maintainer request) - Qt grays a disabled
-        QToolButton's icon by default, which is what made Threshold/Local-
-        contrast/Draw's not-yet-wired +/- buttons look different from
-        Histogram selection's own even though all share the same `ADD_
-        COLOR`/`SUBTRACT_COLOR` - `action_button` (`mask_edit_common.py`)
-        now registers the identical full-color pixmap for both the Normal
-        and Disabled icon modes, so this must hold for every button
-        regardless of its current enabled state."""
+        """"Not all +/- icons are same, you change only those in histogram selection. All other should be changed as well"
+        (2026-10-02 maintainer request) - Qt grays a disabled QToolButton's icon by default; `action_button`
+        (`mask_edit_common.py`) registers the identical full-color pixmap for both the Normal and Disabled icon modes, so this must hold
+        for every button regardless of its current enabled state. Checked on the Feature map's Apply (disabled until a map exists)."""
         from PyQt6.QtGui import QIcon
 
-        threshold_panel = self.panel._mask_tab._edit_stack.widget(1)
-        self.assertFalse(threshold_panel._add_button.isEnabled())
-        icon = threshold_panel._add_button.icon()
+        apply_button = self.panel._mask_tab.features_panel._apply_button
+        self.assertFalse(apply_button.isEnabled())
+        icon = apply_button.icon()
         normal_image = icon.pixmap(44, 44, QIcon.Mode.Normal).toImage()
         disabled_image = icon.pixmap(44, 44, QIcon.Mode.Disabled).toImage()
         self.assertEqual(normal_image, disabled_image)
-
-    def test_threshold_and_local_contrast_add_subtract_are_disabled(self) -> None:
-        """Settings-only for now - see mask_edit_panels.py's module
-        docstring for why (needs a background worker, not built yet)."""
-        threshold_panel = self.panel._mask_tab._edit_stack.widget(1)
-        local_contrast_panel = self.panel._mask_tab._edit_stack.widget(2)
-        for panel in (threshold_panel, local_contrast_panel):
-            self.assertFalse(panel._add_button.isEnabled())
-            self.assertFalse(panel._subtract_button.isEnabled())
-
-    def test_threshold_edit_panel_spinbox_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_tab._edit_stack.widget(1)
-        panel._threshold_spin.setValue(12.5)
-        self.assertAlmostEqual(self.mask.settings().relative_threshold_fraction, 0.125, places=4)
-
-    def test_local_contrast_edit_panel_spinbox_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_tab._edit_stack.widget(2)
-        panel._z_spin.setValue(3.5)
-        self.assertAlmostEqual(self.mask.settings().local_contrast_z_threshold, 3.5, places=4)
-
-    def test_morphology_edit_panel_radius_spinbox_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_tab._edit_stack.widget(3)
-        panel._radius_spin.setValue(7)
-        self.assertEqual(self.mask.settings().morphology_radius_px, 7)
-
-    def test_draw_edit_panel_brush_size_pushes_mask_settings(self) -> None:
-        panel = self.panel._mask_tab._edit_stack.widget(5)  # Draw is the last of six since the ROI features tool (index 4) was added
-        panel._size_spin.setValue(9)
-        self.assertEqual(self.mask.settings().brush_size_px, 9)
 
     # -- histogram highlight overlay (2026-10-02, "Histogram" ribbon tab) ----
 

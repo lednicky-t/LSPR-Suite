@@ -118,7 +118,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
     # -- picker / gesture / ants -------------------------------------------
 
     def _toolbar(self) -> SelectionToolbar:
-        return self.image_panel._selection_toolbar
+        return self.image_panel._selection_tools.toolbar
 
     def _pick(self, mode: AreaSelectionMode) -> None:
         self._toolbar().tool_button(mode).click()
@@ -133,14 +133,21 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         self.assertFalse(self._toolbar().tool_button(AreaSelectionMode.RECTANGLE).isChecked())
         self.assertTrue(self.area.has_selection())
 
-    def test_deselect_clears_the_selection_and_is_enabled_only_with_one(self) -> None:
-        button = self._toolbar().deselect_button
-        self.assertFalse(button.isEnabled())
+    def test_deselect_is_in_the_right_click_menu_and_has_no_button(self) -> None:
+        """2026-11-15 (maintainer: the Deselect icon "can be removed, it is in the context menu")."""
+        from unittest.mock import patch
+
+        from PyQt6.QtCore import QPointF
+
+        self.assertFalse(hasattr(self._toolbar(), "deselect_button"))
         self.area.set_rectangle(5, 5, 20, 20)
-        self.assertTrue(button.isEnabled())
-        button.click()
+        scene = self.image_panel._plot.vb.mapViewToScene(QPointF(10.5, 10.5))
+        with patch("lspr_imaging_app.panels.image.interaction.show_tool_context_menu", return_value="Deselect") as menu:
+            self.image_panel._interaction._context_menu([], scene)
+        entries = [label for label, _enabled in menu.call_args.args[1]]
+        self.assertIn("Deselect", entries)
+        self.assertIn("Invert selection", entries)
         self.assertFalse(self.area.has_selection())
-        self.assertFalse(button.isEnabled())
 
     def test_only_the_picked_tool_is_checked(self) -> None:
         self._pick(AreaSelectionMode.LASSO)
@@ -273,7 +280,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     def test_the_selection_tools_sit_beside_the_image_not_in_the_ribbon_tabs(self) -> None:
         panel = self.image_panel
-        toolbar = panel._selection_toolbar
+        toolbar = panel._selection_tools.toolbar
         self.assertFalse(hasattr(panel, "_area_pickers"), "the per-tab pickers are gone (2026-11-14)")
         self.assertTrue(toolbar.isVisible())
         self.assertIs(toolbar.parentWidget(), panel._view.parentWidget(), "beside the image canvas")
@@ -345,28 +352,36 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     # -- mask editing -----------------------------------------------------------------
 
-    def test_histogram_selection_add_only_reaches_inside_the_selection(self) -> None:
+    # (2026-11-15: the Mask tab's Histogram selection and Morphology tools moved into the selection toolbar; the same three rules, through
+    # "Select by value", "Selection from mask" + "Modify selection" + "Replace", and the lock.)
+
+    def test_select_by_value_reaches_the_whole_image_without_a_selection_or_lock(self) -> None:
+        self.highlight_range.set_range(2000.0, 4000.0)  # both bright blocks
+        self.image_panel._selection_tools.value_selector.run_for_mode(AreaSelectionMode.HISTOGRAM, "replace")
+        selected = self.area.selected_mask(_SHAPE)
+        self.assertTrue(selected[15, 15])
+        self.assertTrue(selected[45, 55])
+
+    def test_select_by_value_in_intersect_mode_only_reaches_inside_the_selection(self) -> None:
         self.highlight_range.set_range(2000.0, 4000.0)  # both bright blocks
         self.area.set_rectangle(0, 0, 40, 64)  # left block only
-        self.image_panel._mask_tab._edit_stack.widget(0)._editor.apply(subtract=False)
-        _, mask, _scope = self.mask.resolve_mask_source(_FRAME)
-        self.assertTrue(mask[15, 15])
-        self.assertFalse(mask[45, 55])
+        self.image_panel._selection_tools.value_selector.run_for_mode(AreaSelectionMode.HISTOGRAM, "intersect")
+        selected = self.area.selected_mask(_SHAPE)
+        self.assertTrue(selected[15, 15])
+        self.assertFalse(selected[45, 55])
 
-    def test_histogram_selection_add_is_unrestricted_without_a_selection(self) -> None:
-        self.highlight_range.set_range(2000.0, 4000.0)
-        self.image_panel._mask_tab._edit_stack.widget(0)._editor.apply(subtract=False)
-        _, mask, _scope = self.mask.resolve_mask_source(_FRAME)
-        self.assertTrue(mask[15, 15])
-        self.assertTrue(mask[45, 55])
-
-    def test_morphology_leaves_pixels_outside_the_selection_alone(self) -> None:
+    def test_growing_a_mask_through_the_selection_tools_leaves_the_mask_outside_the_lock_alone(self) -> None:
         base = np.zeros(_SHAPE, dtype=bool)
         base[10:20, 10:20] = True
         base[40:50, 50:60] = True
         self.mask.set_mask_change(_FRAME, "persistent", base)
-        self.area.set_rectangle(0, 0, 40, 64)  # left block only
-        self.image_panel._mask_tab._edit_stack.widget(3)._apply("dilate")
+        self.area.set_rectangle(0, 0, 40, 64)  # left block only (x0, y0, x1, y1)
+        self.image_panel.selection_regions.lock_to_selection()
+        editor = self.image_panel._mask_tab._selection_editor
+        self.assertGreater(editor.from_mask("replace"), 0)
+        self.image_panel._selection_tools.modify_menu.radius_spin.setValue(3)
+        self.image_panel._selection_tools.modify_menu.apply("dilate")
+        self.assertGreater(editor.replace(), 0)
         _, mask, _scope = self.mask.resolve_mask_source(_FRAME)
         self.assertGreater(int(mask[5:25, 5:25].sum()), 100)  # left block grew
         np.testing.assert_array_equal(mask[35:55, 45:65], base[35:55, 45:65])  # right block untouched
