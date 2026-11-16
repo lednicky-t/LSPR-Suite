@@ -381,12 +381,12 @@ class SelectionViewPopupTest(unittest.TestCase):
 
     # -- the pop-up ----------------------------------------------------------------------------------------------
 
-    def test_the_view_button_is_at_the_bottom_of_the_toolbar_outside_the_scrolling_column(self) -> None:
+    def test_the_view_button_is_at_the_top_of_the_toolbar_outside_the_scrolling_column(self) -> None:
         _pump(0.05)
         button = self.toolbar.view_button
         self.assertFalse(self.toolbar.column.content.isAncestorOf(button), "pinned: it does not scroll away with the tools")
-        self.assertGreater(button.geometry().top(), self.toolbar.column.geometry().bottom() - 1)
-        self.assertLessEqual(self.toolbar.height() - button.geometry().bottom(), 8, "level with the bottom of the ribbon")
+        self.assertLess(button.geometry().bottom(), self.toolbar.column.geometry().top() + 1, "above the column (2026-11-16: moved to the top)")
+        self.assertLessEqual(button.geometry().top(), 8, "level with the top of the ribbon")
         self.assertFalse(button.icon().isNull())
         self.assertTrue(button.toolTip())
 
@@ -427,6 +427,50 @@ class SelectionViewPopupTest(unittest.TestCase):
             self.style.set_border_shown(role, True)  # changed elsewhere
             self.assertTrue(button.isChecked(), role)
             self.assertEqual(button.icon().pixmap(28, 28).toImage(), on_picture)
+
+    def test_the_border_switch_is_a_dashed_circle_and_the_opacity_wedge_is_as_narrow_as_the_roi_ones(self) -> None:
+        import math
+
+        form = self.toolbar.view_form
+        for role in (PAST, PRESENT):
+            self.assertEqual(form.wedges[role].maximumWidth(), 18, "the ROI overlay controls' width (2026-11-16)")
+            image = form.border_buttons[role].icon().pixmap(28, 28).toImage()
+            self.assertEqual(image.pixelColor(14, 14).alpha(), 0, "a ring, not a disc")
+            ring = [image.pixelColor(round(14 + 10 * math.cos(a * math.pi / 90)), round(14 + 10 * math.sin(a * math.pi / 90))).alpha() for a in range(180)]
+            self.assertGreater(sum(1 for alpha in ring if alpha > 128), 20, "there are drawn segments")
+            self.assertGreater(sum(1 for alpha in ring if alpha < 32), 20, "and gaps between them: the line is segmented")
+
+    def test_the_wheel_over_an_opacity_wedge_steps_it_one_position_per_notch_and_stops_at_the_ends(self) -> None:
+        """2026-11-16 (maintainer: "make opacity controls scrollable"): wheel up = more opaque; the style follows; the ends hold."""
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QWheelEvent
+
+        def wheel(delta_y: int) -> None:
+            event = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, delta_y), Qt.MouseButton.NoButton,
+                                Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+            QtWidgets.QApplication.sendEvent(wedge, event)
+            self.assertTrue(event.isAccepted(), "the pop-up does not pass it on")
+
+        form = self.toolbar.view_form
+        for role in (PAST, PRESENT):
+            wedge = form.wedges[role]
+            self.assertEqual(self.style.step(role), 0)
+            wheel(-120)
+            self.assertEqual(self.style.step(role), 0, "wheel down at the first position: stays")
+            wheel(120)
+            wheel(120)
+            self.assertEqual((wedge.value(), self.style.step(role)), (2, 2), "one position per notch, and the style follows")
+            wheel(-120)
+            self.assertEqual(self.style.step(role), 1)
+            wheel(60)
+            self.assertEqual(self.style.step(role), 1, "half a notch is not a step yet")
+            wheel(60)
+            self.assertEqual(self.style.step(role), 2, "two halves are")
+            for _ in range(10):
+                wheel(120)
+            self.assertEqual(self.style.step(role), MAX_FILL_STEP, "stops at the last position")
+            self.assertIn("scroll", wedge.toolTip())
+            self.style.set_step(role, 0)
 
     def test_the_pop_up_follows_a_change_made_elsewhere(self) -> None:
         form = self.toolbar.view_form

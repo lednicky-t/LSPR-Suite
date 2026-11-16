@@ -419,6 +419,24 @@ class SelectByValueTest(unittest.TestCase):
             self.assertEqual(not self.form._contrast_box.isHidden(), method is ValueMethod.LOCAL_CONTRAST)
             self.assertIn(self.form.method_label(), self.form.title.text())
 
+    def test_the_pop_up_is_re_measured_for_the_method_whose_button_opened_it(self) -> None:
+        """2026-11-16: one form serves three buttons, and a QMenu measures its widget once, so the small Histogram pop-up was reused for the
+        Threshold (clipping its controls) and the big one for the Histogram. Every opening must fit the form as it is then."""
+        menu = self.toolbar._value_menu
+        assert menu is not None
+        heights: dict[AreaSelectionMode, int] = {}
+        for mode in (AreaSelectionMode.HISTOGRAM, AreaSelectionMode.THRESHOLD, AreaSelectionMode.HISTOGRAM,
+                     AreaSelectionMode.CONTRAST, AreaSelectionMode.THRESHOLD, AreaSelectionMode.CONTRAST, AreaSelectionMode.HISTOGRAM):
+            with self.subTest(mode=mode):
+                self.toolbar.show_value_settings(mode)
+                need = self.form.sizeHint()
+                self.assertGreaterEqual(menu.height(), need.height(), "nothing clipped")
+                self.assertGreaterEqual(menu.width(), need.width(), "nothing clipped")
+                heights.setdefault(mode, menu.height())
+                self.assertEqual(menu.height(), heights[mode], "the same size every time this method is opened")
+                menu.hide()
+        self.assertLess(heights[AreaSelectionMode.HISTOGRAM], heights[AreaSelectionMode.THRESHOLD], "icons only is the small one")
+
     def test_the_histogram_pop_up_has_a_copy_of_the_view_tabs_show_hide_switch(self) -> None:
         """2026-11-16: the Histogram range's pop-up holds a histogram-icon toggle for the highlight tint; it is the View tab -> Masks switch's
         copy: a click goes to the real control (and the panel's tint), and the real control's changes come back."""
@@ -507,10 +525,15 @@ class SelectByValueTest(unittest.TestCase):
         self.assertEqual(self.form.profile_sigma_spin.value(), 77)
         self.assertEqual(self.form.contrast_sigma_spin.value(), 19)
 
-    def test_the_range_label_follows_the_histogram(self) -> None:
-        self.assertIn("No range yet", self.form.range_label.text())
+    def test_the_range_text_follows_the_histogram_as_a_tool_tip_not_a_label(self) -> None:
+        self.assertIn("No range yet", self.form.range_text())
         self.highlight.set_range(1000.0, 2000.0)
-        self.assertIn("1,000 to 2,000", self.form.range_label.text())
+        self.assertIn("1,000 to 2,000", self.form.range_text())
+        self.assertFalse(hasattr(self.form, "range_label"), "the Histogram range's pop-up is icons only (2026-11-16)")
+        self.form.set_method(ValueMethod.HISTOGRAM)
+        self.assertTrue(self.form.title.isHidden(), "no heading over the icons")
+        self.form.set_method(ValueMethod.THRESHOLD)
+        self.assertFalse(self.form.title.isHidden(), "the other two keep theirs")
 
 
 if __name__ == "__main__":

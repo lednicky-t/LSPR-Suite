@@ -212,13 +212,13 @@ class SelectionWandPanelTest(unittest.TestCase):
 
     def test_every_method_selects_the_dark_disk(self) -> None:
         self._arm_wand()
-        for index in range(self.form.method.count()):
-            self.form.method.setCurrentIndex(index)
+        for method_picked in self.form.method_buttons:
+            self.form.set_method(method_picked)
             self.area.clear()
             self._click(*DARK[:2])
             self.assertTrue(self.area.has_selection(), (self.form.settings().method, self.messages[-1:]))
             self.assertTrue(self._selected()[DARK[0], DARK[1]])
-        self.assertEqual({WandMethod(self.form.method.itemData(i)) for i in range(self.form.method.count())}, set(WandMethod))
+        self.assertEqual(set(self.form.method_buttons), set(WandMethod))
 
     def test_a_click_on_plain_background_selects_nothing_and_says_why(self) -> None:
         self._arm_wand()
@@ -227,8 +227,8 @@ class SelectionWandPanelTest(unittest.TestCase):
         self.assertIn("threshold", self.messages[-1])
 
     def test_the_settings_form_shows_only_the_picked_methods_threshold(self) -> None:
-        for index in range(self.form.method.count()):
-            self.form.method.setCurrentIndex(index)
+        for method_picked in self.form.method_buttons:
+            self.form.set_method(method_picked)
             method = self.form.settings().method
             self.assertEqual(not self.form.contrast_threshold.isHidden(), method is WandMethod.CONTRAST)
             self.assertEqual(not self.form.brightness_tolerance.isHidden(), method is WandMethod.BRIGHTNESS)
@@ -262,9 +262,9 @@ class SelectionWandPanelTest(unittest.TestCase):
 
     def test_the_wheel_over_the_wand_button_switches_the_method_and_wraps_round(self) -> None:
         button = self.panel._selection_tools.toolbar.tool_button(AreaSelectionMode.WAND)
-        order = [WandMethod(self.form.method.itemData(i)) for i in range(self.form.method.count())]
+        order = list(self.form.method_buttons)
         self.assertEqual(len(order), 3)
-        self.form.method.setCurrentIndex(0)
+        self.form.set_method(WandMethod.CONTRAST)
         self._wheel(button, -120)  # towards the user: the next method
         self.assertIs(self.form.settings().method, order[1])
         self._wheel(button, -120)
@@ -288,8 +288,8 @@ class SelectionWandPanelTest(unittest.TestCase):
             return button.icon().pixmap(QSize(32, 32)).toImage()
 
         icons = []
-        for index in range(self.form.method.count()):
-            self.form.method.setCurrentIndex(index)
+        for method_picked in self.form.method_buttons:
+            self.form.set_method(method_picked)
             image = picture(wand)
             self.assertFalse(image.isNull(), "every method has a vendored icon")
             icons.append(image)
@@ -302,13 +302,54 @@ class SelectionWandPanelTest(unittest.TestCase):
 
     def test_the_icon_follows_the_method_when_it_is_switched_from_anywhere(self) -> None:
         wand = self.panel._selection_tools.toolbar.tool_button(AreaSelectionMode.WAND)
-        self.form.method.setCurrentIndex(0)
+        self.form.set_method(WandMethod.CONTRAST)
         first = wand.icon().pixmap(QSize(32, 32)).toImage()
         self._wheel(wand, -120)  # the wheel switches the method ...
         second = wand.icon().pixmap(QSize(32, 32)).toImage()
         self.assertNotEqual(first, second)
-        self.form.method.setCurrentIndex(0)  # ... and so does the pop-up's drop-down
+        self.form.set_method(WandMethod.CONTRAST)  # ... and so does the pop-up's icon
         self.assertEqual(wand.icon().pixmap(QSize(32, 32)).toImage(), first)
+
+    def test_the_method_and_fill_holes_are_icon_buttons_that_follow_the_form(self) -> None:
+        """2026-11-16: the pop-up's Method drop-down is three icon buttons (one checked) and Fill holes an icon toggle, no captions."""
+        form = self.form
+        self.assertFalse(hasattr(form, "method"), "no drop-down any more")
+        self.assertEqual(list(form.method_buttons), [WandMethod.CONTRAST, WandMethod.BRIGHTNESS, WandMethod.EDGES])
+        pictures = []
+        for method, button in form.method_buttons.items():
+            self.assertFalse(button.text(), "icon only")
+            pictures.append(button.icon().pixmap(QSize(32, 32)).toImage())
+            self.assertFalse(pictures[-1].isNull(), method)
+        for i, first in enumerate(pictures):
+            for second in pictures[i + 1 :]:
+                self.assertNotEqual(first, second, "each method has its own picture")
+        form.set_method(WandMethod.CONTRAST)
+        form.method_buttons[WandMethod.EDGES].click()
+        self.assertIs(form.picked_method(), WandMethod.EDGES)
+        self.assertEqual([b.isChecked() for b in form.method_buttons.values()], [False, False, True])
+        form.method_buttons[WandMethod.EDGES].click()  # a click on the checked one leaves it checked
+        self.assertTrue(form.method_buttons[WandMethod.EDGES].isChecked())
+        form.cycle_method(1)  # the wheel moves the checked icon as well
+        self.assertEqual([b.isChecked() for b in form.method_buttons.values()], [True, False, False])
+        # Fill holes
+        self.assertFalse(form.fill_holes.text(), "icon only")
+        before = form.settings().fill_holes
+        picture_before = form.fill_holes.icon().pixmap(QSize(32, 32)).toImage()
+        form.fill_holes.click()
+        self.assertEqual(form.settings().fill_holes, not before)
+        self.assertNotEqual(form.fill_holes.icon().pixmap(QSize(32, 32)).toImage(), picture_before, "coloured when on, grey when off")
+
+    def test_the_method_is_remembered_under_the_key_it_had_as_a_drop_down(self) -> None:
+        from lspr_imaging_app.panels.ui_state import UiStateStore
+
+        store = UiStateStore({"selection/wand_method": "edges", "selection/wand_fill_holes": False})
+        self.form.bind_ui_state(store)
+        self.assertIs(self.form.picked_method(), WandMethod.EDGES, "restored")
+        self.assertFalse(self.form.settings().fill_holes, "the icon toggle is restored too")
+        self.form.set_method(WandMethod.BRIGHTNESS)
+        self.assertEqual(store.get("selection/wand_method"), "brightness", "and saved when it changes")
+        self.form.fill_holes.click()
+        self.assertIs(store.get("selection/wand_fill_holes"), True)
 
     def _right_drag(self, down: tuple[float, float], here: tuple[float, float], *, start: bool = False, finish: bool = False) -> bool:
         event = _Drag(QPointF(*down), QPointF(*here), start=start, finish=finish)
@@ -318,7 +359,7 @@ class SelectionWandPanelTest(unittest.TestCase):
     def test_a_right_drag_with_the_wand_armed_sets_the_threshold_and_grow(self) -> None:
         self._arm_wand()
         form = self.form
-        form.method.setCurrentIndex(0)
+        form.set_method(WandMethod.CONTRAST)
         self.assertIs(form.settings().method, WandMethod.CONTRAST)
         form.contrast_threshold.setValue(3.0)
         form.grow.setValue(0)
@@ -344,8 +385,8 @@ class SelectionWandPanelTest(unittest.TestCase):
         self._arm_wand()
         centre = self.panel._plot.vb.mapViewToScene(QPointF(80.0, 60.0))
         x0, y0 = centre.x(), centre.y()
-        for index in range(self.form.method.count()):
-            self.form.method.setCurrentIndex(index)
+        for method_picked in self.form.method_buttons:
+            self.form.set_method(method_picked)
             box = self.form.threshold_box()
             box.setValue(4.0)
             self._right_drag((x0, y0), (x0, y0), start=True)
@@ -355,7 +396,7 @@ class SelectionWandPanelTest(unittest.TestCase):
 
     def test_a_right_drag_stays_inside_the_ranges_of_the_spin_boxes(self) -> None:
         self._arm_wand()
-        self.form.method.setCurrentIndex(1)  # Brightness
+        self.form.set_method(WandMethod.BRIGHTNESS)
         box = self.form.threshold_box()
         self._right_drag((100, 100), (100, 100), start=True)
         self._right_drag((100, 100), (5000, -5000), finish=True)
@@ -396,7 +437,7 @@ class SelectionWandPanelTest(unittest.TestCase):
         self._arm_wand()
         self._click(*BRIGHT[:2])
         small = self._selected().copy()
-        self.form.method.setCurrentIndex(1)  # Brightness
+        self.form.set_method(WandMethod.BRIGHTNESS)
         self.form.brightness_tolerance.setValue(100.0)
         self._click(10, 140, Qt.KeyboardModifier.ShiftModifier)
         self.assertGreater(int(self._selected().sum()), 10 * int(small.sum()), "no size limit: the leak is selected")

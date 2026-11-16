@@ -41,6 +41,7 @@ try:
         MaskScopeModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
+    from lspr_imaging_app.panels.image.selection_toolbar import LOCK_ACTION, UNLOCK_ACTION
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.selection import (
@@ -217,17 +218,62 @@ class SelectionLockPanelTest(unittest.TestCase):
 
     # -- the buttons -----------------------------------------------------------------------------------------------------
 
-    def test_lock_needs_a_selection_and_unlock_needs_a_lock(self) -> None:
-        self.assertFalse(self.toolbar.lock_button.isEnabled())
-        self.assertFalse(self.toolbar.unlock_button.isEnabled())
+    def test_one_button_locks_needing_a_selection_and_then_unlocks_needing_only_the_lock(self) -> None:
+        """2026-11-16 (maintainer): Lock and Unlock are one button; while a lock is on it is Unlock."""
+        button = self.toolbar.lock_button
+        self.assertFalse(hasattr(self.toolbar, "unlock_button"))
+        self.assertEqual(self.toolbar.lock_action(), LOCK_ACTION)
+        self.assertFalse(button.isEnabled(), "nothing to lock yet")
         self.area.combine_region(_box(20, 70, 20, 90), REPLACE)
-        self.assertTrue(self.toolbar.lock_button.isEnabled())
-        self.assertFalse(self.toolbar.unlock_button.isEnabled())
-        self.toolbar.lock_button.click()
-        self.assertFalse(self.toolbar.lock_button.isEnabled(), "the selection became the fence: nothing is selected any more")
-        self.assertTrue(self.toolbar.unlock_button.isEnabled())
-        self.toolbar.unlock_button.click()
-        self.assertFalse(self.toolbar.unlock_button.isEnabled())
+        self.assertTrue(button.isEnabled())
+        self.assertEqual(self.toolbar.lock_action(), LOCK_ACTION)
+        lock_face = button.icon().cacheKey()
+        button.click()
+        self.assertTrue(self.area.has_lock())
+        self.assertEqual(self.toolbar.lock_action(), UNLOCK_ACTION, "the selection became the fence: the button is Unlock now")
+        self.assertTrue(button.isEnabled(), "an Unlock needs no selection")
+        self.assertNotEqual(button.icon().cacheKey(), lock_face, "the open padlock")
+        self.assertIn("Unlock", button.toolTip())
+        button.click()
+        self.assertFalse(self.area.has_lock())
+        self.assertEqual(self.toolbar.lock_action(), LOCK_ACTION)
+        self.assertFalse(button.isEnabled(), "unlocked with nothing selected: nothing to lock")
+
+    def test_the_wheel_flips_a_locked_button_to_lock_inside_the_lock_and_a_click_narrows_it(self) -> None:
+        self._lock_box(20, 70, 20, 90)
+        button = self.toolbar.lock_button
+        self._wheel(button, -120)
+        self.assertEqual(self.toolbar.lock_action(), UNLOCK_ACTION, "no selection: there is nothing to lock inside the lock")
+        inner = _box(30, 50, 30, 60)
+        self.area.combine_region(inner, REPLACE)
+        unlock_face = button.icon().cacheKey()
+        self._wheel(button, -120)
+        self.assertEqual(self.toolbar.lock_action(), LOCK_ACTION)
+        self.assertNotEqual(button.icon().cacheKey(), unlock_face)
+        self._wheel(button, 120)
+        self.assertEqual(self.toolbar.lock_action(), UNLOCK_ACTION, "the wheel flips it back")
+        self._wheel(button, -120)
+        button.click()
+        np.testing.assert_array_equal(self.area.lock_region(), inner)
+        self.assertFalse(self.area.has_selection(), "the selection became the new fence")
+        self.assertEqual(self.toolbar.lock_action(), UNLOCK_ACTION, "after the click the button rests on Unlock again")
+        button.click()
+        self.assertFalse(self.area.has_lock())
+
+    def test_the_lock_face_is_dropped_when_the_selection_goes_and_the_wheel_is_left_to_the_column_without_a_lock(self) -> None:
+        button = self.toolbar.lock_button
+        self.area.combine_region(_box(20, 70, 20, 90), REPLACE)
+        event = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, -120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        button.wheelEvent(event)
+        self.assertFalse(event.isAccepted(), "no lock: the wheel is not the button's, so the column scrolls over it")
+        button.click()  # locked
+        self.area.combine_region(_box(30, 50, 30, 60), REPLACE)
+        self._wheel(button, -120)
+        self.assertEqual(self.toolbar.lock_action(), LOCK_ACTION)
+        self.area.clear()
+        self.assertEqual(self.toolbar.lock_action(), UNLOCK_ACTION, "Lock inside the lock needs a selection")
+        self.assertTrue(button.isEnabled())
 
     def test_lock_makes_the_selection_the_fence_says_so_and_ctrl_z_undoes_it(self) -> None:
         box = self._lock_box()
@@ -243,7 +289,7 @@ class SelectionLockPanelTest(unittest.TestCase):
         self._lock_box()
         inner = _box(30, 40, 30, 40)
         self.area.combine_region(inner, REPLACE)
-        self.toolbar.unlock_button.click()
+        self.toolbar.lock_button.click()  # shows Unlock while a lock is on
         self.assertFalse(self.area.has_lock())
         np.testing.assert_array_equal(self.area.selected_mask(SHAPE), inner)
         self.assertTrue(self.messages[-1].startswith("Unlocked"))
@@ -259,7 +305,7 @@ class SelectionLockPanelTest(unittest.TestCase):
         alpha = layer.item.image[..., 3]
         self.assertTrue(np.all(alpha[~box] > 0), "dimmed outside")
         self.assertTrue(np.all(alpha[box] == 0), "untouched inside")
-        self.toolbar.unlock_button.click()
+        self.toolbar.lock_button.click()
         self.assertFalse(layer.item.isVisible())
         self.assertFalse(layer.border_item.isVisible())
 

@@ -157,17 +157,18 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
         self.area.set_rectangle(5, 5, 20, 20)
         scene = self.image_panel._plot.vb.mapViewToScene(QPointF(10.5, 10.5))
-        tool_entries = [("Select ROIs in selection", True), ("Lock to selection", True), ("Unlock", False), ("Exit tool", True)]
+        tool_entries = [("Select ROIs in selection", True), ("Lock", True), ("Unlock", False), ("Exit tool", True)]
         with patch("lspr_imaging_app.panels.image.interaction.show_tool_context_menu", return_value=None) as menu:
             self.image_panel._interaction._context_menu(tool_entries, scene)
         labels = [label for label, _enabled in menu.call_args.args[1]]
         self.assertEqual(labels[-1], "Exit tool")
         self.assertEqual(labels.count("Exit tool"), 1)
         self.assertEqual(labels.index("Deselect"), labels.index("Invert selection") + 1, "together")
-        self.assertLess(labels.index("Lock to selection"), labels.index("Invert selection"))
+        self.assertLess(labels.index("Lock"), labels.index("Invert selection"))
+        self.assertNotIn("Lock to selection", labels, "the entry reads just Lock (2026-11-16)")
         icons = menu.call_args.kwargs["icons"]
-        self.assertFalse(icons["Invert selection"].isNull())
-        self.assertFalse(icons["Deselect"].isNull())
+        for label in ("Lock", "Unlock", "Invert selection", "Deselect"):
+            self.assertFalse(icons[label].isNull(), label)
         self.assertIn("Invert selection", menu.call_args.kwargs["separate_before"])
         self.assertIn("Exit tool", menu.call_args.kwargs["separate_before"])
 

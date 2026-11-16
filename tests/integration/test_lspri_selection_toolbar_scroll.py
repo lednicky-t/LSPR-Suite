@@ -74,8 +74,7 @@ class SelectionToolbarScrollTest(unittest.TestCase):
             *(self.toolbar.tool_button(mode) for mode in AreaSelectionMode if mode is not AreaSelectionMode.ALL),  # 7 tools
             self.toolbar.mode_button,
             self.toolbar.modify_button,
-            self.toolbar.lock_button,
-            self.toolbar.unlock_button,
+            self.toolbar.lock_button,  # one button for Lock / Unlock since 2026-11-16
         ]
 
     def _visible_in_column(self, button: QtWidgets.QWidget) -> bool:
@@ -92,7 +91,7 @@ class SelectionToolbarScrollTest(unittest.TestCase):
         )
 
     def test_the_column_does_not_make_the_panel_taller(self) -> None:
-        self.assertEqual(len(self._all_buttons()), 11)
+        self.assertEqual(len(self._all_buttons()), 10)
         self.assertGreater(self.toolbar.sizeHint().height(), 300, "it wants all its buttons on show")
         self.assertLess(self.toolbar.minimumSizeHint().height(), 100, "but it does not insist on them")
         self.assertLess(self.panel.minimumSizeHint().height(), 400, "so the panel's own minimum height is not the toolbar's")
@@ -110,13 +109,13 @@ class SelectionToolbarScrollTest(unittest.TestCase):
         self.assertTrue(self.column.up_arrow().isVisible() and self.column.down_arrow().isVisible())
         self.assertFalse(self.column.up_arrow().isEnabled(), "at the top, nothing above")
         self.assertTrue(self.column.down_arrow().isEnabled())
-        self.assertFalse(self._visible_in_column(self.toolbar.modify_button), "the last button (Modify) is out of view at first")
+        self.assertFalse(self._visible_in_column(self.toolbar.lock_button), "the last button (Lock) is out of view at first")
         guard = 0
         while self.column.down_arrow().isEnabled() and guard < 40:
             self.column.down_arrow().click()
             guard += 1
         self.assertEqual(self.column.scroll_value(), self.column.scroll_maximum())
-        self.assertTrue(self._visible_in_column(self.toolbar.modify_button))
+        self.assertTrue(self._visible_in_column(self.toolbar.lock_button))
         self.assertFalse(self.column.down_arrow().isEnabled(), "at the bottom")
         self.assertTrue(self.column.up_arrow().isEnabled())
         self.column.up_arrow().click()
@@ -135,9 +134,9 @@ class SelectionToolbarScrollTest(unittest.TestCase):
 
     def test_ensure_visible_brings_a_button_into_view(self) -> None:
         self._show(self.panel.minimumSizeHint().height() + 20)
-        self.assertFalse(self._visible_in_column(self.toolbar.modify_button))
-        self.column.ensure_visible(self.toolbar.modify_button)
-        self.assertTrue(self._visible_in_column(self.toolbar.modify_button))
+        self.assertFalse(self._visible_in_column(self.toolbar.lock_button))
+        self.column.ensure_visible(self.toolbar.lock_button)
+        self.assertTrue(self._visible_in_column(self.toolbar.lock_button))
 
     def test_growing_the_panel_again_hides_the_arrows(self) -> None:
         self._show(self.panel.minimumSizeHint().height() + 20)

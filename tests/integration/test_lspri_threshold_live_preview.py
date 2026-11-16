@@ -340,13 +340,21 @@ class ThresholdLivePreviewTest(unittest.TestCase):
         self.assertNotEqual(darker_off, brighter_off)
         self.assertNotEqual(picture(QIcon.State.On), darker_off, "the armed tool still wears its frame")
 
-    def test_the_form_has_the_same_switch_and_the_two_stay_in_step(self) -> None:
-        self.assertEqual([self.form.side_combo.itemData(i) for i in range(self.form.side_combo.count())], ["brighter", "darker"])
-        self.form.side_combo.setCurrentIndex(1)
+    def test_the_form_has_the_same_switch_as_two_icon_buttons_and_the_two_stay_in_step(self) -> None:
+        buttons = self.form.side_buttons
+        self.assertEqual(list(buttons), ["brighter", "darker"])
+        self.assertEqual([buttons[side].isChecked() for side in buttons], [True, False])
+        for side, button in buttons.items():  # the pop-up's pictures are the toolbar button's own
+            self.assertEqual(button.icon().pixmap(48, 48).toImage(), icons.threshold_icon(side == "darker").pixmap(48, 48).toImage())
+        buttons["darker"].click()
         self.assertEqual(self.form.threshold_side(), "darker")
+        self.assertEqual([buttons[side].isChecked() for side in buttons], [False, True])
         self.assertEqual(self.button.icon().pixmap(48, 48, QIcon.Mode.Normal, QIcon.State.Off).toImage(), icons.threshold_icon(True).pixmap(48, 48).toImage())
+        buttons["darker"].click()  # a click on the checked button leaves it checked
+        self.assertTrue(buttons["darker"].isChecked())
+        self.assertEqual(self.form.threshold_side(), "darker")
         self._wheel()
-        self.assertEqual(self.form.side_combo.currentIndex(), 0, "the wheel moves the form's switch")
+        self.assertEqual([buttons[side].isChecked() for side in buttons], [True, False], "the wheel moves the form's switch")
 
     def test_the_side_is_remembered(self) -> None:
         store = UiStateStore({"selection/threshold_side": "darker"})
