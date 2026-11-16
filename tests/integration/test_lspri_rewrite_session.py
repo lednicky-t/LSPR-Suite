@@ -274,6 +274,40 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         self.assertEqual(selection.current_wavelength(), 600.0)
         self.assertEqual(selection.selected_roi_ids(), frozenset({self.roi_b}))
 
+    def test_the_roi_selection_lock_is_saved_with_the_session_and_comes_back_with_it(self) -> None:
+        """Schema 1.10 (2026-11-16, maintainer: the lock "should be saved in session, to load with a new one")."""
+        self.selection.set_roi_selection_locked(True)
+        _geo, _mask, _chrom, _bg, _roi, selection, _analysis = self._reload()
+        self.assertTrue(selection.roi_selection_locked())
+        self.assertEqual(selection.selected_roi_ids(), frozenset({self.roi_b}), "with the selection it holds")
+
+    def test_a_session_without_a_lock_writes_no_lock_key_and_opens_unlocked(self) -> None:
+        payload = json.loads(self._save().read_text(encoding="utf-8"))
+        self.assertNotIn("locked", payload["selection"], "written exactly as before")
+        _geo, _mask, _chrom, _bg, _roi, selection, _analysis = self._reload()
+        self.assertFalse(selection.roi_selection_locked())
+
+    def test_a_session_load_brings_its_own_lock_over_the_one_that_was_on(self) -> None:
+        """Opening another dataset / session replaces the lock as it replaces the selection: an unlocked session unlocks a locked app."""
+        self._save()
+        state = load_session(self.root)
+        modules = _modules()
+        modules[5].set_roi_selection_locked(True)  # the app was locked on another dataset
+        apply_session(state, *modules)
+        self.assertFalse(modules[5].roi_selection_locked())
+        self.assertEqual(modules[5].selected_roi_ids(), frozenset({self.roi_b}), "the loaded selection passes a lock")
+
+    def test_a_schema_1_9_file_loads_unlocked(self) -> None:
+        self.selection.set_roi_selection_locked(True)
+        path = self._save()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["schema_version"] = "1.9"
+        del payload["selection"]["locked"]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        state = load_session(self.root)
+        self.assertFalse(state.selection_locked)
+        self.assertEqual(state.selected_roi_ids, (self.roi_b,))
+
     def test_analysis_settings_round_trip(self) -> None:
         """Added with the query layer (2026-09-23). Before it,
         `statistics_settings` had no owner at all and nothing persisted it -
@@ -324,7 +358,7 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         first = self._save().read_bytes()
         self.assertEqual(self._save().read_bytes(), first)
         payload = json.loads(first)
-        self.assertEqual(payload["schema_version"], "1.9")
+        self.assertEqual(payload["schema_version"], "1.10")
         self.assertTrue(all(entry.get("timeline") is None for entry in payload["roi"]["rois"]))
 
     def test_a_schema_1_1_file_loads_without_a_timeline(self) -> None:

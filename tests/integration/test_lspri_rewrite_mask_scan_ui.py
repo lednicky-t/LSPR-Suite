@@ -154,16 +154,16 @@ class MaskScanUiTest(unittest.TestCase):
 
     # -- the group ----------------------------------------------------------------------------------------
 
-    def test_the_scan_group_sits_between_manual_edit_and_png_behind_dividers(self) -> None:
+    def test_the_scan_group_sits_between_the_feature_map_and_png_behind_dividers(self) -> None:
         tab = self.panel._mask_tab
         page = self.panel._mask_tab
         scan_group = tab._scan_controls.parentWidget()
         self.assertIs(scan_group.parentWidget(), page)
         self.assertEqual(tab._scan_label.text(), "Scan")
         layout = page.layout()
-        edit_group = tab._edit_stack.parentWidget().parentWidget()
+        features_group = tab.features_panel.parentWidget()
         png_group = tab._png_actions.parentWidget()
-        order = [layout.indexOf(w) for w in (edit_group, tab._separators[3], scan_group, tab._separators[4], png_group)]
+        order = [layout.indexOf(w) for w in (features_group, tab._separators[3], scan_group, tab._separators[4], png_group)]
         self.assertEqual(order, sorted(order))
         self.assertTrue(all(i >= 0 for i in order))
 

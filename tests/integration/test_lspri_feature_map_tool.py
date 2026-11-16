@@ -49,7 +49,6 @@ try:
         BackgroundModule,
         ChromaticModule,
         GeometryModule,
-        MaskEditTool,
         MaskModule,
         MaskScopeModule,
     )
@@ -144,8 +143,7 @@ class FeatureMapToolTest(unittest.TestCase):
         _pump()
 
     def _open_tool(self) -> None:
-        self.tab.edit_tool.set_tool(MaskEditTool.FEATURE_MAP)
-        self.panel._tool_ribbon.set_category("Mask")
+        self.panel._tool_ribbon.set_category("Mask")  # the Feature map is the Mask tab's one tool (no picker since 2026-11-16)
 
     def _use_shared_keep(self) -> None:
         if FeatureMapToolTest._shared_keep is not None and self.task._keep is None:
@@ -513,15 +511,6 @@ class FeatureMapToolTest(unittest.TestCase):
         self.assertEqual(set(self.tool.kinds_popover().kind_checks), set(fm.KINDS))
         self.assertIn("Kinds", self.tool._kinds_button.toolTip())
 
-    def test_the_tool_rows_share_one_stack_as_wide_as_the_widest_row(self) -> None:
-        # (2026-11-15: the Threshold / Local contrast / Morphology rows are gone, so the Feature map row is the widest and sets the
-        # width; the caption "Manual edit" still stays put when the Eraser is picked.)
-        stack = self.tab._edit_stack
-        widths = [stack.widget(i).sizeHint().width() for i in range(stack.count())]
-        self.assertEqual(stack.count(), 2)
-        self.assertEqual(max(widths), self.tool.sizeHint().width())
-        self.assertGreaterEqual(stack.sizeHint().width(), max(widths))
-
     def test_the_settings_are_remembered_and_have_working_defaults(self) -> None:
         pop = self.tool.popover()
         self.assertEqual(self.tool.settings().dirt_min, 0.02)
@@ -546,13 +535,6 @@ class FeatureMapToolTest(unittest.TestCase):
         self.assertEqual(self.tool.settings(), fm.FeatureMapSettings())
         self.assertEqual(self.task.kinds(), fm.FeatureMapSettings().kinds)
         self.assertEqual(self.task.margin(), fm.FeatureMapSettings().grow_px)
-
-    def test_the_tool_is_in_the_picker_and_a_remembered_choice_still_opens_it(self) -> None:
-        labels = [action.text() for action in self.tab._edit_picker._menu.actions()]
-        self.assertIn("Feature map", labels)
-        self.assertEqual(MaskEditTool("roi_features"), MaskEditTool.FEATURE_MAP)  # the value stored by the former ROI features tool
-        self.tab.edit_tool.set_tool(MaskEditTool.FEATURE_MAP)
-        self.assertIs(self.tab._edit_stack.currentWidget(), self.tool)
 
 
 class ChooseCubesTest(unittest.TestCase):

@@ -12,7 +12,7 @@ Two layers, each tested where it lives:
 
 - `MaskCandidates` (the worker): computes off the calling thread, caches, drops stale results, keeps previews bounded.
 - `MaskEditPreview` on a real `ImagePanel`: `request_candidate` gives exactly the pixels the mask tools compute; nothing is tinted for the
-  Eraser; the eye is one remembered state.
+  Feature map result yet; the eye is one remembered state.
 
 A real `QApplication` in-process, never `.exec()`, driven by direct calls and signals (same pattern as
 `test_lspri_rewrite_image_panel.py`, whose dataset fixture this repeats on a smaller scale).
@@ -47,7 +47,6 @@ try:
         BackgroundModule,
         ChromaticModule,
         GeometryModule,
-        MaskEditTool,
         MaskModule,
         MaskScopeModule,
     )
@@ -279,9 +278,10 @@ class MaskEditPreviewPanelTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.preview.request_candidate("morphology", FRAME, lambda _pixels: None)
 
-    def test_nothing_is_tinted_for_the_eraser_or_off_the_mask_tab(self) -> None:
+    def test_nothing_is_tinted_without_a_feature_map_result(self) -> None:
+        """The Mask tab is open but no Feature map has been processed: there is nothing to show (the Eraser, which also tinted nothing,
+        was retired 2026-11-16)."""
         self._load()
-        self.tab.edit_tool.set_tool(MaskEditTool.ERASER)
         self.panel._tool_ribbon.set_category("Mask")
         _pump(0.3)
         self.assertIsNone(self.preview.current())

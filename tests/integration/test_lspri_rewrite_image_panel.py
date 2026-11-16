@@ -1299,40 +1299,28 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertFalse(self.panel._mask_tint.item.isVisible())
 
-    # -- mask "Edit" tool picker (2026-10-02, maintainer request: "a pickup --
-    # -- menu... option for tools how to change it") -------------------------
+    # -- the Mask tab's tool section: "Manual edit" (a tool picker, 2026-10-02) until 2026-11-16, then the Feature map's own section --
 
-    def test_mask_edit_group_sits_in_the_mask_tab_after_a_second_divider(self) -> None:
-        """"next to the visibility section in Mask, add Edit section" - a
-        captioned group in the same "Mask" tab page, after a divider (same
-        convention the State|Visibility pair already uses). Renamed "Edit"
-        -> "Manual edit" once sibling groups ("General"/"PNG") landed
-        beside it (2026-10-02, maintainer request)."""
+    def test_feature_map_group_sits_in_the_mask_tab_after_a_second_divider(self) -> None:
+        """A captioned group in the "Mask" tab page, after the Visibility group and a divider (the convention the State | Visibility pair
+        uses). It was "Manual edit" (a picker over the Feature map and the Eraser); the Eraser and the picker were retired 2026-11-16,
+        so the Feature map's controls sit in the group directly and the caption carries its name."""
+        from lspr_imaging_app.panels.image.mask_edit_panels import FeatureMapEditPanel
+
         page = self._ribbon_page("Mask")
-        # Picker + stack -> one row widget -> mask_edit_group (the
-        # labeled_icon_group wrapper) -> page. The caption wraps the whole
-        # picker+stack row so it is centred on the whole "Manual edit"
-        # section (2026-10-16, maintainer request; it used to sit under the
-        # picker only, with the stack as an uncaptioned sibling).
-        edit_content = self.panel._mask_tab._edit_picker.parentWidget()
-        self.assertIs(self.panel._mask_tab._edit_stack.parentWidget(), edit_content)
-        edit_group = edit_content.parentWidget()
-        self.assertIs(edit_group.parentWidget(), page)
-        self.assertIs(self.panel._mask_tab._separators[2].parentWidget(), page)
-        self.assertEqual(self.panel._mask_tab._edit_label.text(), "Manual edit")
+        tab = self.panel._mask_tab
+        self.assertIsInstance(tab.features_panel, FeatureMapEditPanel)
+        features_group = tab.features_panel.parentWidget()
+        self.assertIs(features_group.parentWidget(), page)
+        self.assertIs(tab._separators[2].parentWidget(), page)
+        self.assertEqual(tab._features_label.text(), "Feature map")
 
         layout = page.layout()
-        visibility_index = layout.indexOf(self.panel._mask_tab.overlay_controls.parentWidget())
-        separator_index = layout.indexOf(self.panel._mask_tab._separators[2])
-        edit_index = layout.indexOf(edit_group)
+        visibility_index = layout.indexOf(tab.overlay_controls.parentWidget())
+        separator_index = layout.indexOf(tab._separators[2])
+        features_index = layout.indexOf(features_group)
         self.assertLess(visibility_index, separator_index)
-        self.assertLess(separator_index, edit_index)
-        row = edit_content.layout()
-        self.assertLess(
-            row.indexOf(self.panel._mask_tab._edit_picker),
-            row.indexOf(self.panel._mask_tab._edit_stack),
-            "the picker sits left of its tool-control stack",
-        )
+        self.assertLess(separator_index, features_index)
 
     def test_general_group_is_the_leftmost_group_in_the_mask_tab(self) -> None:
         """"put this icon [Clear] in solo section 'General' and put section
@@ -1353,9 +1341,9 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertLess(general_index, separator_index)
         self.assertLess(separator_index, state_index)
 
-    def test_png_group_sits_after_manual_edit_behind_a_divider(self) -> None:
+    def test_png_group_sits_after_the_feature_map_group_behind_a_divider(self) -> None:
         """"these two icons [load/save] should be in 'PNG' section" -
-        placed after "Manual edit", same divider convention as every other
+        placed after the Feature map group (before 2026-11-16: "Manual edit"), same divider convention as every other
         group boundary in this tab."""
         page = self._ribbon_page("Mask")
         png_group = self.panel._mask_tab._png_actions.parentWidget()
@@ -1364,12 +1352,12 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(self.panel._mask_tab._png_label.text(), "PNG")
 
         layout = page.layout()
-        edit_group = self.panel._mask_tab._edit_stack.parentWidget().parentWidget()
-        edit_index = layout.indexOf(edit_group)
+        features_group = self.panel._mask_tab.features_panel.parentWidget()
+        features_index = layout.indexOf(features_group)
         separator_index = layout.indexOf(self.panel._mask_tab._separators[3])
         png_index = layout.indexOf(png_group)
-        self.assertGreaterEqual(edit_index, 0)
-        self.assertLess(edit_index, separator_index)
+        self.assertGreaterEqual(features_index, 0)
+        self.assertLess(features_index, separator_index)
         self.assertLess(separator_index, png_index)
 
     def test_png_group_order_is_load_then_save(self) -> None:
@@ -1434,22 +1422,11 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertEqual(scope, "persistent")
         np.testing.assert_array_equal(resolved_mask, mask)
 
-    def test_mask_edit_picker_defaults_to_the_feature_map_and_offers_two_tools(self) -> None:
-        from lspr_imaging_app.image_tools import MaskEditTool
-        from lspr_imaging_app.panels.image.mask_edit_panels import FeatureMapEditPanel
-
-        self.assertIs(self.panel._mask_tab.edit_tool.tool(), MaskEditTool.FEATURE_MAP)
-        self.assertIsInstance(self.panel._mask_tab._edit_stack.currentWidget(), FeatureMapEditPanel)
-        self.assertEqual(set(self.panel._mask_tab._edit_picker._actions), {MaskEditTool.FEATURE_MAP, MaskEditTool.ERASER})
-        self.assertEqual(self.panel._mask_tab._edit_stack.count(), 2, "the other five tools moved into the selection toolbar (2026-11-15)")
-
-    def test_picking_a_tool_switches_the_edit_stack(self) -> None:
-        from lspr_imaging_app.image_tools import MaskEditTool
-        from lspr_imaging_app.panels.image.mask_edit_panels import EraserEditPanel
-
-        self.panel._mask_tab._edit_picker._actions[MaskEditTool.ERASER].trigger()
-        self.assertIsInstance(self.panel._mask_tab._edit_stack.currentWidget(), EraserEditPanel)
-        self.assertIs(self.panel._mask_tab._edit_stack.currentWidget(), self.panel._mask_tab._edit_stack.widget(1))
+    def test_the_mask_tab_has_no_tool_picker_any_more(self) -> None:
+        """2026-11-16: the Eraser and the "Manual edit" picker are gone; the Feature map is the one tool and has no picker to pick it from."""
+        tab = self.panel._mask_tab
+        for retired in ("_edit_picker", "_edit_stack", "_edit_tool", "_grain_eraser", "_eraser_panel"):
+            self.assertFalse(hasattr(tab, retired), retired)
 
     def test_the_removed_tools_are_in_the_selection_toolbar_instead(self) -> None:
         """2026-11-15: Histogram selection, Threshold, Local contrast -> "Select by value"; Morphology -> "Modify selection"; Draw -> the

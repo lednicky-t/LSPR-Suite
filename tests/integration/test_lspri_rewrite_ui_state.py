@@ -28,7 +28,6 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.app_rewrite import build_main_window
     from lspr_imaging_app.image_tools import MaskScope
-    from lspr_imaging_app.image_tools.mask_edit_tool import MaskEditTool
     from lspr_imaging_app.panels.dock_container import PanelContainer
     from lspr_imaging_app.panels.histogram import HistogramPanel
     from lspr_imaging_app.panels.image import ImagePanel
@@ -104,7 +103,7 @@ class WindowRestoreTests(unittest.TestCase):
                     "export/compression": False,
                     "export/skip_excluded": True,
                     "mask/scope": "individual",
-                    "image/mask_edit_tool": "eraser",
+                    "image/mask_edit_tool": "eraser",  # a choice saved before the picker was retired (2026-11-16): ignored, harmless
                     "image/cursor_readout": True,
                     "histogram/cursor_readout": True,
                 }
@@ -119,19 +118,17 @@ class WindowRestoreTests(unittest.TestCase):
         self.assertIs(export, image._export_tab)  # one Export front door: the Image panel's ribbon tab
         self.assertTrue(image._tool_ribbon.set_category("Export"))
         self.assertIs(image._mask_scope.scope(), MaskScope.INDIVIDUAL)
-        self.assertIs(image._mask_tab.edit_tool.tool(), MaskEditTool.ERASER)
         self.assertTrue(image._cursor_overlay._enabled)
         self.assertTrue(_panel(window, "Histogram", HistogramPanel)._plot.cursor_overlay()._enabled)
 
     def test_garbage_saved_values_fall_back_to_defaults(self) -> None:
         window = self._build(
             initial_settings=AppSettings(
-                ui_state={"mask/scope": "nope", "image/mask_edit_tool": 5, "export/chunk_size": "x", "export/shard": "gone"}
+                ui_state={"mask/scope": "nope", "export/chunk_size": "x", "export/shard": "gone"}
             )
         )
         image = _panel(window, "Image", ImagePanel)
         self.assertIs(image._mask_scope.scope(), MaskScope.PERSISTENT)
-        self.assertIs(image._mask_tab.edit_tool.tool(), MaskEditTool.FEATURE_MAP)
         self.assertEqual(window.findChildren(ExportTab)[0]._chunk_spin.value(), 64)
 
     def test_changes_are_saved_after_a_pause(self) -> None:
