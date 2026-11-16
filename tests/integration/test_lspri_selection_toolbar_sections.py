@@ -105,10 +105,11 @@ class SelectionToolbarSectionsTest(unittest.TestCase):
         self.assertFalse(hasattr(self.toolbar, "deselect_button"))
         self.assertFalse(hasattr(self.toolbar, "value_button"))
 
-    def test_only_the_wand_button_reads_the_wheel(self) -> None:
-        """The other tool buttons must pass the wheel on, so the column scrolls over them."""
+    def test_only_the_wand_and_the_threshold_buttons_read_the_wheel(self) -> None:
+        """The wand's wheel switches its method and, since 2026-11-16, the Threshold's switches Brighter / Darker. The other tool buttons must
+        pass the wheel on, so the column scrolls over them."""
         wheel_tools = [
             mode for mode in AreaSelectionMode
             if mode is not AreaSelectionMode.ALL and isinstance(self.toolbar.tool_button(mode), WheelToolButton)
         ]
-        self.assertEqual(wheel_tools, [AreaSelectionMode.WAND])
+        self.assertEqual(wheel_tools, [AreaSelectionMode.WAND, AreaSelectionMode.THRESHOLD])

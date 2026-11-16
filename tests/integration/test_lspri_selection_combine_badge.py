@@ -111,11 +111,13 @@ class PaletteTableTest(unittest.TestCase):
         self.assertEqual(OUTLINES_FOR_MODE[REPLACE], (PAST, PRESENT))
         self.assertEqual(OUTLINES_FOR_MODE[INTERSECT], (PAST, PRESENT, RESULT))
 
-    def test_three_different_colours_and_the_result_is_the_icons_blue(self) -> None:
-        from lspr_imaging_app.panels.image.selection_palette import REMOVED_COLOR
+    def test_two_looks_two_colours_and_the_badge_keeps_its_blue_and_orange(self) -> None:
+        """The image has two colours (pink, green): the result outline wears the pink. The blue and the orange are the badge's rings only."""
+        from lspr_imaging_app.panels.image.selection_palette import REMOVED_COLOR, RESULT_COLOR
 
-        self.assertEqual(len(set(COLORS.values())), 3)
-        self.assertEqual(COLORS[RESULT], "#38bdf8")
+        self.assertEqual(set(COLORS), {PAST, PRESENT})
+        self.assertEqual(len(set(COLORS.values())), 2)
+        self.assertEqual(RESULT_COLOR, "#38bdf8")
         self.assertEqual(REMOVED_COLOR, "#f97316")
 
 
@@ -336,7 +338,7 @@ class SelectionOutlineAndBadgeTest(unittest.TestCase):
         self.assertFalse(self.area.has_selection())
 
     def test_at_the_press_of_a_subtract_drag_the_selection_does_not_blink_out(self) -> None:
-        """The shape has no area yet (one point): the result is the whole old selection, in the result colour."""
+        """The shape has no area yet (one point): the result is the whole old selection (drawn in the selection's colour)."""
         self.area.set_rectangle(5, 5, 20, 20)
         self._pick(AreaSelectionMode.RECTANGLE)
         self.assertTrue(self.tool.begin_gesture(30.0, 30.0, SUBTRACT))

@@ -267,22 +267,33 @@ class SelectByValueTest(unittest.TestCase):
         self.form.threshold_spin.setValue(percent)
         self.form.profile_sigma_spin.setValue(sigma)
 
-    def test_threshold_selects_exactly_the_pixels_the_mask_tool_found(self) -> None:
+    def test_threshold_selects_exactly_the_pixels_the_mask_function_finds_on_the_picked_side(self) -> None:
+        """2026-11-16: the Threshold has two modes. Brighter (the default) selects what is above the local background, Darker what is below it."""
         self._pick(ValueMethod.THRESHOLD)
         self._set_threshold()
+        self.assertEqual(self.form.threshold_side(), "brighter", "the default")
         self._click_button()
-        expected = raster_tools.create_relative_contrast_mask(self._plane(), sigma_px=30.0, threshold_fraction=0.20)
-        self.assertTrue(expected.any())
-        np.testing.assert_array_equal(self._selected(), expected)
-        self.assertEqual(undo_manager.undo_label, "Select by threshold")
+        brighter = raster_tools.create_relative_contrast_mask(self._plane(), sigma_px=30.0, threshold_fraction=0.20, side="brighter")
+        self.assertTrue(brighter.any())
+        np.testing.assert_array_equal(self._selected(), brighter)
+        self.assertTrue(self._selected()[_disk(*BRIGHT)].any() and not self._selected()[_disk(*DARK)].any(), "the bright disk, not the dark one")
+        self.assertEqual(undo_manager.undo_label, "Select by threshold (brighter)")
+        self.form.set_threshold_side("darker")
+        self._click_button()
+        darker = raster_tools.create_relative_contrast_mask(self._plane(), sigma_px=30.0, threshold_fraction=0.20, side="darker")
+        np.testing.assert_array_equal(self._selected(), darker)
+        self.assertTrue(self._selected()[_disk(*DARK)].any() and not self._selected()[_disk(*BRIGHT)].any(), "the dark disk, not the bright one")
+        self.assertEqual(undo_manager.undo_label, "Select by threshold (darker)")
+        self.assertIn("(darker)", self.messages[-1])
 
     def test_threshold_inside_a_lock_equals_the_unlocked_result_and_the_lock(self) -> None:
         self._pick(ValueMethod.THRESHOLD)
         self._set_threshold()
+        self.form.set_threshold_side("darker")  # the dark disk (row 80, col 115, radius 10), which the lock below cuts through
         self._click_button()
         free = self._selected().copy()
         self.area.clear()
-        box = self._lock_box(60, 100, 100, 150)
+        box = self._lock_box(60, 100, 100, 118)
         self.assertTrue((free & box).any() and (free & ~box).any())
         self._click_button()
         np.testing.assert_array_equal(self._selected(), free & box)
@@ -307,7 +318,7 @@ class SelectByValueTest(unittest.TestCase):
         self._image_click()  # a second click while it works is ignored, not queued
         self.assertTrue(_pump_until(lambda: not self.selector.is_busy()))
         self.assertNotIn("Working", button.toolTip())
-        self.assertEqual(undo_manager.undo_label, "Select by threshold")
+        self.assertEqual(undo_manager.undo_label, "Select by threshold (brighter)")
         undo_manager.undo()
         self.assertFalse(self.area.has_selection(), "the one click made exactly one step")
 

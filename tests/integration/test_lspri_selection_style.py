@@ -1,5 +1,6 @@
-"""The selection toolbar's View pop-up (2026-11-16): the colour of the selection's three outlines, an infill for each (5 opacity steps, step 0 = none),
-and the Venn mode icons that wear the same circle colours.
+"""The selection toolbar's View pop-up (2026-11-16): the colour of the selection and of the shape being dragged, an infill for each (5 opacity steps,
+step 0 = none), and the Venn mode icons that wear the same circle colours. The drag's third outline, the result of a Subtract / Intersect, has no row
+of its own: it wears the selection's look (maintainer, 2026-11-16: a third row was confusing).
 
 `SelectionStyle` is the one state; the outlines on the image, the Venn icons of the mode button and the pop-up follow it. Pins: the defaults are the
 colours the borders had before (and no fill, so nothing looks different until the user picks something); a step above 0 tints the pixels inside an
@@ -35,7 +36,7 @@ try:
     from lspr_imaging_app.image_tools import ActiveToolModule, BackgroundModule, ChromaticModule, GeometryModule, MaskModule, MaskScopeModule
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.combine_mode_icons import combine_mode_icon
-    from lspr_imaging_app.panels.image.selection_palette import COLORS, FILL_OPACITY_STEPS, PAST, PRESENT, RESULT
+    from lspr_imaging_app.panels.image.selection_palette import COLORS, FILL_OPACITY_STEPS, LOOK_OF, OUTLINE_ROLES, PAST, PRESENT, RESULT
     from lspr_imaging_app.panels.image.selection_style import MAX_FILL_STEP, SelectionStyle
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
@@ -71,7 +72,7 @@ class SelectionStyleStateTest(unittest.TestCase):
 
     def test_the_defaults_are_the_borders_colours_and_no_fill(self) -> None:
         style = SelectionStyle()
-        for role in (PAST, PRESENT, RESULT):
+        for role in (PAST, PRESENT):
             self.assertEqual(style.color(role), QColor(COLORS[role]).name())
             self.assertEqual(style.step(role), 0)
             self.assertEqual(style.fill_alpha(role), 0.0)
@@ -105,7 +106,7 @@ class SelectionStyleStateTest(unittest.TestCase):
 
     def test_every_border_is_shown_by_default_and_a_switch_is_reported_once(self) -> None:
         style = SelectionStyle()
-        self.assertTrue(all(style.border_shown(role) for role in (PAST, PRESENT, RESULT)))
+        self.assertTrue(all(style.border_shown(role) for role in (PAST, PRESENT)))
         seen: list[int] = []
         style.changed.connect(lambda: seen.append(1))
         style.set_border_shown(PAST, False)
@@ -124,8 +125,8 @@ class SelectionStyleStateTest(unittest.TestCase):
         style.bind_ui_state(store)
         self.assertFalse(style.border_shown(PAST))
         self.assertTrue(style.border_shown(PRESENT))
-        style.set_border_shown(RESULT, False)
-        self.assertIs(store.get(keys.SELECTION_STYLE_KEYS[RESULT]["border"].key), False)
+        style.set_border_shown(PRESENT, False)
+        self.assertIs(store.get(keys.SELECTION_STYLE_KEYS[PRESENT]["border"].key), False)
 
     def test_what_is_saved_comes_back_and_a_bad_value_falls_back(self) -> None:
         saved = {
@@ -133,7 +134,7 @@ class SelectionStyleStateTest(unittest.TestCase):
             keys.SELECTION_STYLE_KEYS[PAST]["fill"].key: 3,
             keys.SELECTION_STYLE_KEYS[PRESENT]["color"].key: "not a colour",  # edited by hand: the default stays
             keys.SELECTION_STYLE_KEYS[PRESENT]["fill"].key: "two",  # the wrong type: the default stays
-            keys.SELECTION_STYLE_KEYS[RESULT]["fill"].key: 40,  # out of range: held to the last step
+            "selection/result_fill_step": 3,  # left by the version that had a third row: nobody reads it any more
         }
         writes: list[dict[str, object]] = []
         store = UiStateStore(saved, on_changed=writes.append)
@@ -143,7 +144,6 @@ class SelectionStyleStateTest(unittest.TestCase):
         self.assertEqual(writes, [], "restoring does not save what it just read")
         self.assertEqual((style.color(PAST), style.step(PAST)), ("#aabbcc", 3))
         self.assertEqual((style.color(PRESENT), style.step(PRESENT)), (QColor(COLORS[PRESENT]).name(), 0))
-        self.assertEqual(style.step(RESULT), 4)
 
         style.set_color(PRESENT, "#010203")
         style.set_step(PRESENT, 1)
@@ -151,11 +151,22 @@ class SelectionStyleStateTest(unittest.TestCase):
         self.assertEqual(store.get(keys.SELECTION_STYLE_KEYS[PRESENT]["color"].key), "#010203")
         self.assertEqual(store.get(keys.SELECTION_STYLE_KEYS[PRESENT]["fill"].key), 1)
 
+    def test_a_saved_step_out_of_range_is_held_to_the_last_step(self) -> None:
+        style = SelectionStyle()
+        style.bind_ui_state(UiStateStore({keys.SELECTION_STYLE_KEYS[PAST]["fill"].key: 40}))
+        self.assertEqual(style.step(PAST), MAX_FILL_STEP)
+
     def test_the_stored_roles_are_the_palettes(self) -> None:
-        """`storage` may not import the palette, so it spells the roles itself: they must be the same."""
-        self.assertEqual(set(keys.SELECTION_STYLE_KEYS), {PAST, PRESENT, RESULT})
+        """`storage` may not import the palette, so it spells the roles itself: they must be the same. There are two looks; the result has none."""
+        self.assertEqual(set(keys.SELECTION_STYLE_KEYS), {PAST, PRESENT})
+        self.assertEqual(set(keys.SELECTION_STYLE_KEYS), set(COLORS))
         for role_keys in keys.SELECTION_STYLE_KEYS.values():
             self.assertTrue(all(key in keys.HAND_WIRED_KEYS for key in role_keys.values()))
+
+    def test_the_result_outline_wears_the_selections_look_and_the_other_two_their_own(self) -> None:
+        self.assertEqual(set(OUTLINE_ROLES), {PAST, PRESENT, RESULT})
+        self.assertEqual(LOOK_OF, {PAST: PAST, PRESENT: PRESENT, RESULT: PAST})
+        self.assertEqual(set(LOOK_OF.values()), set(COLORS), "every look the outlines use is one the pop-up has, and the other way round")
 
     def test_the_left_circle_wears_the_past_colour_and_the_right_circle_the_present_one(self) -> None:
         for how in (REPLACE, ADD, SUBTRACT, INTERSECT):
@@ -208,7 +219,7 @@ class SelectionViewPopupTest(unittest.TestCase):
     def test_nothing_is_filled_until_a_step_is_picked_and_the_dashes_keep_their_colours(self) -> None:
         self.area.set_rectangle(10, 10, 40, 40)
         _pump(0.05)
-        for role in (PAST, PRESENT, RESULT):
+        for role in OUTLINE_ROLES:
             self.assertFalse(self.outlines.fill_item(role).isVisible(), role)
         self.assertEqual(self.outlines.past_items()[1].pen().color().name(), QColor(COLORS[PAST]).name())
 
@@ -302,6 +313,48 @@ class SelectionViewPopupTest(unittest.TestCase):
         self.assertAlmostEqual(fill.brush().color().alphaF(), 1.0, places=2)
         tool.end_gesture()
 
+    # -- the result of a Subtract / Intersect drag wears the selection's look ----------------------------------------
+
+    def _start_subtract_drag(self) -> None:
+        """A selection, then the rectangle tool pressed with Subtract: the result outline (the selection as it will stand) is drawn at once."""
+        self.area.set_rectangle(5, 5, 20, 20)
+        self.toolbar.tool_button(AreaSelectionMode.RECTANGLE).click()
+        self.assertTrue(self.panel._area_tool.begin_gesture(30.0, 30.0, SUBTRACT))
+        self.assertTrue(self.outlines.result_items()[1].isVisible())
+
+    def test_the_result_dashes_have_the_selections_colour_and_follow_it_not_the_drawn_shapes(self) -> None:
+        self._start_subtract_drag()
+        ants = self.outlines.result_items()[1]
+        self.assertEqual(ants.pen().color().name(), self.style.color(PAST))
+        self.style.set_color(PAST, "#123456")
+        self.assertEqual(ants.pen().color().name(), "#123456", "recoloured with the selection")
+        self.style.set_color(PRESENT, "#654321")
+        self.assertEqual(ants.pen().color().name(), "#123456", "the drawn shape's colour does not reach it")
+        self.panel._area_tool.cancel_gesture()
+
+    def test_the_result_is_filled_like_the_selection(self) -> None:
+        self._start_subtract_drag()
+        fill = self.outlines.fill_item(RESULT)
+        self.assertFalse(fill.isVisible(), "step 0: no fill")
+        self.style.set_step(PRESENT, 4)
+        self.assertFalse(fill.isVisible(), "the drawn shape's infill is not the result's")
+        self.style.set_step(PAST, 2)
+        self.assertTrue(fill.isVisible())
+        self.assertAlmostEqual(fill.brush().color().alphaF(), 0.5, places=2)
+        self.assertEqual(fill.brush().color().name(), self.style.color(PAST))
+        self.panel._area_tool.cancel_gesture()
+
+    def test_the_result_border_goes_with_the_selections_border_switch(self) -> None:
+        self._start_subtract_drag()
+        base, ants = self.outlines.result_items()
+        self.style.set_border_shown(PRESENT, False)
+        self.assertTrue(base.isVisible() and ants.isVisible(), "the drawn shape's switch is not the result's")
+        self.style.set_border_shown(PRESENT, True)
+        self.style.set_border_shown(PAST, False)
+        self.assertFalse(base.isVisible() or ants.isVisible(), "the selection's border is off, so the result's is too")
+        self.assertFalse(self.outlines.is_animating(), "nothing is left to crawl")
+        self.panel._area_tool.cancel_gesture()
+
     # -- the Venn icons ----------------------------------------------------------------------------------------
 
     def test_the_mode_button_and_its_menu_wear_the_picked_circle_colours(self) -> None:
@@ -343,10 +396,10 @@ class SelectionViewPopupTest(unittest.TestCase):
         self.assertTrue(self.toolbar.view_menu.isVisible())
         self.toolbar.view_menu.close()
 
-    def test_the_pop_up_has_a_swatch_and_a_five_step_wedge_per_outline_and_changes_the_style(self) -> None:
+    def test_the_pop_up_has_a_swatch_and_a_five_step_wedge_per_look_and_changes_the_style(self) -> None:
         form = self.toolbar.view_form
-        self.assertEqual(set(form.swatches), {PAST, PRESENT, RESULT})
-        for role in (PAST, PRESENT, RESULT):
+        self.assertEqual(set(form.swatches), {PAST, PRESENT}, "two rows: the result has none")
+        for role in (PAST, PRESENT):
             wedge = form.wedges[role]
             self.assertEqual(wedge.value(), 0)
             wedge.setValue(3)
@@ -363,8 +416,8 @@ class SelectionViewPopupTest(unittest.TestCase):
 
     def test_each_row_has_a_border_switch_that_changes_the_style_and_follows_it(self) -> None:
         form = self.toolbar.view_form
-        self.assertEqual(set(form.border_buttons), {PAST, PRESENT, RESULT})
-        for role in (PAST, PRESENT, RESULT):
+        self.assertEqual(set(form.border_buttons), {PAST, PRESENT})
+        for role in (PAST, PRESENT):
             button = form.border_buttons[role]
             self.assertTrue(button.isCheckable() and button.isChecked(), "shown by default")
             on_picture = button.icon().pixmap(28, 28).toImage()
@@ -377,13 +430,13 @@ class SelectionViewPopupTest(unittest.TestCase):
 
     def test_the_pop_up_follows_a_change_made_elsewhere(self) -> None:
         form = self.toolbar.view_form
-        self.style.set_step(RESULT, 2)
-        self.assertEqual(form.wedges[RESULT].value(), 2)
+        self.style.set_step(PRESENT, 2)
+        self.assertEqual(form.wedges[PRESENT].value(), 2)
         self.style.set_color(PAST, "#445566")
         self.assertIn("#445566", form.swatches[PAST].styleSheet())
-        self.assertIn("50 %", form.wedges[RESULT].toolTip())
-        self.style.set_step(RESULT, 0)
-        self.assertIn("none", form.wedges[RESULT].toolTip())
+        self.assertIn("50 %", form.wedges[PRESENT].toolTip())
+        self.style.set_step(PRESENT, 0)
+        self.assertIn("none", form.wedges[PRESENT].toolTip())
 
 
 if __name__ == "__main__":  # pragma: no cover
