@@ -93,7 +93,8 @@ class SelectionToolbarScrollTest(unittest.TestCase):
     def test_the_column_does_not_make_the_panel_taller(self) -> None:
         self.assertEqual(len(self._all_buttons()), 10)
         self.assertGreater(self.toolbar.sizeHint().height(), 300, "it wants all its buttons on show")
-        self.assertLess(self.toolbar.minimumSizeHint().height(), 100, "but it does not insist on them")
+        # 120, was 100 (2026-11-16): the Layers button is pinned under View, outside the scrolling column (111 px measured).
+        self.assertLess(self.toolbar.minimumSizeHint().height(), 120, "but it does not insist on them")
         self.assertLess(self.panel.minimumSizeHint().height(), 400, "so the panel's own minimum height is not the toolbar's")
 
     def test_with_room_there_are_no_arrows_and_every_button_is_in_view(self) -> None:
