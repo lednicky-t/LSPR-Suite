@@ -103,6 +103,14 @@ class ToolboxLinkCommandsTest(unittest.TestCase):
         self.assertEqual(self.toolbox.sample_ids((1, 99)), (1, 99))  # an id the toolbox does not know is left to the caller's own "not in the scan" path
         self.assertEqual(self.toolbox.sample_ids(()), ())
 
+    def test_linked_sample_ids_names_only_samples_that_have_links(self) -> None:
+        self._make_refs(4)
+        self.assertEqual(self.toolbox.linked_sample_ids((1, 2, 3, 4)), ())
+        self.toolbox.link_references((2, 3), (4,))
+        self.assertEqual(self.toolbox.linked_sample_ids((3, 1, 2, 4, 99)), (3, 2))  # the order given; a reference ROI and an unknown id are not samples with links
+        self.toolbox.unlink_references((2,))
+        self.assertEqual(self.toolbox.linked_sample_ids((1, 2, 3)), (3,))
+
     def test_link_one_reference_to_many_samples(self) -> None:
         self._make_refs(4)
         self.toolbox.link_references((1, 2), (4,))

@@ -91,8 +91,19 @@ class _Dataset:
 
 
 class _Toolbox:
+    """The queries the module makes. By default every ROI is a sample with no links; a test names the reference ROIs and the linked samples."""
+
+    def __init__(self, references=(), linked=()) -> None:
+        self.references, self.linked = {int(r) for r in references}, {int(r) for r in linked}
+
     def detection_settings(self):
         return AreaRoiDetectionSettings()
+
+    def sample_ids(self, ids):
+        return tuple(int(i) for i in ids if int(i) not in self.references)
+
+    def linked_sample_ids(self, ids):
+        return tuple(int(i) for i in ids if int(i) in self.linked)
 
 
 class ModuleTest(unittest.TestCase):
@@ -143,6 +154,34 @@ class ModuleTest(unittest.TestCase):
         self.plan.signal = None
         self.assertIn("baseline step (B1) and a signal step (S1)", self.module.preview())
         self.assertFalse(self.module.can_run())
+
+    def _preview_with(self, selected, **roles) -> tuple[str, bool]:
+        module = tm.RoiTuningModule(lambda: None, self.plan, _Selection(selected), self.settings, _Dataset(), _Toolbox(**roles), helper_process=False)
+        try:
+            module.set_lattice(3, 1.0)
+            return module.preview(), module.can_run()
+        finally:
+            module.task.shutdown()
+
+    def test_a_reference_roi_is_never_a_candidate(self) -> None:
+        """Plan 2026-11-18: tuning moves sample ROIs; the reference ROIs among the selected are left out, and a selection of references only says so."""
+        text, can_run = self._preview_with([2, 3, 5], references=[3])
+        self.assertIn("x 2 ROIs", text)  # ROIs 2 and 5
+        self.assertTrue(can_run)
+        text, can_run = self._preview_with([3], references=[3])
+        self.assertIn("Only reference ROIs are selected", text)
+        self.assertFalse(can_run)
+
+    def test_a_sample_linked_to_references_is_refused_with_the_reason_not_scored_against_its_ring(self) -> None:
+        text, can_run = self._preview_with([2, 5], linked=[5])
+        self.assertIn("ROI 5 is linked to reference ROIs", text)
+        self.assertIn("does not follow links yet", text)
+        self.assertFalse(can_run)
+        text, _ = self._preview_with([2, 3, 5], linked=[3, 5])
+        self.assertIn("ROI 3, 5 are linked", text)
+        text, can_run = self._preview_with([2, 5], linked=[])  # no link: as before
+        self.assertIn("x 2 ROIs", text)
+        self.assertTrue(can_run)
 
     def test_the_same_step_for_both_is_refused(self) -> None:
         self.plan.signal = self.plan.baseline
