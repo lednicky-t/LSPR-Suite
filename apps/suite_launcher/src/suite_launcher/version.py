@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 APP_NAME = "LSPR Suite Launcher"
-APP_VERSION = "0.2.268"
+APP_VERSION = "0.2.269"
 __version__ = APP_VERSION
 
 
