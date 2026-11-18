@@ -94,6 +94,15 @@ class ToolboxLinkCommandsTest(unittest.TestCase):
         undo_manager.undo()
         self.assertEqual(self.toolbox.reference_source(3), SOURCE_BUILTIN)
 
+    def test_sample_ids_drops_reference_rois_keeps_the_order_and_unknown_ids(self) -> None:
+        """The one analysis-unit rule (a reference ROI is not measured on its own): used by Spectra, Sensorgram, the step table and the Signal map."""
+        self._make_refs(2, 4)
+        self.assertEqual(self.toolbox.sample_ids((4, 3, 2, 1)), (3, 1))  # the order given
+        self.assertEqual(self.toolbox.sample_ids((2, 4)), ())
+        self.assertEqual(sorted(self.toolbox.sample_ids({1, 3})), [1, 3])  # any iterable, a set too
+        self.assertEqual(self.toolbox.sample_ids((1, 99)), (1, 99))  # an id the toolbox does not know is left to the caller's own "not in the scan" path
+        self.assertEqual(self.toolbox.sample_ids(()), ())
+
     def test_link_one_reference_to_many_samples(self) -> None:
         self._make_refs(4)
         self.toolbox.link_references((1, 2), (4,))
