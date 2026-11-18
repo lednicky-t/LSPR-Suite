@@ -278,7 +278,7 @@ class RightClickAndMemoryTest(FreezeBase):
 
     def test_the_other_entries_of_the_menu_are_unchanged(self) -> None:
         checkable = [a for a in self.panel._view_menu.actions() if a.isCheckable()]
-        self.assertEqual([a.isChecked() for a in checkable], [False, True])
+        self.assertEqual([a.isChecked() for a in checkable], [False, True, False])  # Simple, Geometry (the mode), and since phase 3 the Linked-view switch (off)
 
     def test_a_freeze_too_wide_for_the_panel_says_so_in_the_title_bar(self) -> None:
         self.panel._freeze._choose(COLUMN_Y)

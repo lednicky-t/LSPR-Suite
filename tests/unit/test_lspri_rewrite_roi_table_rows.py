@@ -33,7 +33,7 @@ try:
         PIXELS,
         SHAPE_DISK,
         SHAPE_MASK,
-        SHAPE_OTHER,
+        SHAPE_RECTANGLE,
         SHAPE_RING,
         VIEW_GEOMETRY,
         VIEW_MODE_COLUMNS,
@@ -242,7 +242,7 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual(shape_of(Circle(6.0), NO_BORDER), SHAPE_DISK)
         self.assertEqual(shape_of(mask, Border(1.0, 2.0)), SHAPE_MASK)
         self.assertEqual(shape_of(mask, NO_BORDER), SHAPE_MASK)
-        self.assertEqual(shape_of(Rectangle(8.0, 4.0), None), SHAPE_OTHER, "no table pictogram for it yet")
+        self.assertEqual(shape_of(Rectangle(8.0, 4.0), None), SHAPE_RECTANGLE)  # since phase 3 a rectangle has its own label and pictogram
 
     def test_a_row_carries_its_shape(self) -> None:
         self.assertEqual(self.row().shape, SHAPE_RING)

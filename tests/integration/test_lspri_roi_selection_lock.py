@@ -278,7 +278,7 @@ class ImagePanelTest(unittest.TestCase):
     # -- the button ---------------------------------------------------------------------------------------------
 
     def test_the_lock_is_a_captioned_section_after_groups_on_the_rois_tab(self) -> None:
-        group = self.tab.lock_button.parentWidget()
+        group = self.tab.lock_button.parentWidget().parentWidget()  # the lock sits in the Selection box with Link / Unlink / Links (phase 3), which is in the group
         layout = self.tab.layout()
         self.assertGreater(layout.indexOf(group), layout.indexOf(self.tab._group_controls.parentWidget()))
         self.assertEqual(self.tab._selection_caption.text(), "Selection")

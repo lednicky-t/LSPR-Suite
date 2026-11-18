@@ -212,7 +212,8 @@ class DirectSubsetLayoutTests(unittest.TestCase):
         rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         near = ring_reach_matrix(rs, [1, 3])
         self.assertEqual(near.shape, (2, rs.n))
-        self.assertTrue(bool(near[0, 2]) and bool(near[0, 6]))  # ROI 3 overlaps ROI 2's ring; the free-form ROI reaches everything
+        self.assertTrue(bool(near[0, 2]))  # ROI 3 overlaps ROI 2's ring
+        self.assertFalse(bool(near[0, 6]))  # the free-form ROI is 29 px away: since phase 2.2 it reaches only what it can touch
         self.assertFalse(bool(near[1, 0]))  # ROI 1 is far from ROI 4
         self.assertFalse(bool(ring_reach_matrix(rs, [5]).any()))  # a ROI without a ring is reached by nobody
 
@@ -261,14 +262,15 @@ class WindowBoxTests(unittest.TestCase):
                     self.assertTrue(np.all(rows >= y0[roi_of]) and np.all(rows < y1[roi_of]))
                     self.assertTrue(np.all(cols >= x0[roi_of]) and np.all(cols < x1[roi_of]))
 
-    def test_a_free_form_roi_has_no_bound_and_gets_the_whole_image(self) -> None:
+    def test_a_free_form_roi_has_a_bound_like_any_other(self) -> None:
         from lspr_imaging_app.analysis.frame_reduce import roi_window_boxes
 
         rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         y0, y1, x0, x1, bounded = roi_window_boxes(rs, IDENTITY, (H, W))
-        free = int(np.flatnonzero(~bounded)[0])
-        self.assertEqual((y0[free], y1[free], x0[free], x1[free]), (0, H, 0, W))
-        self.assertTrue(bounded[:free].all() and bounded.sum() == rs.n - 1)
+        free = 6  # the mask ROI: 9 x 8 px with a border of gap 3 and thickness 4; since phase 2.2 its window is its own, not the whole image
+        self.assertTrue(bounded.all())
+        self.assertLess((y1[free] - y0[free]) * (x1[free] - x0[free]), H * W / 3)  # 37 x 37 px of a 90 x 130 image
+        self.assertTrue(y0[free] <= 61 - 7 and y1[free] >= 69 + 7 and x0[free] <= 26 - 7 and x1[free] >= 35 + 7)  # holds its border (7 px beyond the edge)
         self.assertTrue(np.all(y1 <= H) and np.all(x1 <= W) and np.all(y0 >= 0) and np.all(x0 >= 0))
 
     def test_the_box_follows_the_chromatic_shift(self) -> None:
@@ -328,14 +330,19 @@ class LocalKeyTests(unittest.TestCase):
         self.assertNotEqual(near[0], far[0])
         self.assertEqual(near[1], far[1])
 
-    def test_a_free_form_roi_counts_as_reaching_everything(self) -> None:
-        def build(free_x):
+    def test_a_free_form_roi_is_a_neighbour_only_of_the_rois_it_can_touch(self) -> None:
+        def build(free_x, free_y):
             rois = self._row([(20, 20), (70, 20), (20, 70)])
-            rois.append(AreaRoi(4, free_x, 90.0, MaskShape(RoiMask(int(free_x), 86, np.ones((8, 9), dtype=bool))), border=Border(3.0, 4.0)))
+            rois.append(AreaRoi(4, free_x, free_y, MaskShape(RoiMask(int(free_x) - 4, int(free_y) - 4, np.ones((8, 9), dtype=bool))), border=Border(3.0, 4.0)))
             return rois
 
-        base, moved = self._keys(build(100.0)), self._keys(build(104.0))
-        self.assertTrue(all(a != b for a, b in zip(base, moved)))  # every ROI's key knows where the free-form one is
+        base, far = self._keys(build(100.0, 90.0)), self._keys(build(104.0, 90.0))  # nowhere near the three circles
+        self.assertEqual(base[:3], far[:3])  # moving it changes no circle's key (before phase 2.2 it changed all of them)
+        self.assertNotEqual(base[3], far[3])  # but its own
+        # next to the third circle (20, 70; ring out to 10 px): the mask's sample disc can sit inside that ring, so that circle's key follows the mask
+        close, closer = self._keys(build(34.0, 70.0)), self._keys(build(36.0, 70.0))
+        self.assertNotEqual(close[2], closer[2])
+        self.assertEqual(close[:2], closer[:2])  # the other two are still out of reach
 
 
 class _Fake:

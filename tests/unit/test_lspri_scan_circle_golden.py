@@ -15,8 +15,10 @@ How to read a failure:
   diameters) and reproduced bit for bit by the new gap + thickness description (``Border.from_ring_diameters`` then ``ring_radii``): the proof
   that converting circles to gap + thickness moved nothing.
 * ``MASK_SAMPLE``: the sample pixels of a free-form (mask) ROI as the chromatic affine warps it (scipy, nearest neighbour), also made by the
-  code before phase 2. Phase 2.2 replaces that path with a fast lookup; a change here is a **conscious, measured decision** (count the pixels
-  that differ and report it), not a silent one. (A mask ROI's *border* is new in phase 2: a distance band from its edge, not pinned here.)
+  code before phase 2. **Phase 2.2 (2026-11-18) kept the scipy warp and runs it inside the mask's own box instead of on a full canvas, so this pin did
+  not move** (the decision was: no separate "fast lookup", which could disagree with the warp at half-pixel ties). A change here is still a
+  **conscious, measured decision** (count the pixels that differ and report it), not a silent one. (A mask ROI's *border* is new in phase 2: a
+  distance band from its edge, not pinned here.)
 * ``KEYS`` was **re-pinned at phase 2.1** (2026-11-18): the digest of a circle ROI no longer contains the shared default ring diameters (a
   circle's border is already in its radii, so changing the default changes exactly the ROIs that follow it). ``RADII`` is unchanged by that.
 
@@ -246,7 +248,7 @@ class CircleGoldenTests(unittest.TestCase):
     def test_circle_radii_are_bit_for_bit_what_the_diameter_description_gave(self) -> None:
         self.assertEqual(radii_digest(golden_rois()), PINNED["radii"], "a circle's sample or ring radius differs in the last bits from the old code's")
 
-    def test_the_free_form_roi_sample_pixels_are_as_they_were_until_phase_2_2_decides_otherwise(self) -> None:
+    def test_the_free_form_roi_sample_pixels_are_as_they_were_after_phase_2_2(self) -> None:
         self.assertEqual(mask_sample_digest(golden_mask_rois()), PINNED["mask_sample"], "today's free-form (mask) ROI sample pixels changed")
 
 

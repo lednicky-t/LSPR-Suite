@@ -185,13 +185,15 @@ class LocalityTests(unittest.TestCase):
         self._hash(b)
         self.assertTrue(np.array_equal(self._hash(a), first))  # asking again, with the other mask cached in between
 
-    def test_a_free_form_roi_sees_the_whole_mask(self) -> None:
+    def test_a_free_form_roi_sees_the_mask_only_inside_its_own_window(self) -> None:
         rois = list(self.rois) + [AreaRoi(4, 30.0, 10.0, MaskShape(RoiMask(26, 6, np.ones((8, 9), dtype=bool))), border=NO_BORDER)]
-        empty, far = np.zeros((H, W), dtype=bool), np.zeros((H, W), dtype=bool)
-        far[60:64, 100:104] = True
+        empty, far, near = (np.zeros((H, W), dtype=bool) for _ in range(3))
+        far[60:64, 100:104] = True  # nowhere near any ROI
+        near[8:12, 40:44] = True  # a few pixels from the mask ROI's edge (its window holds its shape plus a safety margin)
         base = cell_hashes(_World(rois, {(1, 500.0): empty}).light())
-        seen = cell_hashes(_World(rois, {(1, 500.0): far}).light())
-        self.assertNotEqual(seen[1][3], base[1][3])  # no radius to bound it: any mask pixel counts
+        self.assertTrue(np.array_equal(cell_hashes(_World(rois, {(1, 500.0): far}).light()), base))  # before phase 2.2 this ROI saw the whole mask
+        seen = cell_hashes(_World(rois, {(1, 500.0): near}).light())
+        self.assertNotEqual(seen[1][3], base[1][3])
         self.assertTrue(np.array_equal(seen[1][:3], base[1][:3]))
 
     def test_background_that_cuts_the_masked_pixels_out_keeps_the_whole_mask_in_every_cell(self) -> None:
