@@ -99,6 +99,7 @@ source_modules =
     lspr_imaging_app.analysis.provenance
     lspr_imaging_app.analysis.query
     lspr_imaging_app.analysis.reduction
+    lspr_imaging_app.analysis.reference_pairing
     lspr_imaging_app.analysis.response_shape
     lspr_imaging_app.analysis.scan
     lspr_imaging_app.analysis.scan_arrays
