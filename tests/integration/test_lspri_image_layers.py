@@ -266,7 +266,7 @@ class ImageLayersPanelTest(unittest.TestCase):
         self.assertLess(int(disk.sum()), int(np.pi * 9.0**2) + 1)
         roi = next(r for r in self.toolbox.rois() if r.area_roi_id == self.roi_id)
         detection = self.toolbox.detection_settings()
-        inner, outer = effective_reference_diameters(roi, detection.reference_inner_diameter_px, detection.reference_outer_diameter_px)
+        inner, outer = effective_reference_diameters(roi, detection.default_border())
         self.assertGreater(outer, inner, "the ROI has a reference ring")
         middle = (inner + outer) / 4.0  # halfway across the ring, as a radius
         self.area.clear()

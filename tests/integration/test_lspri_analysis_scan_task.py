@@ -40,6 +40,7 @@ try:
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -54,8 +55,7 @@ TASK_LOGGER = "lspr_imaging_app.analysis.scan_task"
 
 
 def _rois(ids=tuple(range(1, 9)), shift=0.0):
-    return [AreaRoi(i, 18.0 + 25.0 * (k % 4) + shift, 18.0 + 24.0 * (k // 4), 10.0, reference_inner_diameter_px=14.0,
-                    reference_outer_diameter_px=20.0) for k, i in enumerate(ids)]
+    return [AreaRoi(i, 18.0 + 25.0 * (k % 4) + shift, 18.0 + 24.0 * (k // 4), Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 20.0)) for k, i in enumerate(ids)]
 
 
 def _pump(until, seconds: float = 60.0) -> None:
@@ -120,7 +120,7 @@ class ScanTaskTests(unittest.TestCase):
             geometry=lambda: GeometrySettings(rotation_angle_deg=1.0),
             background=lambda: self.background,
             detection=lambda: AreaRoiDetectionSettings(ignore_marked_pixels=True),
-            default_reference_diameters=lambda: (14.0, 20.0),
+            default_border=lambda: Border.from_ring_diameters(10.0, 14.0, 20.0),
         )
 
     def _mask_now(self) -> np.ndarray:

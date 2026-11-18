@@ -21,6 +21,7 @@ try:
     from lspr_imaging_app.analysis import roi_tuning as rt
     from lspr_imaging_app.analysis.settings import StatisticsSettings
     from lspr_imaging_app.domain.roi_model import AreaRoi, RoiMask
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -31,11 +32,11 @@ NO_BASELINE = StatisticsSettings(baseline_enabled=False)
 
 
 def _row(x: float, y: float = 35.0, number: int = 1) -> AreaRoi:
-    return AreaRoi(number, x, y, 10.0, reference_inner_diameter_px=14.0, reference_outer_diameter_px=22.0)  # sample r 5 px, ring out r 11 px
+    return AreaRoi(number, x, y, Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 22.0))  # sample r 5 px, ring out r 11 px
 
 
 def _roi_set(*xs: float) -> fr.RoiSet:
-    return fr.build_roi_set([_row(x, number=i + 1) for i, x in enumerate(xs)], 14.0, 22.0)
+    return fr.build_roi_set([_row(x, number=i + 1) for i, x in enumerate(xs)], Border.from_ring_diameters(10.0, 14.0, 22.0))
 
 
 def _cube_times(cubes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -62,7 +63,7 @@ class MovedCentreTest(unittest.TestCase):
             self.assertEqual(scanned, stored)
 
     def test_a_shifted_roi_set_has_the_rounded_centre_and_an_unshifted_one_is_left_alone(self) -> None:
-        rs = fr.build_roi_set([_row(15.04), _row(60.0, number=2)], 14.0, 22.0)
+        rs = fr.build_roi_set([_row(15.04), _row(60.0, number=2)], Border.from_ring_diameters(10.0, 14.0, 22.0))
         moved = rt.shifted_roi_set(rs, [0], 1.0, 0.0)
         self.assertEqual((moved.rois[0].center_x, moved.rois[0].center_y), rt.moved_centre(15.04, 35.0, 1.0, 0.0))
         self.assertEqual(moved.rois[1].center_x, 60.0)
@@ -123,8 +124,8 @@ class ShiftedRoiSetTest(unittest.TestCase):
         self.assertEqual(rt.shifted_roi_set(rs, [0, 1], 0.0, 0.0).key, rs.key)
 
     def test_a_free_form_roi_cannot_be_tuned(self) -> None:
-        free = AreaRoi(2, 30.0, 10.0, 8.0, sample_geometry_type="mask", sample_mask=RoiMask(26, 6, np.ones((8, 9), dtype=bool)))
-        rs = fr.build_roi_set([_row(15.0), free], 14.0, 22.0)
+        free = AreaRoi(2, 30.0, 10.0, MaskShape(RoiMask(26, 6, np.ones((8, 9), dtype=bool))), border=NO_BORDER)
+        rs = fr.build_roi_set([_row(15.0), free], Border.from_ring_diameters(10.0, 14.0, 22.0))
         with self.assertRaises(ValueError):
             rt.shifted_roi_set(rs, [1], 1.0, 0.0)
         rt.shifted_roi_set(rs, [0], 1.0, 0.0)  # the round one is fine

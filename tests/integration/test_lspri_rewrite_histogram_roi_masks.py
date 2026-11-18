@@ -36,6 +36,7 @@ try:
     from lspr_imaging_app.panels.histogram import roi_masks
     from lspr_imaging_app.panels.histogram.roi_masks import RoiMaskProvider
     from lspr_imaging_app.domain.roi_model import AreaRoi
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
     from lspr_imaging_app.roi.rasterize import union_roi_masks
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -43,7 +44,8 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 
 _SHAPE = (200, 300)
 _AFFINE = np.array([[1.0005, 0.0003, 1.2], [-0.0002, 0.9996, -0.7]])
-_RING = (28.0, 36.0)
+_RING = (28.0, 36.0)  # inner / outer diameters of a 12 px sample's ring
+_BORDER = Border.from_ring_diameters(12.0, *_RING)
 
 
 def _rois(count: int, seed: int = 3) -> list[AreaRoi]:
@@ -53,7 +55,7 @@ def _rois(count: int, seed: int = 3) -> list[AreaRoi]:
             area_roi_id=i + 1,
             center_x=float(rng.uniform(10, _SHAPE[1] - 10)),
             center_y=float(rng.uniform(10, _SHAPE[0] - 10)),
-            sample_diameter_px=12.0,
+            shape=Circle(12.0),
         )
         for i in range(count)
     ]
@@ -80,12 +82,12 @@ class RoiMaskProviderTest(unittest.TestCase):
         self.provider.deleteLater()
 
     def _request(self, rois, affine=None):
-        return self.provider.request(rois, _SHAPE, identity_affine_matrix() if affine is None else affine, *_RING)
+        return self.provider.request(rois, _SHAPE, identity_affine_matrix() if affine is None else affine, _BORDER)
 
     def _expected(self, rois, affine=None):
         return union_roi_masks(
             rois, _SHAPE, identity_affine_matrix() if affine is None else affine,
-            default_inner_diameter_px=_RING[0], default_outer_diameter_px=_RING[1],
+            default_border=_BORDER,
         )
 
     # -- inline (few ROIs) --------------------------------------------------------
@@ -111,8 +113,8 @@ class RoiMaskProviderTest(unittest.TestCase):
         with mock.patch.object(roi_masks, "union_roi_masks", wraps=union_roi_masks) as union:
             self._request(rois)
             self._request(rois, _AFFINE)  # another wavelength with a chromatic correction
-            self.provider.request(rois, (100, 150), identity_affine_matrix(), *_RING)
-            self.provider.request(rois, _SHAPE, identity_affine_matrix(), 30.0, 40.0)
+            self.provider.request(rois, (100, 150), identity_affine_matrix(), _BORDER)
+            self.provider.request(rois, _SHAPE, identity_affine_matrix(), Border.from_ring_diameters(12.0, 30.0, 40.0))
         self.assertEqual(union.call_count, 4)
 
     def test_invalidate_forces_a_rebuild(self) -> None:

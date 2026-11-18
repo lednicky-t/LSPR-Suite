@@ -44,6 +44,7 @@ try:
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.image_tools.geometry.transform import spatial_transform_is_identity
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -57,7 +58,7 @@ IDENTITY = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
 
 def _rois():
     """8 ROIs on a lattice: sample 10 px, ring 14 / 20 px (a ring box of 21 px, so one ROI touches at most 4 of the 48 chunks)."""
-    return [AreaRoi(i, 18.0 + 25.0 * (k % 4), 18.0 + 24.0 * (k // 4), 10.0, reference_inner_diameter_px=14.0, reference_outer_diameter_px=20.0)
+    return [AreaRoi(i, 18.0 + 25.0 * (k % 4), 18.0 + 24.0 * (k // 4), Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 20.0))
             for k, i in enumerate(range(1, 9))]
 
 
@@ -248,7 +249,7 @@ def _zarr_source(export: Path, *, geometry=None, background=None, rois=None) -> 
         geometry=lambda: geometry if geometry is not None else GeometrySettings(),
         background=lambda: background if background is not None else BackgroundSettings(),
         detection=lambda: AreaRoiDetectionSettings(),
-        default_reference_diameters=lambda: (14.0, 20.0),
+        default_border=lambda: Border.from_ring_diameters(10.0, 14.0, 20.0),
     )
 
 
@@ -324,7 +325,7 @@ class ScanChunkReadTests(unittest.TestCase):
             self.assertTrue(np.array_equal(p.n_valid, f.n_valid[[3]]))
 
     def test_a_rotated_export_with_a_valid_mask_reads_the_same_as_whole_planes(self) -> None:
-        rois = [AreaRoi(1, 6.0, 6.0, 8.0, reference_inner_diameter_px=12.0, reference_outer_diameter_px=18.0)]  # near the NaN corner
+        rois = [AreaRoi(1, 6.0, 6.0, Circle(8.0), border=Border.from_ring_diameters(8.0, 12.0, 18.0))]  # near the NaN corner
         records_source = lambda: _zarr_source(self.made.exports["rotated"], rois=rois)  # noqa: E731
         plan = build_scan_plan(snapshot_source(records_source()))
         job = plan.jobs[0]

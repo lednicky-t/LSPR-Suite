@@ -43,6 +43,7 @@ try:
         remap_point_for_geometry_change,
     )
     from lspr_imaging_app.domain.roi_model import AreaRoi
+    from lspr_imaging_app.domain.roi_shapes import Circle, MaskShape, Rectangle
     from lspr_imaging_app.roi.rasterize import crop_mask, expand_mask, remap_roi_mask
     from lspr_imaging_app.roi.toolbox import _remap_roi_shape
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -251,48 +252,45 @@ class RemapRoiShapeDispatchTest(unittest.TestCase):
     tested directly since it is plain logic over a dataclass (no Qt)."""
 
     def _roi(self, **overrides: object) -> AreaRoi:
-        defaults = dict(area_roi_id=1, center_x=0.0, center_y=0.0, sample_diameter_px=10.0)
+        defaults = dict(area_roi_id=1, center_x=0.0, center_y=0.0, shape=Circle(10.0))
         defaults.update(overrides)
         return AreaRoi(**defaults)
 
-    def test_circle_and_annulus_pass_through_unchanged(self) -> None:
-        roi = self._roi(sample_geometry_type="circle", reference_geometry_type="annulus")
-        mask, lost, unsupported = _remap_roi_shape(roi, "sample", lambda m: None)
-        self.assertIsNone(mask)
+    def test_a_circle_passes_through_unchanged(self) -> None:
+        roi = self._roi()
+        shape, lost = _remap_roi_shape(roi, lambda x, y: (x, y), lambda m: None)
+        self.assertEqual(shape, Circle(10.0))
         self.assertFalse(lost)
-        self.assertFalse(unsupported)
 
     def test_mask_geometry_uses_the_callback(self) -> None:
         full = np.zeros((20, 20), dtype=bool)
         full[5:8, 5:8] = True
         original = crop_mask(full)
         moved = crop_mask(np.roll(full, 2, axis=0))
-        roi = self._roi(sample_geometry_type="mask", sample_mask=original)
+        roi = self._roi(shape=MaskShape(original))
 
-        mask, lost, unsupported = _remap_roi_shape(roi, "sample", lambda m: moved)
+        shape, lost = _remap_roi_shape(roi, lambda x, y: (x, y), lambda m: moved)
 
-        self.assertIs(mask, moved)
+        self.assertIs(shape.mask, moved)
         self.assertFalse(lost)
-        self.assertFalse(unsupported)
 
     def test_mask_geometry_warped_to_nothing_is_reported_and_left_unchanged(self) -> None:
         full = np.zeros((20, 20), dtype=bool)
         full[5:8, 5:8] = True
         original = crop_mask(full)
-        roi = self._roi(sample_geometry_type="mask", sample_mask=original)
+        roi = self._roi(shape=MaskShape(original))
 
-        mask, lost, unsupported = _remap_roi_shape(roi, "sample", lambda m: None)
+        shape, lost = _remap_roi_shape(roi, lambda x, y: (x, y), lambda m: None)
 
-        self.assertIs(mask, original)  # unchanged, not replaced with an empty mask
+        self.assertIs(shape, roi.shape)  # unchanged, not replaced with an empty mask
         self.assertTrue(lost)
-        self.assertFalse(unsupported)
 
-    def test_unbuilt_shape_types_are_left_alone_and_flagged(self) -> None:
-        roi = self._roi(sample_geometry_type="rectangle")
-        mask, lost, unsupported = _remap_roi_shape(roi, "sample", lambda m: None)
-        self.assertIsNone(mask)  # unchanged (was None)
+    def test_a_rectangle_turns_with_the_image(self) -> None:
+        roi = self._roi(shape=Rectangle(20.0, 6.0, 0.0), center_x=3.0, center_y=4.0)
+        shape, lost = _remap_roi_shape(roi, lambda x, y: (-y, x), lambda m: None)  # a quarter turn
+        self.assertEqual((shape.width_px, shape.height_px), (20.0, 6.0))
+        self.assertAlmostEqual(shape.angle_deg, 90.0)
         self.assertFalse(lost)
-        self.assertTrue(unsupported)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ try:
     from lspr_imaging_app.analysis.scan_view import SpectraRequest, SpectrumFitJob, prepare_spectra
     from lspr_imaging_app.analysis.settings import MetricSettings
     from lspr_imaging_app.domain.roi_model import AreaRoi, RoiMask
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -39,7 +40,7 @@ WL = (500.0, 510.0, 520.0, 530.0)
 
 
 def _roi(roi_id: int, role: str = "sample", links: tuple[int, ...] = (), **kw) -> AreaRoi:
-    return AreaRoi(area_roi_id=roi_id, center_x=10.0 * roi_id, center_y=20.0, sample_diameter_px=6.0, role=role, reference_roi_ids=links, **kw)
+    return AreaRoi(area_roi_id=roi_id, center_x=10.0 * roi_id, center_y=20.0, shape=Circle(6.0), role=role, reference_roi_ids=links, **kw)
 
 
 def _stored(roi_ids: tuple[int, ...], seed: int = 1, methods: tuple[str, ...] = ("mean",)) -> StoredScan:
@@ -64,7 +65,7 @@ def _copies(stored: StoredScan) -> list[np.ndarray]:
 class PairingStructureTests(unittest.TestCase):
     def test_a_session_without_references_or_links_is_returned_as_it_is(self) -> None:
         stored = _stored((1, 2, 3))
-        paired = pair_scan(stored, [_roi(1), _roi(2), _roi(3, reference_geometry_type="none")])
+        paired = pair_scan(stored, [_roi(1), _roi(2), _roi(3, border=NO_BORDER)])
         self.assertIs(paired.stored, stored)  # nothing copied
         self.assertEqual(paired.sources, {1: "builtin", 2: "builtin", 3: "none"})
         self.assertIn("No reference", paired.problems[3])
@@ -207,8 +208,8 @@ class ProofFromPixelsTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.image = np.random.default_rng(11).normal(1000.0, 40.0, (self.H, self.W)).astype(np.float32)
-        self.sample = AreaRoi(area_roi_id=1, center_x=60.0, center_y=45.0, sample_diameter_px=10.0)
-        ring_only = fr.build_roi_set([self.sample], 20.0, 34.0)
+        self.sample = AreaRoi(area_roi_id=1, center_x=60.0, center_y=45.0, shape=Circle(10.0))
+        ring_only = fr.build_roi_set([self.sample], Border.from_ring_diameters(10.0, 20.0, 34.0))
         self.layout = fr.build_layout(ring_only, np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), (self.H, self.W))
         ring = np.zeros(self.H * self.W, dtype=bool)
         ring[self.layout.ring_flat] = True
@@ -216,12 +217,11 @@ class ProofFromPixelsTests(unittest.TestCase):
 
     def _mask_roi(self, roi_id: int, mask: np.ndarray) -> AreaRoi:
         return AreaRoi(
-            area_roi_id=roi_id, center_x=60.0, center_y=45.0, sample_diameter_px=10.0, role="reference", sample_geometry_type="mask",
-            sample_mask=RoiMask(x0=0, y0=0, mask=mask),
+            area_roi_id=roi_id, center_x=60.0, center_y=45.0, shape=MaskShape(RoiMask(x0=0, y0=0, mask=mask)), role="reference",
         )
 
     def _stored_from(self, rois: list[AreaRoi]) -> tuple[StoredScan, fr.FrameReduction]:
-        red = fr.reduce_frame(fr.build_roi_set(rois, 20.0, 34.0), self.image, None, np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), ("mean",))
+        red = fr.reduce_frame(fr.build_roi_set(rois, Border.from_ring_diameters(10.0, 20.0, 34.0)), self.image, None, np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), ("mean",))
         n = len(rois)
         shaped = lambda a: np.asarray(a)[None, :, None, :]  # noqa: E731  one cube, one wavelength
         stored = StoredScan(

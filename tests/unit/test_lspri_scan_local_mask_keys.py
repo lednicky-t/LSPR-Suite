@@ -28,6 +28,7 @@ try:
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings, RoiMask
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -63,7 +64,7 @@ class _World:
             chromatic_affine_between=lambda a, b: IDENTITY,
             resolve_mask=lambda c, w: MaskRef((c, w), "individual", lambda a=self.masks[(c, w)]: a) if (c, w) in self.masks else None,
             geometry=lambda: GeometrySettings(), background=lambda: self.background, detection=lambda: AreaRoiDetectionSettings(),
-            default_reference_diameters=lambda: (11.0, 16.0),
+            default_border=lambda: Border.from_ring_diameters(10.0, 11.0, 16.0),
         )
 
     def light(self):
@@ -73,13 +74,17 @@ class _World:
         return build_scan_plan(self.source())
 
 
+def _ring_roi(i, x, y, d, inner, outer, no_ring):
+    """A circle with its own ring (inner / outer diameters), or none; the arguments are evaluated in the order the old keyword form drew them."""
+    return AreaRoi(i, x, y, Circle(d), border=NO_BORDER if no_ring else Border.from_ring_diameters(d, inner, outer))
+
+
 def _rois(rng, n=12):
     out = []
     for i in range(n):
-        out.append(AreaRoi(
+        out.append(_ring_roi(
             i + 1, float(rng.uniform(-4, W + 4)), float(rng.uniform(-4, H + 4)), float(rng.uniform(5, 14)),
-            reference_inner_diameter_px=float(rng.uniform(10, 18)), reference_outer_diameter_px=float(rng.uniform(18, 30)),
-            reference_geometry_type="none" if rng.random() < 0.1 else "annulus",
+            float(rng.uniform(10, 18)), float(rng.uniform(18, 30)), rng.random() < 0.1,
         ))
     return out
 
@@ -147,7 +152,7 @@ class SafetyPropertyTests(unittest.TestCase):
 class LocalityTests(unittest.TestCase):
     def setUp(self) -> None:
         # three ROIs in a row, far apart; windows are about 14 px (sample 5, ring to 11 at most) plus margin
-        self.rois = [AreaRoi(i + 1, x, 35.0, 10.0, reference_inner_diameter_px=14.0, reference_outer_diameter_px=22.0) for i, x in enumerate((15.0, 55.0, 95.0))]
+        self.rois = [AreaRoi(i + 1, x, 35.0, Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 22.0)) for i, x in enumerate((15.0, 55.0, 95.0))]
 
     def _hash(self, mask) -> np.ndarray:
         return cell_hashes(_World(self.rois, {(1, 500.0): mask}).light())
@@ -181,7 +186,7 @@ class LocalityTests(unittest.TestCase):
         self.assertTrue(np.array_equal(self._hash(a), first))  # asking again, with the other mask cached in between
 
     def test_a_free_form_roi_sees_the_whole_mask(self) -> None:
-        rois = list(self.rois) + [AreaRoi(4, 30.0, 10.0, 8.0, sample_geometry_type="mask", sample_mask=RoiMask(26, 6, np.ones((8, 9), dtype=bool)))]
+        rois = list(self.rois) + [AreaRoi(4, 30.0, 10.0, MaskShape(RoiMask(26, 6, np.ones((8, 9), dtype=bool))), border=NO_BORDER)]
         empty, far = np.zeros((H, W), dtype=bool), np.zeros((H, W), dtype=bool)
         far[60:64, 100:104] = True
         base = cell_hashes(_World(rois, {(1, 500.0): empty}).light())

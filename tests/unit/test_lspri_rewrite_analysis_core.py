@@ -40,6 +40,7 @@ try:
     from lspr_imaging_app.image_tools.geometry.transform import apply_spatial_mask
     from lspr_imaging_app.image_tools.preprocess import resolve_external_mask
     from lspr_imaging_app.domain.roi_model import AreaRoi
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
     from lspr_imaging_app.roi.rasterize import effective_reference_diameters
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -155,22 +156,22 @@ class EffectiveReferenceDiametersTest(unittest.TestCase):
     drawn ring and the measured ring cannot drift apart."""
 
     def test_falls_back_to_the_shared_defaults(self) -> None:
-        roi = AreaRoi(area_roi_id=1, center_x=10.0, center_y=10.0, sample_diameter_px=10.0)
-        self.assertEqual(effective_reference_diameters(roi, 14.0, 18.0), (14.0, 18.0))
+        roi = AreaRoi(area_roi_id=1, center_x=10.0, center_y=10.0, shape=Circle(10.0))
+        self.assertEqual(effective_reference_diameters(roi, Border.from_ring_diameters(10.0, 14.0, 18.0)), (14.0, 18.0))
 
     def test_per_roi_diameter_overrides_win(self) -> None:
         roi = AreaRoi(
-            area_roi_id=1, center_x=10.0, center_y=10.0, sample_diameter_px=10.0,
-            reference_inner_diameter_px=40.0, reference_outer_diameter_px=60.0,
+            area_roi_id=1, center_x=10.0, center_y=10.0, shape=Circle(10.0),
+            border=Border.from_ring_diameters(10.0, 40.0, 60.0),
         )
-        self.assertEqual(effective_reference_diameters(roi, 14.0, 18.0), (40.0, 60.0))
+        self.assertEqual(effective_reference_diameters(roi, Border.from_ring_diameters(10.0, 14.0, 18.0)), (40.0, 60.0))
 
-    def test_one_override_does_not_drag_the_other(self) -> None:
+    def test_an_own_border_replaces_the_default_as_a_whole(self) -> None:  # one border: no edge is inherited on its own any more
         roi = AreaRoi(
-            area_roi_id=1, center_x=10.0, center_y=10.0, sample_diameter_px=10.0,
-            reference_outer_diameter_px=60.0,
+            area_roi_id=1, center_x=10.0, center_y=10.0, shape=Circle(10.0),
+            border=Border.from_ring_diameters(10.0, 28.0, 60.0),
         )
-        self.assertEqual(effective_reference_diameters(roi, 14.0, 18.0), (14.0, 60.0))
+        self.assertEqual(effective_reference_diameters(roi, Border.from_ring_diameters(10.0, 14.0, 18.0)), (28.0, 60.0))
 
 
 if __name__ == "__main__":

@@ -120,9 +120,11 @@ class SensorgramPanelTests(unittest.TestCase):
     def _open_and_scan(self, extra_rois: int = 0, before_scan=None) -> None:
         self.m.dataset.load_dataset(_write_dataset(self.root))
         for cx, cy, _c0 in CENTERS.values():
-            self.m.roi_toolbox.add_roi(cx, cy, sample_diameter_px=6.0)
+            roi_id = self.m.roi_toolbox.add_roi(cx, cy, sample_diameter_px=6.0)
+            self.m.roi_toolbox.resize_roi(roi_id, reference_inner_diameter_px=28.0, reference_outer_diameter_px=36.0)  # the ring the masks below are placed on
         for k in range(extra_rois):
-            self.m.roi_toolbox.add_roi(10.0 + 8.0 * k, 55.0, sample_diameter_px=4.0)
+            roi_id = self.m.roi_toolbox.add_roi(10.0 + 8.0 * k, 55.0, sample_diameter_px=4.0)
+            self.m.roi_toolbox.resize_roi(roi_id, reference_inner_diameter_px=28.0, reference_outer_diameter_px=36.0)
         if before_scan is not None:
             before_scan()
         self.finished.clear()

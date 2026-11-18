@@ -47,6 +47,7 @@ try:
     from lspr_imaging_app.image_tools.preprocess import apply_preprocessing, apply_preprocessing_at
     from lspr_imaging_app.roi import rasterize as rz
     from lspr_imaging_app.domain.roi_model import AreaRoi, RoiMask
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -62,15 +63,15 @@ CHROMATIC = np.array([[1.004, 0.0021, -2.4], [-0.0017, 0.9985, 1.3]])
 
 def _rois() -> list[AreaRoi]:
     return [
-        AreaRoi(1, 20.3, 18.7, 14.0, reference_inner_diameter_px=20.0, reference_outer_diameter_px=28.0),
-        AreaRoi(2, 45.5, 40.1, 12.0, reference_inner_diameter_px=18.0, reference_outer_diameter_px=26.0),
-        AreaRoi(3, 52.0, 41.0, 10.0, reference_inner_diameter_px=16.0, reference_outer_diameter_px=24.0),  # overlaps ROI 2
-        AreaRoi(4, 100.2, 30.8, 14.0),  # ring from the shared defaults; the NaN block of the image sits on it
-        AreaRoi(5, 3.0, 4.0, 10.0, reference_inner_diameter_px=14.0, reference_outer_diameter_px=22.0),  # window leaves the image
-        AreaRoi(6, 126.5, 86.0, 12.0, reference_inner_diameter_px=16.0, reference_outer_diameter_px=24.0),  # bottom-right corner
-        AreaRoi(7, 75.0, 60.0, 10.0, reference_geometry_type="none"),  # no ring at all
-        AreaRoi(8, 90.0, 70.0, 0.0),  # empty sample aperture
-        AreaRoi(9, 30.0, 65.0, 9.0, sample_geometry_type="mask", sample_mask=RoiMask(26, 61, np.ones((8, 9), dtype=bool))),
+        AreaRoi(1, 20.3, 18.7, Circle(14.0), border=Border.from_ring_diameters(14.0, 20.0, 28.0)),
+        AreaRoi(2, 45.5, 40.1, Circle(12.0), border=Border.from_ring_diameters(12.0, 18.0, 26.0)),
+        AreaRoi(3, 52.0, 41.0, Circle(10.0), border=Border.from_ring_diameters(10.0, 16.0, 24.0)),  # overlaps ROI 2
+        AreaRoi(4, 100.2, 30.8, Circle(14.0)),  # ring from the shared defaults; the NaN block of the image sits on it
+        AreaRoi(5, 3.0, 4.0, Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 22.0)),  # window leaves the image
+        AreaRoi(6, 126.5, 86.0, Circle(12.0), border=Border.from_ring_diameters(12.0, 16.0, 24.0)),  # bottom-right corner
+        AreaRoi(7, 75.0, 60.0, Circle(10.0), border=NO_BORDER),  # no ring at all
+        AreaRoi(8, 90.0, 70.0, Circle(0.0)),  # empty sample aperture
+        AreaRoi(9, 30.0, 65.0, MaskShape(RoiMask(26, 61, np.ones((8, 9), dtype=bool))), border=Border(3.0, 4.0)),
     ]
 
 
@@ -104,7 +105,7 @@ def _reference_cells(rois, processed, ignore, affine, mode, methods, trimmed=0.1
     out = {"nominal": [], "valid": [], "std": [], "mean64": [], "values": {m: [] for m in methods}}
     for roi in rois:
         sample = rz.rasterize_sample(roi, shape, affine)
-        ring = rz.rasterize_reference(roi, shape, affine, default_inner_diameter_px=INNER, default_outer_diameter_px=OUTER)
+        ring = rz.rasterize_reference(roi, shape, affine, default_border=Border.from_ring_diameters(10.0, INNER, OUTER))
         if union is not None:
             ring = ring & ~union
         if ignore is not None:
@@ -136,32 +137,32 @@ def _reference_cells(rois, processed, ignore, affine, mode, methods, trimmed=0.1
 class LocatePixelsTests(unittest.TestCase):
     def test_pixels_are_exactly_the_rasterisers_masks(self) -> None:
         rois = _rois()
-        rs = build_roi_set(rois, INNER, OUTER)
+        rs = build_roi_set(rois, Border.from_ring_diameters(10.0, INNER, OUTER))
         for name, affine in (("identity", IDENTITY), ("chromatic", CHROMATIC)):
             for block in (1, 4, 16, 64):
                 with self.subTest(affine=name, block=block):
                     s_roi, s_flat, r_roi, r_flat = locate_pixels(rs, affine, (HEIGHT, WIDTH), block)
                     for i, roi in enumerate(rois):
                         sample = rz.rasterize_sample(roi, (HEIGHT, WIDTH), affine)
-                        ring = rz.rasterize_reference(roi, (HEIGHT, WIDTH), affine, default_inner_diameter_px=INNER, default_outer_diameter_px=OUTER)
+                        ring = rz.rasterize_reference(roi, (HEIGHT, WIDTH), affine, default_border=Border.from_ring_diameters(10.0, INNER, OUTER))
                         self.assertTrue(np.array_equal(s_flat[s_roi == i], np.flatnonzero(sample)), f"sample of ROI {roi.area_roi_id}")
                         self.assertTrue(np.array_equal(r_flat[r_roi == i], np.flatnonzero(ring)), f"ring of ROI {roi.area_roi_id}")
                     # Sorted by ROI: the blocks of a ROI's pixels are contiguous.
                     self.assertTrue(np.all(np.diff(s_roi) >= 0) and np.all(np.diff(r_roi) >= 0))
 
     def test_a_free_form_mask_roi_is_not_vectorised_but_still_correct(self) -> None:
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         self.assertEqual(list(np.flatnonzero(~rs.vectorised)), [8])
 
     def test_the_default_method_is_the_mean(self) -> None:
         """The first stored value is the mean (maintainer, 2026-10-19); the others are optional extra layers."""
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         result = reduce_frame(rs, _image(), None, IDENTITY)
         self.assertEqual(result.methods, ("mean",))
         self.assertEqual(list(result.values), ["mean"])
 
     def test_no_rois_gives_empty_arrays(self) -> None:
-        rs = build_roi_set([], INNER, OUTER)
+        rs = build_roi_set([], Border.from_ring_diameters(10.0, INNER, OUTER))
         result = reduce_frame(rs, _image(), None, IDENTITY, ("mean",))
         self.assertEqual(result.values["mean"].shape, (0, 2))
         self.assertEqual(result.n_valid.shape, (0, 2))
@@ -170,7 +171,7 @@ class LocatePixelsTests(unittest.TestCase):
 class ReduceFrameTests(unittest.TestCase):
     def test_matches_the_per_roi_rules_for_every_mode_mask_and_method(self) -> None:
         rois = _rois()
-        rs = build_roi_set(rois, INNER, OUTER)
+        rs = build_roi_set(rois, Border.from_ring_diameters(10.0, INNER, OUTER))
         image = _image()
         for mode in REFERENCE_EXCLUSION_MODES:
             for ignore in (None, _ignore()):
@@ -191,7 +192,7 @@ class ReduceFrameTests(unittest.TestCase):
                         np.testing.assert_allclose(got.std, np.array(expected["std"]), rtol=1e-12, atol=0.0)
 
     def test_the_fixture_really_exercises_the_awkward_cases(self) -> None:
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         image, ignore = _image(), _ignore()
         with_exclusion = reduce_frame(rs, image, None, IDENTITY, ("mean",), exclusion_mode="exclude_all_sample_rois")
         without = reduce_frame(rs, image, None, IDENTITY, ("mean",), exclusion_mode="none")
@@ -204,7 +205,7 @@ class ReduceFrameTests(unittest.TestCase):
 
     def test_n_masked_is_what_the_ignore_mask_removed_from_each_aperture(self) -> None:
         rois = _rois()
-        rs = build_roi_set(rois, INNER, OUTER)
+        rs = build_roi_set(rois, Border.from_ring_diameters(10.0, INNER, OUTER))
         image, ignore = _image(), _ignore()
         free = reduce_frame(rs, image, None, IDENTITY, ("mean",))
         masked = reduce_frame(rs, image, ignore, IDENTITY, ("mean",))
@@ -219,12 +220,12 @@ class ReduceFrameTests(unittest.TestCase):
             union |= rz.rasterize_sample(roi, shape, IDENTITY)
         for index, roi in enumerate(rois):  # independently: the part of each aperture that lies inside the ignore mask
             sample = rz.rasterize_sample(roi, shape, IDENTITY)
-            ring = rz.rasterize_reference(roi, shape, IDENTITY, default_inner_diameter_px=INNER, default_outer_diameter_px=OUTER) & ~union
+            ring = rz.rasterize_reference(roi, shape, IDENTITY, default_border=Border.from_ring_diameters(10.0, INNER, OUTER)) & ~union
             self.assertEqual(int(masked.n_masked[index, SAMPLE]), int((sample & ignore).sum()), f"sample of ROI {roi.area_roi_id}")
             self.assertEqual(int(masked.n_masked[index, REFERENCE]), int((ring & ignore).sum()), f"ring of ROI {roi.area_roi_id}")
 
     def test_a_roi_without_a_ring_or_sample_gets_nan_values_and_counts_of_zero(self) -> None:
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         result = reduce_frame(rs, _image(), None, IDENTITY, ("mean",))
         for index in (6, 7):  # no ring; empty sample
             self.assertTrue(np.all(np.isnan(result.values["mean"][index])))
@@ -233,21 +234,21 @@ class ReduceFrameTests(unittest.TestCase):
         self.assertTrue(np.isnan(result.std[6, REFERENCE]))
 
     def test_the_standard_deviation_is_that_of_the_valid_pixels(self) -> None:
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         image = _image()
         result = reduce_frame(rs, image, None, IDENTITY, ("mean",), exclusion_mode="none")
         sample = rz.rasterize_sample(rs.rois[0], image.shape, IDENTITY) & np.isfinite(image)
         self.assertAlmostEqual(result.std[0, SAMPLE], float(np.std(image[sample].astype(np.float64), ddof=1)), places=9)
 
     def test_unknown_method_or_mode_is_an_error_not_a_silent_mean(self) -> None:
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         with self.assertRaises(ValueError):
             reduce_frame(rs, _image(), None, IDENTITY, ("average",))
         with self.assertRaises(ValueError):
             reduce_frame(rs, _image(), None, IDENTITY, ("mean",), exclusion_mode="some")
 
     def test_a_mask_of_another_shape_is_ignored_like_compute_cell_does(self) -> None:
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         wrong = np.ones((5, 5), dtype=bool)
         a = reduce_frame(rs, _image(), wrong, IDENTITY, ("mean",))
         b = reduce_frame(rs, _image(), None, IDENTITY, ("mean",))
@@ -258,7 +259,7 @@ class PixelLayoutTests(unittest.TestCase):
     """A cached layout must change nothing; the cache must only return it for exactly the same inputs."""
 
     def test_reusing_a_layout_gives_bit_identical_results(self) -> None:
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         image = _image()
         for mode in REFERENCE_EXCLUSION_MODES:
             for ignore in (None, _ignore()):
@@ -274,21 +275,21 @@ class PixelLayoutTests(unittest.TestCase):
     def test_cache_hits_only_for_the_same_inputs(self) -> None:
         cache = LayoutCache(max_entries=8)
         rois = _rois()
-        rs = build_roi_set(rois, INNER, OUTER)
+        rs = build_roi_set(rois, Border.from_ring_diameters(10.0, INNER, OUTER))
         first = cache.get(rs, CHROMATIC, (HEIGHT, WIDTH))
-        self.assertIs(cache.get(build_roi_set(rois, INNER, OUTER), CHROMATIC.copy(), (HEIGHT, WIDTH)), first)  # equal geometry, new objects
+        self.assertIs(cache.get(build_roi_set(rois, Border.from_ring_diameters(10.0, INNER, OUTER)), CHROMATIC.copy(), (HEIGHT, WIDTH)), first)  # equal geometry, new objects
         self.assertIsNot(cache.get(rs, IDENTITY, (HEIGHT, WIDTH)), first)
         self.assertIsNot(cache.get(rs, CHROMATIC, (HEIGHT, WIDTH), "none"), first)
         moved = [replace(rois[0], center_x=rois[0].center_x + 0.01)] + rois[1:]
-        self.assertNotEqual(build_roi_set(moved, INNER, OUTER).key, rs.key)
-        self.assertNotEqual(build_roi_set(rois, INNER, OUTER + 1.0).key, rs.key)  # the shared ring default is part of the key
-        mask_changed = rois[:8] + [replace(rois[8], sample_mask=RoiMask(26, 61, np.ones((8, 8), dtype=bool)))]
-        self.assertNotEqual(build_roi_set(mask_changed, INNER, OUTER).key, rs.key)  # a free-form mask's pixels are part of it
+        self.assertNotEqual(build_roi_set(moved, Border.from_ring_diameters(10.0, INNER, OUTER)).key, rs.key)
+        self.assertNotEqual(build_roi_set(rois, Border.from_ring_diameters(10.0, INNER, OUTER + 1.0)).key, rs.key)  # the shared ring default is part of the key
+        mask_changed = rois[:8] + [replace(rois[8], shape=MaskShape(RoiMask(26, 61, np.ones((8, 8), dtype=bool))))]
+        self.assertNotEqual(build_roi_set(mask_changed, Border.from_ring_diameters(10.0, INNER, OUTER)).key, rs.key)  # a free-form mask's pixels are part of it
         self.assertEqual((cache.hits, cache.misses), (1, 3))
 
     def test_cache_keeps_at_most_max_entries(self) -> None:
         cache = LayoutCache(max_entries=2)
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         shifted = [np.array([[1.0, 0.0, dx], [0.0, 1.0, 0.0]]) for dx in (0.1, 0.2, 0.3)]
         for affine in shifted:
             cache.get(rs, affine, (HEIGHT, WIDTH))
@@ -296,7 +297,7 @@ class PixelLayoutTests(unittest.TestCase):
         self.assertEqual(cache.misses, 4)
 
     def test_a_layout_for_other_inputs_is_refused(self) -> None:
-        rs = build_roi_set(_rois(), INNER, OUTER)
+        rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         layout = build_layout(rs, IDENTITY, (HEIGHT, WIDTH), "none")
         with self.assertRaises(ValueError):
             reduce_frame(rs, _image(), None, IDENTITY, layout=layout)  # mode differs from the layout's

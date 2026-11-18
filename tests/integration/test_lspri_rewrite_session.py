@@ -36,6 +36,7 @@ from PyQt6 import QtWidgets
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
+from lspr_imaging_app.domain.roi_shapes import MaskShape
 
 ensure_repo_paths()
 
@@ -138,10 +139,9 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         # fields a naive JSON encoder loses silently.
         self.roi_toolbox.restore_state(
             replace(self.roi_toolbox.detection_settings(),
-                    reduction_method="median", reference_outer_diameter_px=42.0),
+                    reduction_method="median", border_thickness_px=7.0),
             tuple(
-                replace(roi, sample_geometry_type="mask",
-                        sample_mask=RoiMask(x0=3, y0=4, mask=self.patch),
+                replace(roi, shape=MaskShape(RoiMask(x0=3, y0=4, mask=self.patch)),
                         per_wavelength={(0, 550.0): (41.5, 31.5)})
                 if roi.area_roi_id == self.roi_a else roi
                 for roi in self.roi_toolbox.rois()
@@ -254,13 +254,13 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
         _geo, _mask, _chrom, _bg, roi_toolbox, _sel, _analysis = self._reload()
         self.assertEqual(len(roi_toolbox.rois()), 2)
         self.assertEqual(roi_toolbox.detection_settings().reduction_method, "median")
-        self.assertEqual(roi_toolbox.detection_settings().reference_outer_diameter_px, 42.0)
+        self.assertEqual(roi_toolbox.detection_settings().border_thickness_px, 7.0)
 
         restored = roi_toolbox.roi_by_id(self.roi_a)
         self.assertEqual(restored.center_x, 40.0)
-        self.assertIsNotNone(restored.sample_mask)
-        self.assertEqual((restored.sample_mask.x0, restored.sample_mask.y0), (3, 4))
-        self.assertTrue(np.array_equal(restored.sample_mask.mask, self.patch))
+        self.assertIsInstance(restored.shape, MaskShape)
+        self.assertEqual((restored.shape.mask.x0, restored.shape.mask.y0), (3, 4))
+        self.assertTrue(np.array_equal(restored.shape.mask.mask, self.patch))
         # JSON has no tuple keys - this is the field a naive encoder loses.
         self.assertEqual(restored.per_wavelength, {(0, 550.0): (41.5, 31.5)})
 
@@ -345,20 +345,21 @@ class RewriteSessionRoundTripTest(unittest.TestCase):
     def test_roi_geometry_timeline_round_trips_through_the_file(self) -> None:
         """Schema 1.2: a ROI's geometry changes by cube (persistent / individual) survive a save and a fresh load."""
         self.roi_toolbox.move_roi(self.roi_a, 45.0, 33.0, cube=1)
-        self.roi_toolbox.resize_rois([self.roi_a], sample_diameter_px=12.0, cube=0, scope="individual")
+        self.roi_toolbox.resize_rois([self.roi_b], sample_diameter_px=12.0, cube=0, scope="individual")  # roi_a is a mask ROI: no diameter
         _geo, _mask, _chrom, _bg, roi_toolbox, _sel, _analysis = self._reload()
         restored = roi_toolbox.roi_by_id(self.roi_a)
         self.assertEqual(restored.center_x, 40.0)  # the base is untouched
         self.assertEqual(roi_toolbox.geometry_at(self.roi_a, 1).center_x, 45.0)
-        self.assertEqual(roi_toolbox.geometry_at(self.roi_a, 0).sample_diameter_px, 12.0)
+        self.assertEqual(roi_toolbox.geometry_at(self.roi_b, 0).shape.diameter_px, 12.0)
         self.assertEqual(roi_toolbox.timeline_cubes(), (0, 1))
-        self.assertIsNone(roi_toolbox.roi_by_id(self.roi_b).timeline)
+        self.assertEqual(len(roi_toolbox.roi_by_id(self.roi_a).timeline.persistent), 1)  # the move
+        self.assertEqual(len(roi_toolbox.roi_by_id(self.roi_b).timeline.individual), 1)  # the resize
 
     def test_a_session_without_a_timeline_writes_none_and_stays_byte_identical(self) -> None:
         first = self._save().read_bytes()
         self.assertEqual(self._save().read_bytes(), first)
         payload = json.loads(first)
-        self.assertEqual(payload["schema_version"], "1.11")
+        self.assertEqual(payload["schema_version"], "1.12")
         self.assertTrue(all(entry.get("timeline") is None for entry in payload["roi"]["rois"]))
 
     def test_a_schema_1_1_file_loads_without_a_timeline(self) -> None:

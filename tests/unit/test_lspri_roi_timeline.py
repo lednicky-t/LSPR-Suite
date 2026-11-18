@@ -20,35 +20,36 @@ from lspr_imaging_app.domain.roi_model import (
     geometry_at,
     resolved_at,
 )
+from lspr_imaging_app.domain.roi_shapes import Border, Circle, ring_diameters
 from lspr_imaging_app.storage.session import _decode_area_rois, _encode_area_roi
 from lspr_imaging_app.undo import undo_manager
 
 
 def _g(x: float, d: float = 20.0) -> RoiGeometry:
-    return RoiGeometry(x, 10.0, d, None, None)
+    return RoiGeometry(x, 10.0, Circle(d), None)
 
 
 class TimelineResolutionTest(unittest.TestCase):
     def test_empty_timeline_is_the_base(self) -> None:
-        roi = AreaRoi(1, 5.0, 6.0, 20.0)
-        self.assertEqual(geometry_at(roi, 3), RoiGeometry(5.0, 6.0, 20.0, None, None))
+        roi = AreaRoi(1, 5.0, 6.0, Circle(20.0))
+        self.assertEqual(geometry_at(roi, 3), RoiGeometry(5.0, 6.0, Circle(20.0), None))
         self.assertIs(resolved_at(roi, 3), roi)  # nothing to resolve: the very same object
 
     def test_persistent_means_this_cube_and_every_later_cube(self) -> None:
         timeline = RoiTimeline().with_change(5, SCOPE_PERSISTENT, _g(50.0))
-        roi = AreaRoi(1, 5.0, 10.0, 20.0, timeline=timeline)
+        roi = AreaRoi(1, 5.0, 10.0, Circle(20.0), timeline=timeline)
         self.assertEqual(geometry_at(roi, 4).center_x, 5.0)  # before: the base
         for cube in (5, 6, 100):
             self.assertEqual(geometry_at(roi, cube).center_x, 50.0)
 
     def test_a_later_persistent_change_supersedes_after_its_cube(self) -> None:
         timeline = RoiTimeline().with_change(5, SCOPE_PERSISTENT, _g(50.0)).with_change(8, SCOPE_PERSISTENT, _g(80.0))
-        roi = AreaRoi(1, 5.0, 10.0, 20.0, timeline=timeline)
+        roi = AreaRoi(1, 5.0, 10.0, Circle(20.0), timeline=timeline)
         self.assertEqual([geometry_at(roi, c).center_x for c in (4, 5, 7, 8, 9)], [5.0, 50.0, 50.0, 80.0, 80.0])
 
     def test_individual_wins_only_on_its_own_cube(self) -> None:
         timeline = RoiTimeline().with_change(5, SCOPE_PERSISTENT, _g(50.0)).with_change(7, SCOPE_INDIVIDUAL, _g(70.0))
-        roi = AreaRoi(1, 5.0, 10.0, 20.0, timeline=timeline)
+        roi = AreaRoi(1, 5.0, 10.0, Circle(20.0), timeline=timeline)
         self.assertEqual([geometry_at(roi, c).center_x for c in (6, 7, 8)], [50.0, 70.0, 50.0])
 
     def test_writing_the_same_cube_and_scope_replaces(self) -> None:
@@ -64,9 +65,9 @@ class TimelineResolutionTest(unittest.TestCase):
         self.assertFalse(timeline.without_cube(5))
 
     def test_resolved_copy_has_the_geometry_and_no_timeline(self) -> None:
-        roi = AreaRoi(1, 5.0, 10.0, 20.0, label="a", timeline=RoiTimeline().with_change(2, SCOPE_PERSISTENT, _g(50.0, 30.0)))
+        roi = AreaRoi(1, 5.0, 10.0, Circle(20.0), label="a", timeline=RoiTimeline().with_change(2, SCOPE_PERSISTENT, _g(50.0, 30.0)))
         at = resolved_at(roi, 3)
-        self.assertEqual((at.center_x, at.sample_diameter_px, at.label, at.area_roi_id), (50.0, 30.0, "a", 1))
+        self.assertEqual((at.center_x, at.shape.diameter_px, at.label, at.area_roi_id), (50.0, 30.0, "a", 1))
         self.assertIsNone(at.timeline)
         self.assertEqual(roi.center_x, 5.0)  # the stored ROI is untouched
 
@@ -126,12 +127,12 @@ class ToolboxTimelineTest(unittest.TestCase):
 
     def test_resize_and_reset_at_a_cube(self) -> None:
         self.toolbox.resize_rois([1, 2], sample_diameter_px=30.0, reference_inner_diameter_px=40.0, reference_outer_diameter_px=50.0, cube=3)
-        self.assertEqual(self.toolbox.geometry_at(1, 2).sample_diameter_px, 20.0)
+        self.assertEqual(self.toolbox.geometry_at(1, 2).shape.diameter_px, 20.0)
         g = self.toolbox.geometry_at(2, 3)
-        self.assertEqual((g.sample_diameter_px, g.reference_inner_diameter_px, g.reference_outer_diameter_px), (30.0, 40.0, 50.0))
+        self.assertEqual((g.shape.diameter_px, *ring_diameters(g.shape, g.border)), (30.0, 40.0, 50.0))
         self.toolbox.reset_roi_diameters([1], cube=6, scope=SCOPE_INDIVIDUAL)
-        self.assertEqual(self.toolbox.geometry_at(1, 6).reference_inner_diameter_px, None)
-        self.assertEqual(self.toolbox.geometry_at(1, 7).reference_inner_diameter_px, 40.0)
+        self.assertEqual(self.toolbox.geometry_at(1, 6).border, None)
+        self.assertEqual(ring_diameters(Circle(30.0), self.toolbox.geometry_at(1, 7).border)[0], 40.0)
         with self.assertRaises(ValueError):
             self.toolbox.resize_rois([1], reference_inner_diameter_px=60.0, cube=3)  # inner >= outer (50)
 
@@ -333,8 +334,8 @@ class ToolboxTimelineTest(unittest.TestCase):
     def test_refine_rois_writes_a_timeline_change(self) -> None:
         self.toolbox.refine_rois({1: (11.0, 10.5, 22.0, 30.0, 40.0)}, cube=4)
         g = self.toolbox.geometry_at(1, 4)
-        self.assertEqual((g.center_x, g.sample_diameter_px, g.reference_inner_diameter_px), (11.0, 22.0, 30.0))
-        self.assertEqual(self.toolbox.geometry_at(1, 3).sample_diameter_px, 20.0)
+        self.assertEqual((g.center_x, g.shape.diameter_px, ring_diameters(g.shape, g.border)[0]), (11.0, 22.0, 30.0))
+        self.assertEqual(self.toolbox.geometry_at(1, 3).shape.diameter_px, 20.0)
         undo_manager.undo()
         self.assertFalse(self.toolbox.has_timeline())
         self.assertFalse(undo_manager.can_undo)
@@ -344,29 +345,29 @@ class TimelineStorageTest(unittest.TestCase):
     def test_round_trip_through_the_session_encoding(self) -> None:
         timeline = (
             RoiTimeline()
-            .with_change(5, SCOPE_PERSISTENT, RoiGeometry(50.0, 11.0, 22.0, 30.0, 40.0))
-            .with_change(7, SCOPE_INDIVIDUAL, RoiGeometry(70.0, 12.0, 24.0, None, None))
+            .with_change(5, SCOPE_PERSISTENT, RoiGeometry(50.0, 11.0, Circle(22.0), Border.from_ring_diameters(22.0, 30.0, 40.0)))
+            .with_change(7, SCOPE_INDIVIDUAL, RoiGeometry(70.0, 12.0, Circle(24.0), None))
         )
-        roi = AreaRoi(3, 5.0, 10.0, 20.0, label="x", timeline=timeline)
+        roi = AreaRoi(3, 5.0, 10.0, Circle(20.0), label="x", timeline=timeline)
         payload = json.loads(json.dumps(_encode_area_roi(roi)))  # real JSON: nothing but plain values may be in it
         (decoded,) = _decode_area_rois([payload])
         self.assertEqual(decoded.timeline, timeline)
         self.assertEqual(decoded.center_x, 5.0)
 
     def test_a_roi_without_a_timeline_looks_as_before(self) -> None:
-        payload = _encode_area_roi(AreaRoi(1, 5.0, 10.0, 20.0))
+        payload = _encode_area_roi(AreaRoi(1, 5.0, 10.0, Circle(20.0)))
         self.assertIsNone(payload["timeline"])
         (decoded,) = _decode_area_rois([json.loads(json.dumps(payload))])
         self.assertIsNone(decoded.timeline)
 
     def test_an_old_session_without_the_key_loads(self) -> None:
-        payload = json.loads(json.dumps(_encode_area_roi(AreaRoi(1, 5.0, 10.0, 20.0))))
+        payload = json.loads(json.dumps(_encode_area_roi(AreaRoi(1, 5.0, 10.0, Circle(20.0)))))
         del payload["timeline"]
         (decoded,) = _decode_area_rois([payload])
         self.assertIsNone(decoded.timeline)
 
     def test_malformed_changes_are_skipped_not_fatal(self) -> None:
-        payload = json.loads(json.dumps(_encode_area_roi(AreaRoi(1, 5.0, 10.0, 20.0))))
+        payload = json.loads(json.dumps(_encode_area_roi(AreaRoi(1, 5.0, 10.0, Circle(20.0)))))
         payload["timeline"] = {
             "persistent": [{"cube": 2, "x": 1.0, "y": 2.0, "sample_diameter_px": 20.0}, {"cube": "bad"}, 7],
             "individual": "nonsense",

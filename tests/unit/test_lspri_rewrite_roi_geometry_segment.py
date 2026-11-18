@@ -30,7 +30,7 @@ CUBES = range(0, 31)
 
 def _geometry_signature(toolbox: "RoiToolbox", cube: int) -> tuple:
     return tuple(
-        (r.area_roi_id, r.center_x, r.center_y, r.sample_diameter_px, r.reference_inner_diameter_px, r.reference_outer_diameter_px)
+        (r.area_roi_id, r.center_x, r.center_y, r.shape, r.border)
         for r in toolbox.rois_at(cube)
     )
 

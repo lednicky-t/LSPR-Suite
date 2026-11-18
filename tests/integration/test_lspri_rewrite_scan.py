@@ -27,6 +27,7 @@ try:
     from lspr_imaging_app.image_tools.preprocess import apply_preprocessing
     from lspr_imaging_app.progress import Cancelled
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -39,8 +40,7 @@ AFFINES = [np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), np.array([[1.003, 0.001
 
 
 def _rois():
-    return [AreaRoi(i + 1, 18.0 + 25.0 * (i % 4), 18.0 + 24.0 * (i // 4), 10.0, reference_inner_diameter_px=14.0,
-                    reference_outer_diameter_px=20.0) for i in range(12)]
+    return [AreaRoi(i + 1, 18.0 + 25.0 * (i % 4), 18.0 + 24.0 * (i // 4), Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 20.0)) for i in range(12)]
 
 
 class ScanRunnerTests(unittest.TestCase):
@@ -64,7 +64,7 @@ class ScanRunnerTests(unittest.TestCase):
             methods=("mean", "median"),
             fast_tiff_decoder=False,
         )
-        cls.rs = build_roi_set(_rois(), 14.0, 20.0)
+        cls.rs = build_roi_set(_rois(), Border.from_ring_diameters(10.0, 14.0, 20.0))
 
     @classmethod
     def tearDownClass(cls) -> None:

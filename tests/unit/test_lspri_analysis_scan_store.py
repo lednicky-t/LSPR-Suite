@@ -29,6 +29,7 @@ try:
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -56,7 +57,7 @@ class _App:
         self.detection = AreaRoiDetectionSettings()
 
     def source(self) -> ScanSource:
-        rois = [AreaRoi(i, 12.0 + 15.0 * k + self.shift, 14.0, 8.0, reference_inner_diameter_px=11.0, reference_outer_diameter_px=16.0)
+        rois = [AreaRoi(i, 12.0 + 15.0 * k + self.shift, 14.0, Circle(8.0), border=Border.from_ring_diameters(8.0, 11.0, 16.0))
                 for k, i in enumerate(self.ids)]
         return ScanSource(
             cube_indices=lambda: tuple(range(self.cubes)),
@@ -68,7 +69,7 @@ class _App:
             chromatic_affine_between=lambda a, b: IDENTITY,
             resolve_mask=lambda c, w: MaskRef((c, w), "individual", lambda a=self.masks[(c, w)]: a) if (c, w) in self.masks else None,
             geometry=lambda: GeometrySettings(), background=lambda: self.background, detection=lambda: self.detection,
-            default_reference_diameters=lambda: (11.0, 16.0),
+            default_border=lambda: Border.from_ring_diameters(10.0, 11.0, 16.0),
             frame_times_ms=lambda: {(c, w): 1_700_000_000_000 + 1000 * c + int(w) for c in range(self.cubes) for w in WAVELENGTHS},
         )
 

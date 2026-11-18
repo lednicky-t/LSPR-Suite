@@ -28,6 +28,7 @@ try:
     from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.image_tools.preprocess import resolve_external_mask
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -39,7 +40,7 @@ IDENTITY = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
 
 
 def _rois(shift: float = 0.0, ids=(1, 2, 3)):
-    return [AreaRoi(i, 12.0 + 15.0 * k + shift, 14.0, 8.0, reference_inner_diameter_px=11.0, reference_outer_diameter_px=16.0)
+    return [AreaRoi(i, 12.0 + 15.0 * k + shift, 14.0, Circle(8.0), border=Border.from_ring_diameters(8.0, 11.0, 16.0))
             for k, i in enumerate(ids)]
 
 
@@ -87,7 +88,7 @@ class _Fake:
             geometry=lambda: self.geometry,
             background=lambda: BackgroundSettings(),
             detection=lambda: AreaRoiDetectionSettings(),
-            default_reference_diameters=lambda: (11.0, 16.0),
+            default_border=lambda: Border.from_ring_diameters(10.0, 11.0, 16.0),
         )
 
 

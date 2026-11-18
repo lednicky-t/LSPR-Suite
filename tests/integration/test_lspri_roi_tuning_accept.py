@@ -22,6 +22,7 @@ import numpy as np
 from PyQt6 import QtWidgets
 
 from tests._lspri_scan_data import SyntheticDataset, make_rois
+from lspr_imaging_app.domain.roi_shapes import Border
 from tests._paths import skip_if_lspri_rewrite_absent
 
 try:
@@ -197,7 +198,7 @@ class SeedTest(unittest.TestCase):
     def test_a_trial_whose_inputs_changed_writes_nothing(self) -> None:
         path = self.seeded_file()
         digest = file_digest(path)
-        changed = [replace(r, reference_outer_diameter_px=20.0) if i == 1 else r for i, r in enumerate(self.rois)]  # a ring changed after the trial
+        changed = [replace(r, border=Border.from_ring_diameters(r.shape.diameter_px, 14.0, 20.0)) if i == 1 else r for i, r in enumerate(self.rois)]  # a ring changed after the trial
         report = self.seed(path, before=changed, after=moved_rois(changed))
         self.assertFalse(report.written)
         self.assertIn("Something the trial was made from changed", report.reason)
@@ -407,7 +408,7 @@ class ModuleAcceptTest(unittest.TestCase):
         self.scan_path = Path(self._tmp.name) / "analysis" / "scan.h5"
         self.toolbox = RoiToolbox()
         for roi in make_rois():
-            self.toolbox.add_roi(roi.center_x, roi.center_y, sample_diameter_px=roi.sample_diameter_px)
+            self.toolbox.add_roi(roi.center_x, roi.center_y, sample_diameter_px=roi.shape.diameter_px)
         undo_manager.clear()
         settings = AnalysisSettingsModule()
         settings.set_metric_settings(MetricSettings(fit_method="none"))

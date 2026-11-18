@@ -7,6 +7,7 @@ import unittest
 import numpy as np
 
 from lspr_imaging_app.roi import RoiToolbox
+from lspr_imaging_app.domain.roi_shapes import ring_diameters
 from lspr_imaging_app.undo import undo_manager
 
 
@@ -32,7 +33,7 @@ class PlaceArrayTest(unittest.TestCase):
         self.assertEqual(ids, [1, 2, 3, 4, 5, 6])
         roi = self.toolbox.roi_by_id(4)
         self.assertEqual((roi.center_x, roi.center_y), (100.0, 150.0))
-        self.assertEqual((roi.sample_diameter_px, roi.reference_inner_diameter_px, roi.reference_outer_diameter_px), (30.0, 40.0, 50.0))
+        self.assertEqual((roi.shape.diameter_px, *ring_diameters(roi.shape, roi.border)), (30.0, 40.0, 50.0))
         (array,) = self.toolbox.array_groups()
         self.assertEqual((array.rows, array.cols, array.spacing_x_px, array.rotation_deg), (2, 3, 50.0, 1.5))
         self.assertEqual(array.member_area_roi_ids, ids)
@@ -126,10 +127,10 @@ class RefineRoisTest(unittest.TestCase):
     def test_positions_and_diameters_in_one_undo_step(self) -> None:
         self.toolbox.refine_rois({1: (11.2, 20.4, 24.0, 32.0, 40.0), 2: (59.0, 19.5, 24.0, 32.0, 40.0)})
         roi = self.toolbox.roi_by_id(1)
-        self.assertEqual((roi.center_x, roi.center_y, roi.sample_diameter_px, roi.reference_inner_diameter_px), (11.2, 20.4, 24.0, 32.0))
+        self.assertEqual((roi.center_x, roi.center_y, roi.shape.diameter_px, ring_diameters(roi.shape, roi.border)[0]), (11.2, 20.4, 24.0, 32.0))
         undo_manager.undo()
         roi = self.toolbox.roi_by_id(1)
-        self.assertEqual((roi.center_x, roi.center_y, roi.sample_diameter_px, roi.reference_inner_diameter_px), (10.0, 20.0, 20.0, None))
+        self.assertEqual((roi.center_x, roi.center_y, roi.shape.diameter_px, roi.border), (10.0, 20.0, 20.0, None))
         self.assertFalse(undo_manager.can_undo)
 
     def test_bad_values_change_nothing(self) -> None:

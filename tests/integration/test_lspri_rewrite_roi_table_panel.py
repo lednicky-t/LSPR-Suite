@@ -34,7 +34,11 @@ APP_SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"
 if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
+import numpy as np  # noqa: E402
+
 try:
+    from lspr_imaging_app.domain.roi_model import RoiMask
+    from lspr_imaging_app.domain.roi_shapes import MaskShape, NO_BORDER, Rectangle, ring_diameters
     from lspr_ui import get_active_theme, load_tabler_icon, set_active_theme, transparent_icon_button_stylesheet
 
     from lspr_imaging_app.gui.app_theme import LSPRI_BRIGHT_THEME, LSPRI_DARK_THEME, apply_app_theme
@@ -227,14 +231,14 @@ class AppearanceTest(_PanelCase):
         self.assertEqual(self.text(2, COLUMN_X), "20.0")
         self.assertEqual(self.text(2, COLUMN_Y), "5.0")
         self.assertEqual(self.text(2, COLUMN_SAMPLE), "6.0")
-        self.assertEqual(self.text(2, COLUMN_RING_IN), "28.0", "the shared default")
+        self.assertEqual(self.text(2, COLUMN_RING_IN), "14.0", "the shared default border (4, 4) around a 6 px sample")
         self.assertTrue(self.model.data(self.cell(2, COLUMN_RING_IN), INHERITED_ROLE))
         self.assertFalse(self.model.data(self.cell(2, COLUMN_SAMPLE), INHERITED_ROLE))
         self.toolbox.resize_rois((2,), reference_inner_diameter_px=10.0)
         self.refresh()
         self.assertEqual(self.text(2, COLUMN_RING_IN), "10.0")
         self.assertFalse(self.model.data(self.cell(2, COLUMN_RING_IN), INHERITED_ROLE))
-        self.assertTrue(self.model.data(self.cell(2, COLUMN_RING_OUT), INHERITED_ROLE))
+        self.assertFalse(self.model.data(self.cell(2, COLUMN_RING_OUT), INHERITED_ROLE))  # the border is one setting: editing an edge makes it the ROI's own
 
     def test_groups_and_tints_show_in_the_model(self) -> None:
         self.toolbox.group_rois((1, 2), "A")
@@ -255,7 +259,7 @@ class AppearanceTest(_PanelCase):
         self.assertEqual(self.panel._unit_toggle.text(), "µm")
         self.assertEqual(self.text(2, COLUMN_X), "10")  # 20 px * 0.5
         self.edit(2, COLUMN_SAMPLE, "10")  # typed in µm
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 20.0)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 20.0)
 
     def test_the_title_bar_counts_rois_and_the_selection(self) -> None:
         self.selection.set_roi_selection({1, 2})
@@ -482,23 +486,23 @@ class SelectionSyncTest(_PanelCase):
 class EditingTest(_PanelCase):
     def test_editing_a_diameter_is_a_toolbox_command_and_undoes(self) -> None:
         self.edit(2, COLUMN_SAMPLE, "9")
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 9.0)
-        self.assertEqual(self.toolbox.roi_by_id(3).sample_diameter_px, 6.0)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 9.0)
+        self.assertEqual(self.toolbox.roi_by_id(3).shape.diameter_px, 6.0)
         undo_manager.undo()
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 6.0)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 6.0)
 
     def test_an_edit_applies_to_the_whole_selection_in_one_undo_step(self) -> None:
         self.selection.set_roi_selection({1, 2, 3})
         self.edit(2, COLUMN_SAMPLE, "9")
-        self.assertEqual([self.toolbox.roi_by_id(i).sample_diameter_px for i in (1, 2, 3, 4)], [9.0, 9.0, 9.0, 6.0])
+        self.assertEqual([self.toolbox.roi_by_id(i).shape.diameter_px for i in (1, 2, 3, 4)], [9.0, 9.0, 9.0, 6.0])
         self.assertIn("3 ROIs", self.footer())
         undo_manager.undo()
-        self.assertEqual([self.toolbox.roi_by_id(i).sample_diameter_px for i in (1, 2, 3)], [6.0, 6.0, 6.0])
+        self.assertEqual([self.toolbox.roi_by_id(i).shape.diameter_px for i in (1, 2, 3)], [6.0, 6.0, 6.0])
 
     def test_editing_a_roi_outside_the_selection_edits_only_that_roi(self) -> None:
         self.selection.set_roi_selection({1, 2})
         self.edit(4, COLUMN_SAMPLE, "9")
-        self.assertEqual([self.toolbox.roi_by_id(i).sample_diameter_px for i in (1, 2, 4)], [6.0, 6.0, 9.0])
+        self.assertEqual([self.toolbox.roi_by_id(i).shape.diameter_px for i in (1, 2, 4)], [6.0, 6.0, 9.0])
 
     def test_editing_x_of_a_selection_lines_them_up(self) -> None:
         self.selection.set_roi_selection({1, 2})
@@ -509,19 +513,19 @@ class EditingTest(_PanelCase):
 
     def test_a_bad_value_is_refused_shown_and_changes_nothing(self) -> None:
         self.edit(2, COLUMN_SAMPLE, "1")
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 6.0)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 6.0)
         self.assertIn("at least 2", self.footer())
         self.assertIn("at least 2", self.messages[-1])
         self.edit(2, COLUMN_SAMPLE, "abc")
         self.assertIn("'abc' is not a number", self.footer())
-        self.edit(2, COLUMN_RING_IN, "40")  # not below the inherited outer diameter (36)
+        self.edit(2, COLUMN_RING_IN, "40")  # not below the current outer diameter (22)
         self.assertIn("inner < outer", self.footer())
-        self.assertIsNone(self.toolbox.roi_by_id(2).reference_inner_diameter_px)
+        self.assertIsNone(self.toolbox.roi_by_id(2).border)
 
     def test_a_ring_override_is_stored_for_that_roi(self) -> None:
         self.edit(2, COLUMN_RING_IN, "10")
-        self.assertEqual(self.toolbox.roi_by_id(2).reference_inner_diameter_px, 10.0)
-        self.assertIsNone(self.toolbox.roi_by_id(2).reference_outer_diameter_px)
+        roi = self.toolbox.roi_by_id(2)
+        self.assertEqual(ring_diameters(roi.shape, roi.border), (10.0, 22.0))  # the outer edge keeps the diameter it had
 
     def test_names_and_group_names(self) -> None:
         self.edit(1, COLUMN_NAME, "  spot A ")
@@ -557,7 +561,7 @@ class ExcelStyleEditingTest(_PanelCase):
         self.tree.selectionModel().setCurrentIndex(self.cell(roi_id, column), QItemSelectionModel.SelectionFlag.NoUpdate)
 
     def diameters(self, *ids: int) -> list[float]:
-        return [self.toolbox.roi_by_id(i).sample_diameter_px for i in ids]
+        return [self.toolbox.roi_by_id(i).shape.diameter_px for i in ids]
 
     def test_copy_then_paste_sets_that_column_on_every_selected_roi(self) -> None:
         self.edit(5, COLUMN_SAMPLE, "9")
@@ -797,9 +801,9 @@ class CommandTest(_PanelCase):
         self.toolbox.resize_rois((1, 2), sample_diameter_px=12.0, reference_inner_diameter_px=10.0)
         self.selection.set_roi_selection({1})
         self.panel._reset_diameters_selected()
-        self.assertEqual(self.toolbox.roi_by_id(1).sample_diameter_px, 20.0)
-        self.assertIsNone(self.toolbox.roi_by_id(1).reference_inner_diameter_px)
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 12.0)
+        self.assertEqual(self.toolbox.roi_by_id(1).shape.diameter_px, 20.0)
+        self.assertIsNone(self.toolbox.roi_by_id(1).border)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 12.0)
 
     def test_shift_position_in_the_display_unit(self) -> None:
         self.selection.set_roi_selection({1, 2})
@@ -1368,7 +1372,7 @@ class ViewModeTest(_PanelCase):
         self.assertEqual(self.model.sort_state(), (COLUMN_ID, False))
 
     def test_the_shape_column_shows_the_shape_and_is_not_editable(self) -> None:
-        self.toolbox.roi_by_id(1).reference_geometry_type = "none"
+        self.toolbox.roi_by_id(1).border = NO_BORDER
         self.refresh()
         self.assertEqual(self.text(1, COLUMN_SHAPE), "Circle, no reference")
         self.assertEqual(self.text(2, COLUMN_SHAPE), "Circle with reference ring")
@@ -1376,8 +1380,8 @@ class ViewModeTest(_PanelCase):
         self.assertIn("D = outer", self.model.headerData(COLUMN_SHAPE, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole))
 
     def test_a_disk_has_no_ring_cells_and_a_mask_no_diameter_cells(self) -> None:
-        self.toolbox.roi_by_id(1).reference_geometry_type = "none"
-        self.toolbox.roi_by_id(2).sample_geometry_type = "mask"
+        self.toolbox.roi_by_id(1).border = NO_BORDER
+        self.toolbox.roi_by_id(2).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
         self.refresh()
         editable = Qt.ItemFlag.ItemIsEditable
         self.assertEqual([self.text(1, c) for c in (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT)], ["6.0", "", ""])
@@ -1388,19 +1392,20 @@ class ViewModeTest(_PanelCase):
         self.assertTrue(self.model.flags(self.cell(2, COLUMN_X)) & editable, "a mask ROI still has a position")
 
     def test_setting_a_ring_diameter_skips_a_disk(self) -> None:
-        self.toolbox.roi_by_id(1).reference_geometry_type = "none"
+        self.toolbox.roi_by_id(1).border = NO_BORDER
         self.refresh()
         self.panel._set_numeric_cells([1, 2], COLUMN_RING_OUT, "40")
-        self.assertIsNone(self.toolbox.roi_by_id(1).reference_outer_diameter_px)
-        self.assertEqual(self.toolbox.roi_by_id(2).reference_outer_diameter_px, 40.0)
+        self.assertEqual(self.toolbox.roi_by_id(1).border, NO_BORDER)  # a disk has no ring to set
+        roi = self.toolbox.roi_by_id(2)
+        self.assertEqual(ring_diameters(roi.shape, roi.border)[1], 40.0)
         self.panel._set_numeric_cells([1], COLUMN_RING_OUT, "41")
         self.assertIn("no such diameter", self.footer())
 
     def test_painting_every_view_does_not_raise(self) -> None:
         self.toolbox.group_rois((1, 2), "A")
-        self.toolbox.roi_by_id(3).reference_geometry_type = "none"
-        self.toolbox.roi_by_id(4).sample_geometry_type = "mask"
-        self.toolbox.roi_by_id(5).sample_geometry_type = "rectangle"
+        self.toolbox.roi_by_id(3).border = NO_BORDER
+        self.toolbox.roi_by_id(4).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
+        self.toolbox.roi_by_id(5).shape = Rectangle(8.0, 4.0, 0.0)
         self.refresh()
         self.show_panel()
         for mode in ("geometry", "simple", "geometry"):

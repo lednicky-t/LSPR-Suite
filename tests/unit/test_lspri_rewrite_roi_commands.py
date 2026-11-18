@@ -16,6 +16,7 @@ import sys
 import unittest
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent
+from lspr_imaging_app.domain.roi_shapes import Circle, ring_diameters
 
 ensure_repo_paths()
 
@@ -400,16 +401,16 @@ class GeometryCommandsTest(_ToolboxCase):
         self.toolbox.resize_rois((1, 2), sample_diameter_px=12.0, reference_inner_diameter_px=16.0, reference_outer_diameter_px=24.0)
         for roi_id in (1, 2):
             roi = self.toolbox.roi_by_id(roi_id)
-            self.assertEqual((roi.sample_diameter_px, roi.reference_inner_diameter_px, roi.reference_outer_diameter_px), (12.0, 16.0, 24.0))
-        self.assertEqual(self.toolbox.roi_by_id(3).sample_diameter_px, 6.0)
+            self.assertEqual((roi.shape.diameter_px, *ring_diameters(roi.shape, roi.border)), (12.0, 16.0, 24.0))
+        self.assertEqual(self.toolbox.roi_by_id(3).shape.diameter_px, 6.0)
         self.assertEqual(len(self.geometry), 1)
         undo_manager.undo()
-        self.assertIsNone(self.toolbox.roi_by_id(1).reference_inner_diameter_px)
-        self.assertEqual(self.toolbox.roi_by_id(1).sample_diameter_px, 6.0)
+        self.assertIsNone(self.toolbox.roi_by_id(1).border)
+        self.assertEqual(self.toolbox.roi_by_id(1).shape.diameter_px, 6.0)
 
     def test_invalid_sizes_raise_before_anything_changes(self) -> None:
-        defaults = AreaRoiDetectionSettings()  # inner 28, outer 36
-        self.assertLess(defaults.reference_inner_diameter_px, defaults.reference_outer_diameter_px)
+        defaults = AreaRoiDetectionSettings()  # the default border (4, 4): a 6 px sample has a ring of diameters 14 / 22
+        outer = ring_diameters(Circle(6.0), defaults.default_border())[1]
         with self.assertRaises(ValueError):
             self.toolbox.resize_rois((1, 2), sample_diameter_px=1.0)                       # below the minimum
         with self.assertRaises(ValueError):
@@ -417,34 +418,34 @@ class GeometryCommandsTest(_ToolboxCase):
         with self.assertRaises(ValueError):
             self.toolbox.resize_rois((1,), reference_inner_diameter_px=30.0, reference_outer_diameter_px=30.0)
         with self.assertRaises(ValueError):                                                 # outer inherited from the default
-            self.toolbox.resize_rois((1,), reference_inner_diameter_px=defaults.reference_outer_diameter_px + 1)
+            self.toolbox.resize_rois((1,), reference_inner_diameter_px=outer + 1)
         with self.assertRaises(ValueError):
             self.toolbox.resize_rois((1,), reference_inner_diameter_px=-1.0)
         for roi in self.toolbox.rois():
-            self.assertEqual((roi.sample_diameter_px, roi.reference_inner_diameter_px, roi.reference_outer_diameter_px), (6.0, None, None))
+            self.assertEqual((roi.shape.diameter_px, roi.border), (6.0, None))
         self.assertEqual(self.geometry, [])
         self.toolbox.resize_rois((1,), reference_inner_diameter_px=10.0)  # fine: 10 < the inherited outer
-        self.assertEqual(self.toolbox.roi_by_id(1).reference_inner_diameter_px, 10.0)
+        self.assertEqual(ring_diameters(Circle(6.0), self.toolbox.roi_by_id(1).border)[0], 10.0)
 
     def test_the_one_roi_form_still_works_and_undoes(self) -> None:
         self.toolbox.resize_roi(2, sample_diameter_px=9.0)
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 9.0)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 9.0)
         undo_manager.undo()
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 6.0)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 6.0)
 
     def test_resetting_diameters_returns_to_the_shared_defaults(self) -> None:
         defaults = AreaRoiDetectionSettings()
         self.toolbox.resize_rois((1, 2), sample_diameter_px=12.0, reference_inner_diameter_px=16.0, reference_outer_diameter_px=24.0)
         self.toolbox.reset_roi_diameters((1,))
         reset = self.toolbox.roi_by_id(1)
-        self.assertEqual(reset.sample_diameter_px, defaults.sample_diameter_px)
-        self.assertEqual((reset.reference_inner_diameter_px, reset.reference_outer_diameter_px), (None, None))
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 12.0)
+        self.assertEqual(reset.shape.diameter_px, defaults.sample_diameter_px)
+        self.assertIsNone(reset.border)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 12.0)
         self.toolbox.reset_roi_diameters((2,), sample=False)
-        self.assertEqual(self.toolbox.roi_by_id(2).sample_diameter_px, 12.0)
-        self.assertIsNone(self.toolbox.roi_by_id(2).reference_inner_diameter_px)
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.diameter_px, 12.0)
+        self.assertIsNone(self.toolbox.roi_by_id(2).border)
         undo_manager.undo()
-        self.assertEqual(self.toolbox.roi_by_id(2).reference_inner_diameter_px, 16.0)
+        self.assertEqual(ring_diameters(Circle(12.0), self.toolbox.roi_by_id(2).border), (16.0, 24.0))
 
     def test_labels(self) -> None:
         self.toolbox.set_roi_label(1, "  spot A ")

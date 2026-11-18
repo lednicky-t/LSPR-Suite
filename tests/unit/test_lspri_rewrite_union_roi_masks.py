@@ -21,11 +21,12 @@ if str(APP_SRC) not in sys.path:
 
 from lspr_imaging_app.image_tools.chromatic.affine import identity_affine_matrix
 from lspr_imaging_app.domain.roi_model import AreaRoi
+from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER
 from lspr_imaging_app.roi.rasterize import crop_mask, rasterize_reference, rasterize_sample, union_roi_masks
 
 _SHAPE = (300, 400)
 _AFFINE = np.array([[1.0007, 0.0005, 2.3], [-0.0004, 0.9995, -1.6]])
-_DEFAULT_RING = {"default_inner_diameter_px": 28.0, "default_outer_diameter_px": 36.0}
+_DEFAULT_RING = {"default_border": Border(4.0, 4.0)}  # the 28 / 36 ring around a 20 px sample
 
 
 def _reference_union(rois, affine):
@@ -41,20 +42,18 @@ def _mixed_rois() -> list[AreaRoi]:
     blob = np.zeros(_SHAPE, dtype=bool)
     blob[100:112, 200:230] = True
     return [
-        AreaRoi(area_roi_id=1, center_x=50.0, center_y=60.0, sample_diameter_px=20.0),
-        AreaRoi(area_roi_id=2, center_x=52.0, center_y=64.0, sample_diameter_px=14.0),  # overlaps ROI 1
-        AreaRoi(area_roi_id=3, center_x=2.0, center_y=3.0, sample_diameter_px=24.0),  # clipped by the top-left corner
-        AreaRoi(area_roi_id=4, center_x=398.0, center_y=297.0, sample_diameter_px=24.0),  # bottom-right corner
-        AreaRoi(area_roi_id=5, center_x=-40.0, center_y=500.0, sample_diameter_px=20.0),  # entirely outside
+        AreaRoi(area_roi_id=1, center_x=50.0, center_y=60.0, shape=Circle(20.0)),
+        AreaRoi(area_roi_id=2, center_x=52.0, center_y=64.0, shape=Circle(14.0)),  # overlaps ROI 1
+        AreaRoi(area_roi_id=3, center_x=2.0, center_y=3.0, shape=Circle(24.0)),  # clipped by the top-left corner
+        AreaRoi(area_roi_id=4, center_x=398.0, center_y=297.0, shape=Circle(24.0)),  # bottom-right corner
+        AreaRoi(area_roi_id=5, center_x=-40.0, center_y=500.0, shape=Circle(20.0)),  # entirely outside
         AreaRoi(
-            area_roi_id=6, center_x=200.0, center_y=150.0, sample_diameter_px=18.0,
-            reference_inner_diameter_px=22.0, reference_outer_diameter_px=40.0,  # its own ring
+            area_roi_id=6, center_x=200.0, center_y=150.0, shape=Circle(18.0),
+            border=Border.from_ring_diameters(18.0, 22.0, 40.0),  # its own ring
         ),
-        AreaRoi(area_roi_id=7, center_x=300.0, center_y=80.0, sample_diameter_px=16.0, reference_geometry_type="none"),
+        AreaRoi(area_roi_id=7, center_x=300.0, center_y=80.0, shape=Circle(16.0), border=NO_BORDER),
         AreaRoi(
-            area_roi_id=8, center_x=0.0, center_y=0.0, sample_diameter_px=10.0,
-            sample_geometry_type="mask", sample_mask=crop_mask(blob),
-            reference_geometry_type="mask", reference_mask=crop_mask(blob),
+            area_roi_id=8, center_x=0.0, center_y=0.0, shape=MaskShape(crop_mask(blob)), border=Border(1.0, 2.0),
         ),
     ]
 
@@ -81,7 +80,7 @@ class UnionRoiMasksTest(unittest.TestCase):
                 area_roi_id=i + 1,
                 center_x=float(rng.uniform(-10, 410)),
                 center_y=float(rng.uniform(-10, 310)),
-                sample_diameter_px=float(rng.uniform(4, 30)),
+                shape=Circle(float(rng.uniform(4, 30))),
             )
             for i in range(60)
         ]
@@ -96,7 +95,7 @@ class UnionRoiMasksTest(unittest.TestCase):
         self.assertFalse(sample.any() or reference.any())
 
     def test_a_zero_sized_ring_adds_nothing_to_the_reference(self) -> None:
-        roi = AreaRoi(area_roi_id=1, center_x=50.0, center_y=50.0, sample_diameter_px=10.0)
+        roi = AreaRoi(area_roi_id=1, center_x=50.0, center_y=50.0, shape=Circle(10.0))
         sample, reference = union_roi_masks([roi], _SHAPE, identity_affine_matrix())  # defaults 0 / 0
         self.assertTrue(sample.any())
         self.assertFalse(reference.any())

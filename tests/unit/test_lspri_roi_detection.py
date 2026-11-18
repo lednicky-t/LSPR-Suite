@@ -35,6 +35,7 @@ from lspr_imaging_app.roi.detection import (
 )
 from lspr_imaging_app.domain.ignored_pixels import ignored_pixel_mask
 from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
+from lspr_imaging_app.domain.roi_shapes import Circle
 
 
 def _disks_image(
@@ -258,7 +259,7 @@ class TestRefineDetectedRoi(unittest.TestCase):
         self.filtered, _ = _masked_gaussian_filter(self.image, self.valid_mask, sigma=max(8.0 / 2.5, 1.0))
 
     def test_offset_seed_is_pulled_back_toward_the_true_center(self) -> None:
-        seed = AreaRoi(area_roi_id=5, center_x=44.0, center_y=35.0, sample_diameter_px=16.0, score=0.0)
+        seed = AreaRoi(area_roi_id=5, center_x=44.0, center_y=35.0, shape=Circle(16.0), score=0.0)
 
         refined = _refine_detected_roi(seed, filtered=self.filtered, valid_mask=self.valid_mask, radius=8.0, mode="bright")
 
@@ -268,7 +269,7 @@ class TestRefineDetectedRoi(unittest.TestCase):
 
     def test_no_signal_in_search_region_keeps_original_position(self) -> None:
         empty_mask = np.zeros((80, 80), dtype=bool)
-        seed = AreaRoi(area_roi_id=2, center_x=10.0, center_y=10.0, sample_diameter_px=16.0, score=0.0, inferred=True)
+        seed = AreaRoi(area_roi_id=2, center_x=10.0, center_y=10.0, shape=Circle(16.0), score=0.0, inferred=True)
 
         refined = _refine_detected_roi(seed, filtered=self.filtered, valid_mask=empty_mask, radius=8.0, mode="bright")
 
@@ -280,7 +281,7 @@ class TestRefineDetectedRoi(unittest.TestCase):
 
     def test_no_signal_does_not_retroactively_mark_a_confirmed_roi_as_inferred(self) -> None:
         empty_mask = np.zeros((80, 80), dtype=bool)
-        seed = AreaRoi(area_roi_id=3, center_x=10.0, center_y=10.0, sample_diameter_px=16.0, inferred=False)
+        seed = AreaRoi(area_roi_id=3, center_x=10.0, center_y=10.0, shape=Circle(16.0), inferred=False)
 
         refined = _refine_detected_roi(seed, filtered=self.filtered, valid_mask=empty_mask, radius=8.0, mode="bright")
 

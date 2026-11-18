@@ -41,6 +41,7 @@ try:
     from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.image_tools.mask.transient_detection import KIND_PARTICLE, ContourMask, TransientEvent
     from lspr_imaging_app.domain.roi_model import AreaRoi
+    from lspr_imaging_app.domain.roi_shapes import Circle
     from lspr_imaging_app.storage import session_carry as carry
     from lspr_imaging_app.storage import session_index
     from lspr_imaging_app.storage.session import SessionState, load_session
@@ -123,7 +124,7 @@ class SessionCarryExportTests(unittest.TestCase):
         )
         self.state = SessionState(
             geometry=self.geometry,
-            rois=(AreaRoi(1, self.source_roi_xy[0], self.source_roi_xy[1], 12.0),),
+            rois=(AreaRoi(1, self.source_roi_xy[0], self.source_roi_xy[1], Circle(12.0)),),
             mask_changes=(MaskChange((0, 500.0), "persistent", raw_mask),),
             mask_pointers=MaskPointersState(records=(MaskPointer(1, event),)),
             selected_cube=0, selected_wavelength=500.0, selected_roi_ids=(1,),

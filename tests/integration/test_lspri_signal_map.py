@@ -17,6 +17,7 @@ import numpy as np
 from tests.integration.test_lspri_step_table import StepTableBase, _pump
 
 from lspr_imaging_app.analysis.signal_map import NO_VALUE_HEX, PER_GROUP, SHOW_CUBE, SHOW_SNR, SHOW_STEP, full_range
+from lspr_imaging_app.domain.roi_shapes import Border, Circle
 from lspr_imaging_app.analysis.step_table import OP_DIFFERENCE, compare_values
 from lspr_imaging_app.panels.image.roi_overlay import RoiOverlay
 from lspr_imaging_app.panels.image.signal_map_display import SignalMapDisplay
@@ -192,15 +193,15 @@ class SignalMapDrawingTest(unittest.TestCase):
         from lspr_imaging_app.domain.roi_model import AreaRoi
 
         overlay = RoiOverlay(self.plot)
-        rois = [AreaRoi(area_roi_id=1, center_x=10.0, center_y=10.0, sample_diameter_px=6.0, sample_color_hex="#ff0000"),
-                AreaRoi(area_roi_id=2, center_x=30.0, center_y=10.0, sample_diameter_px=6.0, sample_color_hex="#00ff00")]
+        rois = [AreaRoi(area_roi_id=1, center_x=10.0, center_y=10.0, shape=Circle(6.0), sample_color_hex="#ff0000"),
+                AreaRoi(area_roi_id=2, center_x=30.0, center_y=10.0, shape=Circle(6.0), sample_color_hex="#00ff00")]
         centers = np.array([[10.0, 10.0], [30.0, 10.0]])
         seen: list[list[str]] = []
         real = overlay.sample_circles.set_circles
         overlay.sample_circles.set_circles = lambda xs, ys, colors: (seen.append(list(colors)), real(xs, ys, colors))  # type: ignore[method-assign]
-        overlay.draw(rois, centers, set(), np.eye(2, 3), 8.0, 12.0, color_override={1: "#123456"})
+        overlay.draw(rois, centers, set(), np.eye(2, 3), Border.from_ring_diameters(6.0, 8.0, 12.0), color_override={1: "#123456"})
         self.assertEqual(seen[-1], ["#123456", "#00ff00"])
-        overlay.draw(rois, centers, set(), np.eye(2, 3), 8.0, 12.0)
+        overlay.draw(rois, centers, set(), np.eye(2, 3), Border.from_ring_diameters(6.0, 8.0, 12.0))
         self.assertEqual(seen[-1], ["#ff0000", "#00ff00"])
 
     def test_the_group_greys_the_controls_that_do_not_apply(self) -> None:

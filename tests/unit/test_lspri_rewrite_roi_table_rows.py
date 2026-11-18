@@ -51,15 +51,19 @@ try:
         step_target_index,
         to_display,
     )
-    from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings, AreaRoiGroup
+    from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings, AreaRoiGroup, RoiMask
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER, Rectangle
     from lspr_imaging_app.roi.palette import DEFAULT_ROI_COLOR_HEX
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
 
+import numpy as np  # noqa: E402
+
 
 def _roi(roi_id: int, x: float = 0.0, **kwargs) -> AreaRoi:
-    return AreaRoi(area_roi_id=roi_id, center_x=x, center_y=5.0, sample_diameter_px=kwargs.pop("sample_diameter_px", 6.0), **kwargs)
+    shape = kwargs.pop("shape", None) or Circle(kwargs.pop("sample_diameter_px", 6.0))
+    return AreaRoi(area_roi_id=roi_id, center_x=x, center_y=5.0, shape=shape, **kwargs)
 
 
 class LengthUnitTest(unittest.TestCase):
@@ -108,7 +112,7 @@ class RowTest(unittest.TestCase):
 
     def test_a_ring_with_no_override_is_inherited_and_shows_the_default(self) -> None:
         (row,) = build_roi_rows([_roi(1)], [], self.defaults)
-        self.assertEqual((row.inner, row.outer), (28.0, 36.0))
+        self.assertEqual((row.inner, row.outer), (14.0, 22.0))  # the default border (4, 4) around a 6 px sample
         self.assertTrue(row.inner_inherited and row.outer_inherited)
 
     def test_a_roi_with_no_colour_takes_the_given_default_and_an_own_colour_wins(self) -> None:
@@ -118,15 +122,18 @@ class RowTest(unittest.TestCase):
         self.assertEqual((b.color_hex, b.has_own_color), ("#112233", True))
 
     def test_an_override_is_not_inherited(self) -> None:
-        roi = _roi(1, reference_inner_diameter_px=10.0)
+        roi = _roi(1, border=Border.from_ring_diameters(6.0, 10.0, 36.0))
         (row,) = build_roi_rows([roi], [], self.defaults)
         self.assertEqual((row.inner, row.outer), (10.0, 36.0))
         self.assertFalse(row.inner_inherited)
-        self.assertTrue(row.outer_inherited)
+        self.assertFalse(row.outer_inherited)
+        (follower,) = build_roi_rows([_roi(2)], [], self.defaults)  # no border of its own: the default (4, 4) around the 6 px sample
+        self.assertEqual((follower.inner, follower.outer), (14.0, 22.0))
+        self.assertTrue(follower.inner_inherited and follower.outer_inherited)
 
     def test_colour_label_group_mask_and_nudges(self) -> None:
         plain = _roi(1)
-        styled = _roi(2, sample_color_hex="#123456", label="spot A", sample_geometry_type="mask", per_wavelength={(0, 500.0): (1.0, 2.0)})
+        styled = _roi(2, sample_color_hex="#123456", label="spot A", shape=MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool))), per_wavelength={(0, 500.0): (1.0, 2.0)})
         group = AreaRoiGroup(group_id="g1", name="G", area_roi_ids=[2])
         a, b = build_roi_rows([plain, styled], [group], self.defaults)
         self.assertEqual((a.color_hex, a.has_own_color, a.label, a.group_id, a.is_mask, a.nudge_count), (DEFAULT_ROI_COLOR_HEX, False, "", None, False, 0))
@@ -229,21 +236,22 @@ class ShapeTest(unittest.TestCase):
         return row
 
     def test_the_two_stored_geometry_types_make_one_shape(self) -> None:
-        self.assertEqual(shape_of("circle", "annulus"), SHAPE_RING)
-        self.assertEqual(shape_of("circle", "none"), SHAPE_DISK)
-        self.assertEqual(shape_of("mask", "annulus"), SHAPE_MASK)
-        self.assertEqual(shape_of("mask", "none"), SHAPE_MASK)
-        self.assertEqual(shape_of("rectangle", "annulus"), SHAPE_OTHER, "a shape the app does not have yet")
-        self.assertEqual(shape_of("circle", "mask"), SHAPE_OTHER)
+        mask = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
+        self.assertEqual(shape_of(Circle(6.0), None), SHAPE_RING)  # following the default border
+        self.assertEqual(shape_of(Circle(6.0), Border(1.0, 2.0)), SHAPE_RING)
+        self.assertEqual(shape_of(Circle(6.0), NO_BORDER), SHAPE_DISK)
+        self.assertEqual(shape_of(mask, Border(1.0, 2.0)), SHAPE_MASK)
+        self.assertEqual(shape_of(mask, NO_BORDER), SHAPE_MASK)
+        self.assertEqual(shape_of(Rectangle(8.0, 4.0), None), SHAPE_OTHER, "no table pictogram for it yet")
 
     def test_a_row_carries_its_shape(self) -> None:
         self.assertEqual(self.row().shape, SHAPE_RING)
-        self.assertEqual(self.row(reference_geometry_type="none").shape, SHAPE_DISK)
+        self.assertEqual(self.row(border=NO_BORDER).shape, SHAPE_DISK)
 
     def test_each_view_mode_shows_the_id_column_and_the_modes_differ(self) -> None:
         self.assertEqual(VIEW_MODE_COLUMNS[VIEW_SIMPLE], (COLUMN_ID, COLUMN_NAME))
         self.assertEqual(VIEW_MODE_COLUMNS[VIEW_GEOMETRY], (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT))
 
     def test_the_shape_column_sorts(self) -> None:
-        rows = build_roi_rows([_roi(1, 30.0), _roi(2, 10.0, reference_geometry_type="none"), _roi(3, 20.0)], [], self.defaults)
+        rows = build_roi_rows([_roi(1, 30.0), _roi(2, 10.0, border=NO_BORDER), _roi(3, 20.0)], [], self.defaults)
         self.assertEqual([r.roi_id for r in sort_rows(rows, COLUMN_SHAPE, False)], [2, 1, 3], "disk before ring")

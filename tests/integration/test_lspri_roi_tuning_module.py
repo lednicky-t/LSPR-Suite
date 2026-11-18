@@ -30,6 +30,7 @@ try:
     from lspr_imaging_app.analysis.settings import AnalysisSettingsChange, MetricSettings
     from lspr_imaging_app.analysis.settings_module import AnalysisSettingsModule
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings, RoiMask
+    from lspr_imaging_app.domain.roi_shapes import MaskShape, NO_BORDER
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -110,7 +111,7 @@ class ModuleTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.data = SyntheticDataset(n_cubes=8, wavelengths=WAVELENGTHS)
-        cls.free_form = AreaRoi(7, 70.0, 50.0, 8.0, sample_geometry_type="mask", sample_mask=RoiMask(66, 46, np.ones((8, 9), dtype=bool)))
+        cls.free_form = AreaRoi(7, 70.0, 50.0, MaskShape(RoiMask(66, 46, np.ones((8, 9), dtype=bool))), border=NO_BORDER)
 
     @classmethod
     def tearDownClass(cls) -> None:

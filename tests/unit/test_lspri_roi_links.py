@@ -27,6 +27,7 @@ try:
         reference_source,
     )
     from lspr_imaging_app.domain.roi_model import AreaRoi
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, NO_BORDER
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.storage.session import _decode_area_rois, _encode_area_roi
     from lspr_imaging_app.undo import undo_manager
@@ -36,18 +37,18 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 
 
 def _roi(roi_id: int, **kw) -> AreaRoi:
-    return AreaRoi(area_roi_id=roi_id, center_x=10.0 * roi_id, center_y=5.0, sample_diameter_px=6.0, **kw)
+    return AreaRoi(area_roi_id=roi_id, center_x=10.0 * roi_id, center_y=5.0, shape=Circle(6.0), **kw)
 
 
 class ReferenceSourceTest(unittest.TestCase):
     def test_each_source(self) -> None:
         self.assertEqual(reference_source(_roi(1)), SOURCE_BUILTIN)
-        self.assertEqual(reference_source(_roi(1, reference_geometry_type="none")), SOURCE_NONE)
+        self.assertEqual(reference_source(_roi(1, border=NO_BORDER)), SOURCE_NONE)
         self.assertEqual(reference_source(_roi(1, reference_roi_ids=(2,))), SOURCE_LINKED)
         self.assertEqual(reference_source(_roi(1, role="reference")), SOURCE_IS_REFERENCE)
 
     def test_links_win_over_the_ring(self) -> None:
-        self.assertEqual(reference_source(_roi(1, reference_roi_ids=(2,), reference_outer_diameter_px=30.0)), SOURCE_LINKED)
+        self.assertEqual(reference_source(_roi(1, reference_roi_ids=(2,), border=Border(2.0, 3.0))), SOURCE_LINKED)
 
 
 class CleanedLinksTest(unittest.TestCase):

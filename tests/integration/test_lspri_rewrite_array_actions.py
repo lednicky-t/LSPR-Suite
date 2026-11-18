@@ -185,8 +185,8 @@ class ArrayActionsTest(unittest.TestCase):
         self.assertLess(np.abs(moved - self.truth[:3]).max(), 0.8)
         untouched = self.toolbox.roi_by_id(4)
         self.assertAlmostEqual(untouched.center_x, float(self.truth[3, 0]) + 3.0, places=1)
-        self.assertGreater(self.toolbox.roi_by_id(1).sample_diameter_px, 23.0)
-        self.assertIsNotNone(self.toolbox.roi_by_id(1).reference_inner_diameter_px)
+        self.assertGreater(self.toolbox.roi_by_id(1).shape.diameter_px, 23.0)
+        self.assertIsNotNone(self.toolbox.roi_by_id(1).border)
         undo_manager.undo()
         self.assertAlmostEqual(self.toolbox.roi_by_id(1).center_x, float(self.truth[0, 0]) + 3.0, places=1)
         self.assertFalse(undo_manager.can_undo)
@@ -226,7 +226,7 @@ class ArrayActionsTest(unittest.TestCase):
         self.assertEqual(len(self.toolbox.rois()), 6)
         roi = self.toolbox.roi_by_id(6)
         self.assertEqual((roi.center_x, roi.center_y), (220.0, 120.0))
-        self.assertEqual(roi.sample_diameter_px, 30.0)
+        self.assertEqual(roi.shape.diameter_px, 30.0)
         self.assertFalse(any(r.inferred for r in self.toolbox.rois()))  # typed positions are not "inferred"
 
     def test_a_tilt_above_two_degrees_offers_to_rotate_and_detects_again(self) -> None:

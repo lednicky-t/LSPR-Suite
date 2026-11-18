@@ -28,6 +28,7 @@ try:
     from lspr_imaging_app.frame_naming import FrameNamingScheme
     from lspr_imaging_app.image_tools.mask.model import MaskChange
     from lspr_imaging_app.domain.roi_model import AreaRoi
+    from lspr_imaging_app.domain.roi_shapes import Circle
     from lspr_imaging_app.storage import session as session_module
     from lspr_imaging_app.storage.session import (
         SessionState,
@@ -166,7 +167,7 @@ class SessionWriterTest(unittest.TestCase):
     def test_edits_after_prepare_session_do_not_reach_the_file(self) -> None:
         """The module queries behind `capture_session` hand out the live ROI objects; the GUI keeps editing them while the
         worker writes. Everything the writer reads must already be a copy."""
-        roi = AreaRoi(area_roi_id=1, center_x=10.0, center_y=20.0, sample_diameter_px=6.0, label="a")
+        roi = AreaRoi(area_roi_id=1, center_x=10.0, center_y=20.0, shape=Circle(6.0), label="a")
         prepared = prepare_session(SessionState(rois=(roi,)), NAMING)
         roi.center_x = 99.0
         roi.label = "edited"

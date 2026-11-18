@@ -44,6 +44,7 @@ try:
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings, RoiMask
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -73,21 +74,26 @@ def _ignore() -> np.ndarray:
 def _crowded_rois() -> list[AreaRoi]:
     """Overlapping ROIs 2 and 3 (their rings take each other's sample pixels), edge ROIs, a ROI without a ring, and a free-form ROI."""
     return [
-        AreaRoi(1, 20.3, 18.7, 14.0, reference_inner_diameter_px=20.0, reference_outer_diameter_px=28.0),
-        AreaRoi(2, 45.5, 40.1, 12.0, reference_inner_diameter_px=18.0, reference_outer_diameter_px=26.0),
-        AreaRoi(3, 52.0, 41.0, 10.0, reference_inner_diameter_px=16.0, reference_outer_diameter_px=24.0),
-        AreaRoi(4, 100.2, 30.8, 14.0),
-        AreaRoi(5, 3.0, 4.0, 10.0, reference_inner_diameter_px=14.0, reference_outer_diameter_px=22.0),
-        AreaRoi(6, 75.0, 60.0, 10.0, reference_geometry_type="none"),
-        AreaRoi(7, 30.0, 65.0, 9.0, sample_geometry_type="mask", sample_mask=RoiMask(26, 61, np.ones((8, 9), dtype=bool))),
+        AreaRoi(1, 20.3, 18.7, Circle(14.0), border=Border.from_ring_diameters(14.0, 20.0, 28.0)),
+        AreaRoi(2, 45.5, 40.1, Circle(12.0), border=Border.from_ring_diameters(12.0, 18.0, 26.0)),
+        AreaRoi(3, 52.0, 41.0, Circle(10.0), border=Border.from_ring_diameters(10.0, 16.0, 24.0)),
+        AreaRoi(4, 100.2, 30.8, Circle(14.0)),
+        AreaRoi(5, 3.0, 4.0, Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 22.0)),
+        AreaRoi(6, 75.0, 60.0, Circle(10.0), border=NO_BORDER),
+        AreaRoi(7, 30.0, 65.0, MaskShape(RoiMask(26, 61, np.ones((8, 9), dtype=bool))), border=Border(3.0, 4.0)),
     ]
+
+
+def _ring_roi(i, x, y, d, inner, outer, no_ring):
+    """A circle with its own ring (inner / outer diameters), or none; the arguments are evaluated in the order the old keyword form drew them."""
+    return AreaRoi(i, x, y, Circle(d), border=NO_BORDER if no_ring else Border.from_ring_diameters(d, inner, outer))
 
 
 class SubsetEqualsFullTests(unittest.TestCase):
     """The numbers of some ROIs do not depend on which other ROIs are computed with them."""
 
     def _check(self, indices, affine, ignore, methods) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         image = _image()
         full = reduce_frame(rs, image, ignore, affine, methods)
         layout = build_layout(rs, affine, (H, W)).restrict(indices)
@@ -104,7 +110,7 @@ class SubsetEqualsFullTests(unittest.TestCase):
                 self._check([1], affine, _ignore(), ("mean", "median", "trimmed_mean", "plane_fit"))
 
     def test_the_ring_still_leaves_out_the_sample_of_a_roi_that_is_not_in_the_subset(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         full = build_layout(rs, IDENTITY, (H, W))
         only_roi_2 = full.restrict([1])
         # ROI 3 (index 2) overlaps ROI 2's ring: the ring of the restricted layout is the full layout's ring, not a bigger one
@@ -117,7 +123,7 @@ class SubsetEqualsFullTests(unittest.TestCase):
         self._check([6, 1], IDENTITY, None, ("mean",))  # the free-form ROI and an ordinary one, order as given
 
     def test_restricted_layout_reads_only_what_its_rois_read(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         full = build_layout(rs, IDENTITY, (H, W))
         one = full.restrict([3])
         self.assertLess(one.needed_flat.size, full.needed_flat.size)
@@ -129,7 +135,7 @@ class SubsetEqualsFullTests(unittest.TestCase):
             full.restrict([len(_crowded_rois())])
 
     def test_the_cache_hands_out_one_restricted_layout_per_subset(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         cache = LayoutCache()
         a = cache.get(rs, IDENTITY, (H, W), subset=(1, 3))
         self.assertIs(cache.get(rs, IDENTITY, (H, W), subset=(1, 3)), a)
@@ -156,47 +162,46 @@ class DirectSubsetLayoutTests(unittest.TestCase):
         self.assertSameLayout(build_subset_layout(rs, affine, shape, mode, subset), cut, f"{label} subset {list(subset)}")
 
     def test_every_single_roi_and_several_subsets_of_the_crowded_set(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         subsets = [(i,) for i in range(rs.n)] + [(0, 2, 4, 5), (6, 1), (1, 2), (2, 1), tuple(range(rs.n)), (3, 6)]
         for affine in (IDENTITY, CHROMATIC, ROTATED):
             for subset in subsets:
                 self._compare(rs, subset, affine, (H, W))
 
     def test_without_the_exclusion_and_with_an_image_smaller_than_the_rois(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         for subset in ((0,), (1, 2), (3,), (6,), (0, 1, 2, 3, 4, 5, 6)):
             self._compare(rs, subset, CHROMATIC, (H, W), mode="none", label="no exclusion")
             self._compare(rs, subset, CHROMATIC, (50, 70), label="small image")  # ROIs 3 and 4 run over the edge
             self._compare(rs, subset, IDENTITY, (20, 20), label="tiny image")
 
     def test_a_ring_still_loses_the_pixels_a_neighbour_that_is_not_in_the_subset_takes(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         full = build_layout(rs, IDENTITY, (H, W))
         direct = build_subset_layout(rs, IDENTITY, (H, W), subset=(1,))  # ROI 3 (index 2) overlaps its ring
         self.assertEqual(int(direct.ring_count[0]), int(full.ring_count[1]))
         self.assertGreater(int(build_layout(rs.subset([1]), IDENTITY, (H, W)).ring_count[0]), int(direct.ring_count[0]))
 
     def test_empty_subset(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         self._compare(rs, (), IDENTITY, (H, W))
         self.assertEqual(build_subset_layout(rs, IDENTITY, (H, W), subset=()).n_rois, 0)
 
     def test_a_single_roi_set(self) -> None:
-        rs = build_roi_set(_crowded_rois()[:1], INNER, OUTER)
+        rs = build_roi_set(_crowded_rois()[:1], Border.from_ring_diameters(10.0, INNER, OUTER))
         self._compare(rs, (0,), CHROMATIC, (H, W))
 
     def test_random_dense_layouts(self) -> None:
         rng = np.random.default_rng(2026)
         for trial in range(6):
             rois = [
-                AreaRoi(
+                _ring_roi(
                     i + 1, float(rng.uniform(-5, W + 5)), float(rng.uniform(-5, H + 5)), float(rng.uniform(6, 18)),
-                    reference_inner_diameter_px=float(rng.uniform(8, 24)), reference_outer_diameter_px=float(rng.uniform(24, 40)),
-                    reference_geometry_type="none" if rng.random() < 0.1 else "annulus",
+                    float(rng.uniform(8, 24)), float(rng.uniform(24, 40)), rng.random() < 0.1,
                 )
                 for i in range(30)
             ]
-            rs = build_roi_set(rois, INNER, OUTER)
+            rs = build_roi_set(rois, Border.from_ring_diameters(10.0, INNER, OUTER))
             affine = (IDENTITY, CHROMATIC, ROTATED)[trial % 3]
             for _ in range(4):
                 size = int(rng.integers(1, 9))
@@ -204,7 +209,7 @@ class DirectSubsetLayoutTests(unittest.TestCase):
                 self._compare(rs, subset, affine, (H, W), label=f"trial {trial}")
 
     def test_the_neighbours_of_a_ring_are_the_rois_the_cell_hash_looks_at(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         near = ring_reach_matrix(rs, [1, 3])
         self.assertEqual(near.shape, (2, rs.n))
         self.assertTrue(bool(near[0, 2]) and bool(near[0, 6]))  # ROI 3 overlaps ROI 2's ring; the free-form ROI reaches everything
@@ -212,7 +217,7 @@ class DirectSubsetLayoutTests(unittest.TestCase):
         self.assertFalse(bool(ring_reach_matrix(rs, [5]).any()))  # a ROI without a ring is reached by nobody
 
     def test_bad_subsets_and_modes_are_refused(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         with self.assertRaises(ValueError):
             build_subset_layout(rs, IDENTITY, (H, W), subset=(1, 1))
         with self.assertRaises(ValueError):
@@ -223,7 +228,7 @@ class DirectSubsetLayoutTests(unittest.TestCase):
             build_subset_layout(rs, IDENTITY, (H, W), "nonsense", subset=(0,))
 
     def test_the_cache_does_not_build_the_full_layout_for_a_subset(self) -> None:
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         cache = LayoutCache()
         with mock.patch.object(frame_reduce, "build_layout", side_effect=AssertionError("the full layout was built")):
             layout = cache.get(rs, CHROMATIC, (H, W), subset=(1, 3))
@@ -240,14 +245,13 @@ class WindowBoxTests(unittest.TestCase):
         affines = [IDENTITY, CHROMATIC, ROTATED, np.array([[1.08, -0.04, 5.0], [0.03, 0.93, -4.0]]), np.array([[0.9, 0.0, -9.5], [0.0, 1.12, 7.25]])]
         for trial in range(6):
             rois = [
-                AreaRoi(
+                _ring_roi(
                     i + 1, float(rng.uniform(-8, W + 8)), float(rng.uniform(-8, H + 8)), float(rng.uniform(4, 20)),
-                    reference_inner_diameter_px=float(rng.uniform(8, 24)), reference_outer_diameter_px=float(rng.uniform(24, 44)),
-                    reference_geometry_type="none" if rng.random() < 0.15 else "annulus",
+                    float(rng.uniform(8, 24)), float(rng.uniform(24, 44)), rng.random() < 0.15,
                 )
                 for i in range(25)
             ]
-            rs = build_roi_set(rois, INNER, OUTER)
+            rs = build_roi_set(rois, Border.from_ring_diameters(10.0, INNER, OUTER))
             for affine in affines:
                 y0, y1, x0, x1, bounded = roi_window_boxes(rs, affine, (H, W))
                 self.assertTrue(bounded.all())
@@ -260,7 +264,7 @@ class WindowBoxTests(unittest.TestCase):
     def test_a_free_form_roi_has_no_bound_and_gets_the_whole_image(self) -> None:
         from lspr_imaging_app.analysis.frame_reduce import roi_window_boxes
 
-        rs = build_roi_set(_crowded_rois(), INNER, OUTER)
+        rs = build_roi_set(_crowded_rois(), Border.from_ring_diameters(10.0, INNER, OUTER))
         y0, y1, x0, x1, bounded = roi_window_boxes(rs, IDENTITY, (H, W))
         free = int(np.flatnonzero(~bounded)[0])
         self.assertEqual((y0[free], y1[free], x0[free], x1[free]), (0, H, 0, W))
@@ -270,7 +274,7 @@ class WindowBoxTests(unittest.TestCase):
     def test_the_box_follows_the_chromatic_shift(self) -> None:
         from lspr_imaging_app.analysis.frame_reduce import roi_window_boxes
 
-        rs = build_roi_set([AreaRoi(1, 60.0, 45.0, 10.0, reference_inner_diameter_px=14.0, reference_outer_diameter_px=20.0)], INNER, OUTER)
+        rs = build_roi_set([AreaRoi(1, 60.0, 45.0, Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 20.0))], Border.from_ring_diameters(10.0, INNER, OUTER))
         plain = roi_window_boxes(rs, IDENTITY, (H, W))
         moved = roi_window_boxes(rs, np.array([[1.0, 0.0, 12.0], [0.0, 1.0, -7.0]]), (H, W))
         self.assertEqual((int(moved[2][0] - plain[2][0]), int(moved[0][0] - plain[0][0])), (12, -7))
@@ -279,11 +283,11 @@ class WindowBoxTests(unittest.TestCase):
 class LocalKeyTests(unittest.TestCase):
     @staticmethod
     def _row(centres, **kwargs) -> list[AreaRoi]:
-        return [AreaRoi(i + 1, x, y, 10.0, reference_inner_diameter_px=14.0, reference_outer_diameter_px=20.0, **kwargs)
+        return [AreaRoi(i + 1, x, y, Circle(10.0), border=Border.from_ring_diameters(10.0, 14.0, 20.0), **kwargs)
                 for i, (x, y) in enumerate(centres)]
 
     def _keys(self, rois, mode="exclude_all_sample_rois"):
-        return local_roi_keys(build_roi_set(rois, 14.0, 20.0), mode)
+        return local_roi_keys(build_roi_set(rois, Border.from_ring_diameters(10.0, 14.0, 20.0)), mode)
 
     def test_moving_a_roi_far_from_every_ring_changes_only_its_own_key(self) -> None:
         base = self._keys(self._row([(20, 20), (70, 20), (20, 70), (70, 70)]))
@@ -308,7 +312,7 @@ class LocalKeyTests(unittest.TestCase):
     def test_a_roi_without_a_ring_is_not_affected_by_a_neighbour(self) -> None:
         def build(first_x):
             rois = self._row([(first_x, 20), (45, 20)])
-            rois[1].reference_geometry_type = "none"
+            rois[1].border = NO_BORDER
             return rois
 
         base, moved = self._keys(build(20)), self._keys(build(32))  # ROI 1's sample disk comes within reach of ROI 2, which has no ring
@@ -317,7 +321,7 @@ class LocalKeyTests(unittest.TestCase):
     def test_a_roi_without_a_sample_aperture_excludes_nothing(self) -> None:
         def build(first_x):
             rois = self._row([(first_x, 20), (32, 20)])
-            rois[0].sample_diameter_px = 0.0
+            rois[0].shape = Circle(0.0)
             return rois
 
         near, far = self._keys(build(20)), self._keys(build(80))  # ROI 1 has no sample: ROI 2's ring is the same wherever it is
@@ -327,7 +331,7 @@ class LocalKeyTests(unittest.TestCase):
     def test_a_free_form_roi_counts_as_reaching_everything(self) -> None:
         def build(free_x):
             rois = self._row([(20, 20), (70, 20), (20, 70)])
-            rois.append(AreaRoi(4, free_x, 90.0, 9.0, sample_geometry_type="mask", sample_mask=RoiMask(int(free_x), 86, np.ones((8, 9), dtype=bool))))
+            rois.append(AreaRoi(4, free_x, 90.0, MaskShape(RoiMask(int(free_x), 86, np.ones((8, 9), dtype=bool))), border=Border(3.0, 4.0)))
             return rois
 
         base, moved = self._keys(build(100.0)), self._keys(build(104.0))
@@ -357,7 +361,7 @@ class _Fake:
             geometry=lambda: GeometrySettings(),
             background=lambda: self.background,
             detection=lambda: AreaRoiDetectionSettings(),
-            default_reference_diameters=lambda: (14.0, 20.0),
+            default_border=lambda: Border.from_ring_diameters(10.0, 14.0, 20.0),
         )
 
     def hashes(self):

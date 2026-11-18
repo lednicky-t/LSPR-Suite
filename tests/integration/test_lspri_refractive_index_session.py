@@ -261,7 +261,7 @@ class RefractiveIndexAppTests(unittest.TestCase):
         self.assertFalse(self.plan.ri_edit(0, "ri", "1.33300"))  # the value it is: no change, no undo step
         payload = self._saved_payload()
         block = payload["refractive_index"]
-        self.assertEqual(payload["schema_version"], "1.11")
+        self.assertEqual(payload["schema_version"], "1.12")
         self.assertEqual(block["sha256"], imported.sha256)
         self.assertAlmostEqual(block["solutions"][0]["ri"], 1.33268, places=9)  # the imported copy is never changed
         self.assertAlmostEqual(block["rows"][0]["ri"], 1.333, places=9)

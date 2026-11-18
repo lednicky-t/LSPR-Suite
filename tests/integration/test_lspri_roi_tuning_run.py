@@ -28,6 +28,7 @@ try:
     from lspr_imaging_app.analysis.trace_fit import traces_from_inputs
     from lspr_imaging_app.progress import Cancelled
     from lspr_imaging_app.domain.roi_model import AreaRoi, RoiMask
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -123,8 +124,8 @@ class LatticeScanTest(unittest.TestCase):
         self.assertTrue(_same(alone.mean[:, :, 0], self.matrix.mean[:, :, 3]))
 
     def test_close_rois_are_listed_as_interacting(self) -> None:
-        close = [AreaRoi(1, 16.0, 16.0, 8.0, reference_inner_diameter_px=12.0, reference_outer_diameter_px=18.0),
-                 AreaRoi(2, 28.0, 16.0, 8.0, reference_inner_diameter_px=12.0, reference_outer_diameter_px=18.0)]  # 12 px apart: rings overlap the other's disc
+        close = [AreaRoi(1, 16.0, 16.0, Circle(8.0), border=Border.from_ring_diameters(8.0, 12.0, 18.0)),
+                 AreaRoi(2, 28.0, 16.0, Circle(8.0), border=Border.from_ring_diameters(8.0, 12.0, 18.0))]  # 12 px apart: rings overlap the other's disc
         matrix = run.run_lattice_scan(self.data.plan(close, cubes=(1, 2)), [0, 1], self.lattice, processes=1)
         self.assertTrue(matrix.interacting_pairs)
         self.assertTrue(all(a != b for a, b in matrix.interacting_pairs))
@@ -174,14 +175,14 @@ class LatticeScanTest(unittest.TestCase):
             run.run_lattice_scan(self.plan, [1, 1], self.lattice, processes=1)
 
     def test_a_free_form_roi_is_refused_by_its_id(self) -> None:
-        free = AreaRoi(7, 70.0, 50.0, 8.0, sample_geometry_type="mask", sample_mask=RoiMask(66, 46, np.ones((8, 9), dtype=bool)))
+        free = AreaRoi(7, 70.0, 50.0, MaskShape(RoiMask(66, 46, np.ones((8, 9), dtype=bool))), border=NO_BORDER)
         plan = self.data.plan(_rois() + [free], cubes=(1, 2))
         with self.assertRaisesRegex(run.TuningError, "ROI 7 is a free-form ROI"):
             run.run_lattice_scan(plan, [0, 6], self.lattice, processes=1)
         run.run_lattice_scan(plan, [0], Lattice(1), processes=1)  # the round ROIs of the same plan are fine
 
     def test_a_geometry_timeline_is_refused(self) -> None:
-        other = fr.build_roi_set(_rois(3.0, 0.0, moved=(0,)), 12.0, 18.0)
+        other = fr.build_roi_set(_rois(3.0, 0.0, moved=(0,)), Border.from_ring_diameters(10.0, 12.0, 18.0))
         jobs = (self.plan.jobs[0], replace(self.plan.jobs[1], rois=other)) + self.plan.jobs[2:]
         with self.assertRaisesRegex(run.TuningError, "timeline"):
             run.run_lattice_scan(replace(self.plan, jobs=jobs), [0], self.lattice, processes=1)

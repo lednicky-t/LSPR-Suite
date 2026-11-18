@@ -124,6 +124,10 @@ class RoiGesturesTest(unittest.TestCase):
         self.panel._plot.vb.setRange(xRange=(0.0, 80.0), yRange=(0.0, 64.0), padding=0.0)
         self.panel._tool_ribbon.set_category("ROIs")
         _pump(0.1)
+        from dataclasses import replace
+
+        # the ring of a 10 px sample is 28 / 36 across (radii 14 / 18): the gestures below grab it there
+        self.roi_toolbox.set_detection_settings(replace(self.roi_toolbox.detection_settings(), border_gap_px=9.0, border_thickness_px=4.0))
         for x, y in ((20.0, 20.0), (40.0, 30.0), (60.0, 45.0)):
             self.roi_toolbox.add_roi(x, y, sample_diameter_px=10.0)
         _pump(0.2)
@@ -271,34 +275,34 @@ class RoiGesturesTest(unittest.TestCase):
     def test_dragging_the_border_sets_the_diameter_from_the_cursor_distance(self) -> None:
         self.selection.set_roi_selection({2})
         self.assertTrue(self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (47.0, 30.0), (48.0, 30.0)]))
-        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 16.0)
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).shape.diameter_px, 16.0)
         self.assertEqual(self.centre(2), (40.0, 30.0), "resizing does not move the ROI")
 
     def test_every_selected_roi_gets_the_dragged_diameter(self) -> None:
         self.selection.set_roi_selection({1, 2})
         self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (46.5, 30.0)])
-        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(1).sample_diameter_px, 13.0)
-        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 13.0)
-        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(3).sample_diameter_px, 10.0, msg="unselected stays")
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(1).shape.diameter_px, 13.0)
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).shape.diameter_px, 13.0)
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(3).shape.diameter_px, 10.0, msg="unselected stays")
 
     def test_the_diameter_never_drops_below_the_minimum(self) -> None:
         from lspr_imaging_app.roi.toolbox import MIN_SAMPLE_DIAMETER_PX
 
         self.selection.set_roi_selection({2})
         self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (40.2, 30.0)])
-        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, MIN_SAMPLE_DIAMETER_PX)
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).shape.diameter_px, MIN_SAMPLE_DIAMETER_PX)
 
     def test_the_whole_resize_is_one_undo_step(self) -> None:
         self.selection.set_roi_selection({2})
         self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (46.0, 30.0), (48.0, 30.0)])
         undo_manager.undo()
-        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 10.0)
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).shape.diameter_px, 10.0)
         self.assertFalse(undo_manager.can_undo)
 
     def test_the_border_of_an_unselected_roi_is_not_a_handle(self) -> None:
         self.selection.set_roi_selection({1})
         self.drag(Qt.MouseButton.LeftButton, [(45.0, 30.0), (48.0, 30.0)])
-        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 10.0)
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).shape.diameter_px, 10.0)
 
     def test_hit_test_pulls_the_cursor_back_through_the_affine(self) -> None:
         """Display is 2x the stored size: a stored diameter of 10 is drawn with radius 10."""
@@ -331,7 +335,7 @@ class RoiGesturesTest(unittest.TestCase):
 
         defaults = self.roi_toolbox.detection_settings()
         return effective_reference_diameters(
-            self.roi_toolbox.roi_by_id(roi_id), defaults.reference_inner_diameter_px, defaults.reference_outer_diameter_px
+            self.roi_toolbox.roi_by_id(roi_id), defaults.default_border()
         )
 
     def test_dragging_the_inner_ring_border_moves_the_outer_one_with_it(self) -> None:
@@ -340,7 +344,7 @@ class RoiGesturesTest(unittest.TestCase):
         inner, outer = self.ring(2)
         self.assertAlmostEqual(inner, 32.0)
         self.assertAlmostEqual(outer - inner, 8.0, msg="thickness unchanged")
-        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).sample_diameter_px, 10.0, msg="sample untouched")
+        self.assertAlmostEqual(self.roi_toolbox.roi_by_id(2).shape.diameter_px, 10.0, msg="sample untouched")
 
     def test_dragging_the_outer_ring_border_changes_only_the_thickness(self) -> None:
         self.selection.set_roi_selection({2})

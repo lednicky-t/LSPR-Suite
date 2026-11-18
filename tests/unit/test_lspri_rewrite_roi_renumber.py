@@ -30,6 +30,7 @@ try:
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_shapes import Circle
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -37,7 +38,7 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 
 
 def _roi(roi_id: int, x: float, y: float, diameter: float = 6.0) -> AreaRoi:
-    return AreaRoi(area_roi_id=roi_id, center_x=x, center_y=y, sample_diameter_px=diameter)
+    return AreaRoi(area_roi_id=roi_id, center_x=x, center_y=y, shape=Circle(diameter))
 
 
 class ExclusionDigestIgnoresNumberingTest(unittest.TestCase):
@@ -73,7 +74,7 @@ class ExclusionDigestIgnoresNumberingTest(unittest.TestCase):
         settings = BackgroundSettings(flatten_background_enabled=True, flatten_background_exclude_area_rois=True)
         detection = AreaRoiDetectionSettings()
         before = background_exclusion_digest([self.a, self.b, self.c], settings, detection)
-        resized = [replace(self.a, sample_diameter_px=9.0), self.b, self.c]
+        resized = [replace(self.a, shape=Circle(9.0)), self.b, self.c]
         self.assertNotEqual(background_exclusion_digest(resized, settings, detection), before)
 
 

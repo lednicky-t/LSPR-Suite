@@ -187,8 +187,8 @@ class RoiTimelineUiTest(unittest.TestCase):
         self.go_to_cube(1)
         self.selection.set_roi_selection({2})
         self.drag([(45.0, 30.0), (47.0, 30.0), (48.0, 30.0)])
-        self.assertAlmostEqual(self.roi_toolbox.geometry_at(2, 1).sample_diameter_px, 16.0)
-        self.assertAlmostEqual(self.roi_toolbox.geometry_at(2, 0).sample_diameter_px, 10.0)
+        self.assertAlmostEqual(self.roi_toolbox.geometry_at(2, 1).shape.diameter_px, 16.0)
+        self.assertAlmostEqual(self.roi_toolbox.geometry_at(2, 0).shape.diameter_px, 10.0)
 
     def test_the_overlay_shows_the_geometry_of_the_cube_being_viewed(self) -> None:
         self.roi_toolbox.move_roi(2, 50.0, 30.0, cube=1)

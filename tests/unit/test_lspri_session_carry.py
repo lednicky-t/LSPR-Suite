@@ -38,6 +38,7 @@ try:
     from lspr_imaging_app.image_tools.mask.transient_detection import KIND_GLOBAL, KIND_PARTICLE, ContourMask, TransientEvent
     from lspr_imaging_app.progress import Cancelled
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiGroup, RoiArrayGroup, RoiGeometry, RoiMask, RoiTimeline
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape
     from lspr_imaging_app.storage import session_carry as carry
     from lspr_imaging_app.storage.session import SessionState
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -228,11 +229,11 @@ class ChromaticTests(unittest.TestCase):
 
 class RoiTests(unittest.TestCase):
     def _roi(self) -> AreaRoi:
-        timeline = RoiTimeline().with_change(5, "persistent", RoiGeometry(95.0, 65.0, 20.0, 28.0, 36.0))
+        timeline = RoiTimeline().with_change(5, "persistent", RoiGeometry(95.0, 65.0, Circle(20.0), Border.from_ring_diameters(20.0, 28.0, 36.0)))
         return AreaRoi(
-            area_roi_id=1, center_x=100.0, center_y=70.0, sample_diameter_px=20.0, array_id="a",
+            area_roi_id=1, center_x=100.0, center_y=70.0, array_id="a",
+            shape=MaskShape(RoiMask(x0=90, y0=60, mask=np.ones((4, 4), dtype=bool))),
             per_wavelength={(0, 620.0): (101.0, 71.5)}, timeline=timeline,
-            sample_mask=RoiMask(x0=90, y0=60, mask=np.ones((4, 4), dtype=bool)),
         )
 
     def test_rois_move_by_the_frame_origin_and_keep_their_identity(self) -> None:
@@ -247,10 +248,10 @@ class RoiTests(unittest.TestCase):
         roi = result.state.rois[0]
         self.assertEqual((roi.center_x, roi.center_y), (105.0, 67.0))
         self.assertEqual(roi.per_wavelength, {(0, 620.0): (106.0, 68.5)})
-        self.assertEqual((roi.sample_mask.x0, roi.sample_mask.y0), (95, 57))
+        self.assertEqual((roi.shape.mask.x0, roi.shape.mask.y0), (95, 57))
         change = roi.timeline.persistent[0].geometry
         self.assertEqual((change.center_x, change.center_y), (100.0, 62.0))
-        self.assertEqual((roi.sample_diameter_px, roi.array_id, roi.area_roi_id), (20.0, "a", 1))  # nothing but position changes
+        self.assertEqual((roi.array_id, roi.area_roi_id), ("a", 1))  # nothing but position changes
         array = result.state.arrays[0]
         self.assertEqual((array.anchor_x_px, array.anchor_y_px, array.rotation_deg), (105.0, 67.0, 1.4))
         self.assertEqual(result.state.groups[0].area_roi_ids, [1])
@@ -259,7 +260,7 @@ class RoiTests(unittest.TestCase):
 
     def test_a_roi_pushed_outside_the_image_is_counted(self) -> None:
         transform = carry.ExportTransform(GeometrySettings(image_tools_enabled=False), RAW_SHAPE, frame=(150, 0, 100, 100))
-        roi = AreaRoi(1, 100.0, 50.0, 20.0)
+        roi = AreaRoi(1, 100.0, 50.0, Circle(20.0))
         report = carry.carry_session(_state(rois=(roi,)), transform).report
         self.assertEqual(report.rois_outside_image, 1)
 

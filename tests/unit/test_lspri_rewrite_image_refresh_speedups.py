@@ -52,6 +52,7 @@ try:
     from lspr_imaging_app.panels.image.prefetch import prefetch_order
     from lspr_imaging_app.panels.image.render import ImageRenderer, RenderRequest
     from lspr_imaging_app.domain.roi_model import AreaRoi
+    from lspr_imaging_app.domain.roi_shapes import Circle
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -275,7 +276,7 @@ class TestRendererFlattenCaches(unittest.TestCase):
         self.renderer = ImageRenderer(lambda cube, wavelength: self.raw)
         self.addCleanup(self.renderer.stop)
         self.rois = tuple(
-            AreaRoi(area_roi_id=i, center_x=60.0 + 70.0 * i, center_y=90.0 + 40.0 * (i % 3), sample_diameter_px=16.0)
+            AreaRoi(area_roi_id=i, center_x=60.0 + 70.0 * i, center_y=90.0 + 40.0 * (i % 3), shape=Circle(16.0))
             for i in range(5)
         )
         self.background = BackgroundSettings(

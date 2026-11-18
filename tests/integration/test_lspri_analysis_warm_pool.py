@@ -43,6 +43,7 @@ try:
     from lspr_imaging_app.image_tools.background.model import BackgroundSettings
     from lspr_imaging_app.image_tools.geometry.model import GeometrySettings
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -55,7 +56,7 @@ _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
 def _rois():
-    return [AreaRoi(i, 16.0 + 24.0 * (k % 3), 16.0 + 22.0 * (k // 3), 8.0, reference_inner_diameter_px=12.0, reference_outer_diameter_px=18.0)
+    return [AreaRoi(i, 16.0 + 24.0 * (k % 3), 16.0 + 22.0 * (k // 3), Circle(8.0), border=Border.from_ring_diameters(8.0, 12.0, 18.0))
             for k, i in enumerate(range(1, 7))]
 
 
@@ -81,7 +82,7 @@ class _Dataset:
             record_path=lambda c, w: self.paths[(c, w)], rois=lambda: self.rois, rois_at=lambda c: self.rois, has_timeline=lambda: False,
             chromatic_affine=lambda c, w: IDENTITY, chromatic_affine_between=lambda a, b: IDENTITY, resolve_mask=lambda c, w: None,
             geometry=lambda: self.geometry, background=lambda: self.background, detection=lambda: AreaRoiDetectionSettings(),
-            default_reference_diameters=lambda: (12.0, 18.0),
+            default_border=lambda: Border.from_ring_diameters(10.0, 12.0, 18.0),
         )
 
     def plan(self):

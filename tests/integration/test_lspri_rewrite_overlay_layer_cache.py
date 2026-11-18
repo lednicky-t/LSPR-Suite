@@ -18,6 +18,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
+from lspr_imaging_app.domain.roi_shapes import Border
 
 ensure_repo_paths()
 
@@ -83,7 +84,7 @@ class _Case(unittest.TestCase):
     def draw(self, state: int) -> None:
         affine = _affine(state)
         centers = self.toolbox.display_positions((0, 500.0 + state), affine)
-        self.overlay.draw(self.rois, centers, [], affine, 18.0, 28.0, self.toolbox.groups())
+        self.overlay.draw(self.rois, centers, [], affine, Border.from_ring_diameters(10.0, 18.0, 28.0), self.toolbox.groups())
         self.overlay.layers.mark_drawn(("state", state))
 
     def paint(self) -> np.ndarray:

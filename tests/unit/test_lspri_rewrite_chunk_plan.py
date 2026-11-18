@@ -24,6 +24,7 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.dataset import chunk_plan as cp
     from lspr_imaging_app.domain.roi_model import AreaRoi
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
     raise
@@ -227,20 +228,20 @@ class ExportFrameTests(unittest.TestCase):
 
 class ReadBoxTests(unittest.TestCase):
     def test_circle_box_matches_reach_rule_and_ring_dominates(self):
-        roi = AreaRoi(area_roi_id=1, center_x=50.4, center_y=40.6, sample_diameter_px=10.0)
-        box = cp.roi_read_boxes([roi], (100, 120), default_inner_diameter_px=14.0, default_outer_diameter_px=20.0)[0]
+        roi = AreaRoi(area_roi_id=1, center_x=50.4, center_y=40.6, shape=Circle(10.0))
+        box = cp.roi_read_boxes([roi], (100, 120), default_border=Border.from_ring_diameters(10.0, 14.0, 20.0))[0]
         self.assertEqual(box.tolist(), [40, 30, 61, 51])  # floor(50.4 - 10), floor(50.4 + 10) + 1, ...
 
     def test_affines_are_united_and_boxes_clipped(self):
-        roi = AreaRoi(area_roi_id=1, center_x=5.0, center_y=40.0, sample_diameter_px=10.0)
+        roi = AreaRoi(area_roi_id=1, center_x=5.0, center_y=40.0, shape=Circle(10.0))
         shift = np.array([[1.0, 0.0, 3.0], [0.0, 1.0, -2.0]])
-        box = cp.roi_read_boxes([roi], (100, 120), default_inner_diameter_px=0.0, default_outer_diameter_px=0.0,
+        box = cp.roi_read_boxes([roi], (100, 120), default_border=Border.from_ring_diameters(10.0, 0.0, 0.0),
                                 affines=[np.eye(2, 3), shift])[0]
         self.assertEqual(box.tolist(), [0, 33, 14, 46])
 
     def test_roi_outside_image_gives_empty_box(self):
-        roi = AreaRoi(area_roi_id=1, center_x=-50.0, center_y=40.0, sample_diameter_px=10.0)
-        box = cp.roi_read_boxes([roi], (100, 120), default_inner_diameter_px=0.0, default_outer_diameter_px=0.0)[0]
+        roi = AreaRoi(area_roi_id=1, center_x=-50.0, center_y=40.0, shape=Circle(10.0))
+        box = cp.roi_read_boxes([roi], (100, 120), default_border=Border.from_ring_diameters(10.0, 0.0, 0.0))[0]
         self.assertLessEqual(box[2], box[0])
 
     def test_map_boxes_shift_rotation_and_clip(self):
@@ -265,7 +266,7 @@ class AffineReachTests(unittest.TestCase):
     def rois(n: int = 24):
         return [
             AreaRoi(area_roi_id=i + 1, center_x=50.0 + 79.6 * (i % 6), center_y=50.0 + 79.6 * (i // 6),
-                    sample_diameter_px=33.7, reference_inner_diameter_px=49.5, reference_outer_diameter_px=59.9)
+                    shape=Circle(33.7), border=Border.from_ring_diameters(33.7, 49.5, 59.9))
             for i in range(n)
         ]
 
@@ -299,9 +300,8 @@ class AffineReachTests(unittest.TestCase):
                 m[:, 2] = rng.normal(0.0, 2.5, 2)
                 affines.append(m)
             with self.subTest(trial=trial):
-                exact = cp.roi_read_boxes(rois, huge, default_inner_diameter_px=49.5,
-                                          default_outer_diameter_px=59.9, affines=affines)
-                base = cp.roi_read_boxes(rois, huge, default_inner_diameter_px=49.5, default_outer_diameter_px=59.9)
+                exact = cp.roi_read_boxes(rois, huge, default_border=Border.from_ring_diameters(10.0, 49.5, 59.9), affines=affines)
+                base = cp.roi_read_boxes(rois, huge, default_border=Border.from_ring_diameters(10.0, 49.5, 59.9))
                 grown = cp.grow_boxes(base, centers, *cp.affine_reach(centers, affines))
                 self.assertTrue((grown[:, 0] <= exact[:, 0]).all(), "left edge must not cut into the union")
                 self.assertTrue((grown[:, 1] <= exact[:, 1]).all())

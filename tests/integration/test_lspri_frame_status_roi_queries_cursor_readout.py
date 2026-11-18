@@ -17,6 +17,7 @@ from PyQt6 import QtWidgets
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 from tests._paths import REPO_ROOT, ensure_repo_paths, skip_if_lspri_rewrite_absent  # noqa: E402
+from lspr_imaging_app.domain.roi_shapes import Circle
 
 ensure_repo_paths()
 
@@ -123,8 +124,8 @@ class FrameStatusTextTests(unittest.TestCase):
 class _FakeToolbox:
     def __init__(self) -> None:
         self.rois_list = [
-            SimpleNamespace(area_roi_id=1, sample_diameter_px=20.0),  # centre (40, 30), radius 10
-            SimpleNamespace(area_roi_id=2, sample_diameter_px=6.0),  # centre (44, 30), radius 3, inside ROI 1
+            SimpleNamespace(area_roi_id=1, center_x=40.0, center_y=30.0, shape=Circle(20.0)),  # centre (40, 30), radius 10
+            SimpleNamespace(area_roi_id=2, center_x=44.0, center_y=30.0, shape=Circle(6.0)),  # centre (44, 30), radius 3, inside ROI 1
         ]
         self.centers = np.array([[40.0, 30.0], [44.0, 30.0]])
 
