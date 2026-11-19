@@ -46,6 +46,7 @@ try:
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -248,6 +249,27 @@ class ChromaticTabTest(unittest.TestCase):
         self.tab.apply_button().setChecked(True)
         _APP.processEvents()
         self.assertLess(spreads()[0], 1e-6)
+
+    def test_landmarks_are_drawn_on_the_features_they_mark(self) -> None:
+        """Half-pixel convention (`roi/overlay_geometry.CELL_OFFSET`): the tracker works on pixel arrays, so a landmark is a pixel-index
+        point (a disk centred on pixel row 60, column 66 is at x = 66, y = 60), while the canvas draws that pixel over [66, 67) x [60, 61).
+        The synthetic disks have a known centre, so the dots (switched on = every wavelength corrected onto one point per landmark) must
+        sit on that centre + `CELL_OFFSET`, not on the bare centre, which is half a pixel up and to the left of the disk."""
+        self._load()
+        self.tab.popover()._count.setValue(12)
+        self._run_and_wait()
+        self.tab.scope_button().setChecked(True)
+        _APP.processEvents()
+        self.panel._decorations.draw_landmarks()
+        dots = self.panel._landmark_fitted_item.data
+        dots = np.column_stack([dots["x"], dots["y"]]).reshape(len(synth.WAVELENGTHS), 12, 2)
+        landmarks = dots.mean(axis=0)
+        true = synth.disk_centres()
+        nearest = true[np.argmin(np.hypot(*(landmarks[:, None, :] - true[None, :, :]).transpose(2, 0, 1)), axis=1)]
+        offsets = landmarks - (nearest + CELL_OFFSET)  # drawn - where the disk's middle is on the canvas
+        message = f"mean offset (x, y) = {offsets.mean(axis=0)}, worst = {np.hypot(*offsets.T).max():.3f} px"
+        self.assertLess(float(np.abs(offsets.mean(axis=0)).max()), 0.15, message)
+        self.assertLess(float(np.hypot(*offsets.T).max()), 0.5, message)
 
     def test_each_wavelength_has_its_own_colour_also_in_single_wavelength_mode(self) -> None:
         self._load()
