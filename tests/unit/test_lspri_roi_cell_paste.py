@@ -232,11 +232,16 @@ class SetCellValuesTest(unittest.TestCase):
             self.assertEqual(self.diameters(1, 2, 3), [6.0, 6.0, 6.0], "nothing changed")
             self.assertFalse(undo_manager.can_undo)
 
-    def test_a_pixel_mask_is_not_moved_and_a_stale_id_or_field_is_refused(self) -> None:
+    def test_a_pixel_map_moves_by_whole_pixels_and_a_stale_id_or_field_is_refused(self) -> None:
         self.toolbox.roi_by_id(2).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
-        with self.assertRaisesRegex(ValueError, "pixel mask"):
-            self.toolbox.set_cell_values({1: {"x": 1.0}, 2: {"x": 2.0}})
-        self.assertEqual(self.toolbox.roi_by_id(1).center_x, 10.0)
+        self.toolbox.set_cell_values({1: {"x": 1.0}, 2: {"x": 25.4}})  # the circle goes to 1.0, the map by the nearest whole pixels (5)
+        self.assertEqual(self.toolbox.roi_by_id(1).center_x, 1.0)
+        self.assertEqual((self.toolbox.roi_by_id(2).center_x, self.toolbox.roi_by_id(2).shape.mask.x0), (25.0, 5))
+        undo_manager.undo()
+        self.assertEqual((self.toolbox.roi_by_id(1).center_x, self.toolbox.roi_by_id(2).shape.mask.x0), (10.0, 0), "one undo step")
+        with self.assertRaisesRegex(ValueError, "pixel map.*whole pixels"):
+            self.toolbox.set_cell_values({2: {"x": 20.2}})  # under half a pixel: nothing to do, and it says why
+        self.assertFalse(undo_manager.can_undo)
         with self.assertRaises(KeyError):
             self.toolbox.set_cell_values({99: {"x": 1.0}})
         with self.assertRaisesRegex(ValueError, "unknown field"):

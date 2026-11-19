@@ -139,11 +139,16 @@ class RimsToReferencesTest(unittest.TestCase):
             self.toolbox.rims_to_references([outside], SHAPE)
         self.assertIn("no pixel inside the image", str(caught.exception))
 
-    def test_the_conversion_makes_a_map_that_cannot_be_moved(self) -> None:
-        """A map is its pixels (plan 2.4): the new reference is refused by `move_refusal` like every map; its sample can still be moved."""
+    def test_the_conversion_makes_a_map_that_moves_by_whole_pixels_on_its_own(self) -> None:
+        """A map is its pixels: the new reference moves by whole pixels (`RoiToolbox._at_position`), alone, and its sample stays where it is."""
         (new_id,) = self.toolbox.rims_to_references([self.circle], SHAPE)
-        self.assertIsNotNone(self.toolbox.move_refusal([new_id]))
-        self.assertIsNone(self.toolbox.move_refusal([self.circle]))
+        start = self.toolbox.roi_by_id(new_id).shape.mask
+        circle_at = (self.toolbox.roi_by_id(self.circle).center_x, self.toolbox.roi_by_id(self.circle).center_y)
+        self.toolbox.translate_rois([new_id], 2.0, -1.0)
+        moved = self.toolbox.roi_by_id(new_id).shape.mask
+        self.assertEqual((moved.x0, moved.y0), (start.x0 + 2, start.y0 - 1))
+        self.assertTrue(np.array_equal(moved.mask, start.mask))
+        self.assertEqual((self.toolbox.roi_by_id(self.circle).center_x, self.toolbox.roi_by_id(self.circle).center_y), circle_at)
 
 
 class AddRimTest(unittest.TestCase):

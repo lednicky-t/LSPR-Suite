@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from PyQt6 import QtWidgets
@@ -135,6 +136,11 @@ class Phase3UiTest(unittest.TestCase):
 
     def roi(self, roi_id: int):
         return self.roi_toolbox.roi_by_id(roi_id)
+
+    def snap(self, roi_id: int) -> SimpleNamespace:
+        """The ROI as it is now: the toolbox changes its ROI objects in place, so a test that compares before and after keeps a copy of the numbers."""
+        roi = self.roi(roi_id)
+        return SimpleNamespace(shape=roi.shape, center_x=roi.center_x, center_y=roi.center_y)
 
     def drawn_centre(self, roi_id: int) -> np.ndarray:
         """Where the canvas draws the ROI's centre at the frame on screen (the reference frame here: no chromatic correction)."""
@@ -367,7 +373,7 @@ class Phase3UiTest(unittest.TestCase):
         self.panel._on_scene_clicked(_Click(self.scene(50.0, 55.0), Qt.MouseButton.LeftButton))
         self.assertEqual(type(self.roi(6).shape).__name__, "Circle")
 
-    def test_a_mask_roi_can_be_picked_by_its_pixels_but_has_no_inside_to_drag_by(self) -> None:
+    def test_a_mask_roi_can_be_picked_and_grabbed_by_its_pixels(self) -> None:
         self.select_pixels((10, 20, 60, 72))
         self.panel._roi_creation.add_from_selection(together=True)
         self.assertEqual(self.panel._roi_queries.roi_at(65.5, 15.5), 4)
@@ -375,34 +381,98 @@ class Phase3UiTest(unittest.TestCase):
         self.selection.set_roi_selection({4})
         apertures = self.panel._roi_queries.selected_apertures()
         self.assertEqual(list(apertures.resizable), [False])
-        self.assertEqual(apertures.body, (None,))  # a mask's pixels cannot be moved, so there is nothing to grab it by
+        (grab,) = apertures.body  # a map is grabbed on one of its pixels (and moved by whole pixels)
+        self.assertTrue(grab(65.5, 15.5))
+        self.assertFalse(grab(75.5, 15.5))
+        hit = self.panel._interaction._roi_gestures.hit(65.5, 15.5)
+        self.assertEqual((hit.roi_id, hit.zone), (4, "body"))
+        self.assertIsNone(self.panel._interaction._roi_gestures.hit(75.5, 15.5))
 
-    def test_a_pixel_mask_is_not_moved_by_a_position_edit_and_nothing_moves_at_all(self) -> None:
+    def test_a_pixel_map_moves_by_whole_pixels_with_the_circles_and_one_undo_step_puts_it_back(self) -> None:
+        plane = self.select_pixels((10, 20, 60, 72))
+        self.panel._roi_creation.add_from_selection(together=True)
+        undo_manager.clear()
+        before = self.snap(4)
+        shape = self.panel._last_image_shape[:2]
+        affine = np.asarray(self.panel._roi_queries.current_affine(), dtype=np.float64)
+        pixels_before = rz.rasterize_sample(self.roi(4), shape, affine)
+        self.assertTrue(np.array_equal(pixels_before, plane))
+        x0, y0, cx, cy = before.shape.mask.x0, before.shape.mask.y0, before.center_x, before.center_y
+        self.roi_toolbox.translate_rois([1, 4], 3.4, -2.2)  # the circle moves as asked, the map by the nearest whole pixels (3, -2)
+        self.assertEqual((self.roi(1).center_x, self.roi(1).center_y), (23.4, 17.8))
+        moved = self.roi(4)
+        self.assertEqual((moved.shape.mask.x0, moved.shape.mask.y0), (x0 + 3, y0 - 2))
+        self.assertEqual((moved.center_x, moved.center_y), (cx + 3, cy - 2), "the label point goes with the pixels")
+        self.assertTrue(np.array_equal(moved.shape.mask.mask, before.shape.mask.mask), "the same pixels, nothing resampled")
+        pixels_after = rz.rasterize_sample(moved, shape, affine)
+        self.assertTrue(np.array_equal(pixels_after, np.roll(pixels_before, (-2, 3), axis=(0, 1))), "what the scan measures moved with it")
+        undo_manager.undo()
+        self.assertEqual(self.roi(4).shape, before.shape)
+        self.assertEqual((self.roi(4).center_x, self.roi(1).center_x), (cx, 20.0))
+        self.assertFalse(undo_manager.can_undo)
+
+    def test_a_typed_position_puts_a_pixel_map_on_the_nearest_whole_pixel_and_a_tiny_move_says_why(self) -> None:
         self.select_pixels((10, 20, 60, 72))
         self.panel._roi_creation.add_from_selection(together=True)
         undo_manager.clear()
-        before = {r.area_roi_id: (r.center_x, r.center_y) for r in self.roi_toolbox.rois()}
-        with self.assertRaisesRegex(ValueError, "pixel mask"):
-            self.roi_toolbox.translate_rois([1, 4], 3.0, 2.0)  # a circle with the mask: refused as a whole, not half-moved
-        with self.assertRaisesRegex(ValueError, "pixel mask"):
-            self.roi_toolbox.place_rois([4], x=10.0)
-        self.assertEqual({r.area_roi_id: (r.center_x, r.center_y) for r in self.roi_toolbox.rois()}, before)
+        start = self.snap(4)
+        with self.assertRaisesRegex(ValueError, "pixel map.*whole pixels"):
+            self.roi_toolbox.place_rois([4], x=start.center_x + 0.4)  # under half a pixel: nothing moves, and it says so
+        with self.assertRaisesRegex(ValueError, "pixel map"):
+            self.roi_toolbox.translate_rois([4], 0.0, -0.3)
         self.assertFalse(undo_manager.can_undo)
-        self.roi_toolbox.translate_rois([1], 3.0, 2.0)  # the circle alone still moves
+        self.roi_toolbox.place_rois([4], x=start.center_x + 5.6)
+        self.assertEqual(self.roi(4).shape.mask.x0, start.shape.mask.x0 + 6)
+        self.assertEqual(self.roi(4).center_x, start.center_x + 6)
+        self.assertEqual(self.roi(4).shape.mask.y0, start.shape.mask.y0, "y was not asked for")
+        # a wheel step of half a pixel goes the same distance either way (halves go away from zero, not to the even number)
+        self.roi_toolbox.translate_rois([4], -0.5, 0.0)
+        self.assertEqual(self.roi(4).shape.mask.x0, start.shape.mask.x0 + 5)
+        self.roi_toolbox.translate_rois([4], 0.5, 0.0)
+        self.assertEqual(self.roi(4).shape.mask.x0, start.shape.mask.x0 + 6)
 
-    def test_a_drag_that_starts_with_a_mask_selected_is_refused_once_with_the_reason(self) -> None:
+    def test_a_mixed_move_that_is_under_half_a_pixel_moves_the_circle_and_leaves_the_map(self) -> None:
         self.select_pixels((10, 20, 60, 72))
         self.panel._roi_creation.add_from_selection(together=True)
-        self.selection.set_roi_selection({1, 4})
-        refused: list[str] = []
-        gestures = self.panel._interaction._roi_gestures
-        gestures.refused.connect(refused.append)
-        from lspr_imaging_app.panels.image.roi_gestures import RoiHit
+        start = self.snap(4)
+        self.roi_toolbox.translate_rois([1, 4], 0.3, 0.0)
+        self.assertEqual(self.roi(1).center_x, 20.3)
+        self.assertEqual(self.roi(4).shape, start.shape)
 
-        self.assertTrue(gestures._begin_edit(RoiHit(1, "body", (20.0, 20.0)), 20.0, 20.0))
-        self.assertEqual(len(refused), 1)
-        self.assertIn("pixel mask", refused[0])
-        self.assertEqual(self.roi(1).center_x, 20.0)
+    def _drag(self, ids, dx: float, dy: float, steps: int) -> None:
+        """Press on the first selected map's pixel, move the pointer ``dx, dy`` view units in ``steps`` equal moves, release."""
+        gestures = self.panel._interaction._roi_gestures
+        self.selection.set_roi_selection(set(ids))
+        start = (65.5, 15.5)
+        self.assertTrue(gestures.begin(*start, additive=False))
+        for k in range(1, steps + 1):
+            gestures.update(start[0] + dx * k / steps, start[1] + dy * k / steps)
+        gestures.end(start[0] + dx, start[1] + dy, additive=False)
+
+    def test_dragging_a_selected_pixel_map_moves_it_by_the_distance_to_the_nearest_pixel(self) -> None:
+        self.select_pixels((10, 20, 60, 72))
+        self.panel._roi_creation.add_from_selection(together=True)
+        undo_manager.clear()
+        start = self.snap(4)
+        self._drag([4], 3.4, -5.6, steps=40)  # in 40 small steps, none of them as long as a pixel: the whole distance counts, nothing is lost
+        moved = self.roi(4)
+        self.assertEqual((moved.shape.mask.x0, moved.shape.mask.y0), (start.shape.mask.x0 + 3, start.shape.mask.y0 - 6))
+        self.assertEqual((moved.center_x, moved.center_y), (start.center_x + 3, start.center_y - 6))
+        undo_manager.undo()
+        self.assertEqual(self.roi(4).shape, start.shape)
+        self.assertFalse(undo_manager.can_undo, "the whole drag was one undo step")
+
+    def test_dragging_a_map_with_a_circle_moves_the_circle_smoothly_and_the_map_by_pixels(self) -> None:
+        self.select_pixels((10, 20, 60, 72))
+        self.panel._roi_creation.add_from_selection(together=True)
+        undo_manager.clear()
+        start = self.snap(4)
+        self._drag([1, 4], 4.4, 0.0, steps=11)
+        self.assertAlmostEqual(self.roi(1).center_x, 24.4, places=1)
+        self.assertEqual(self.roi(4).shape.mask.x0, start.shape.mask.x0 + 4)
+        undo_manager.undo()
+        self.assertEqual((self.roi(1).center_x, self.roi(4).shape.mask.x0), (20.0, start.shape.mask.x0))
+        self.assertFalse(undo_manager.can_undo, "one undo step for the circle and the map together")
 
 
     # -- Deselect area (2026-11-19): with no tool armed the ROI menu is the only one, and it must be able to drop the pixel selection ---------

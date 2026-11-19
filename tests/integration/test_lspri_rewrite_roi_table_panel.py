@@ -1914,12 +1914,21 @@ class WheelEditTest(_PanelCase):
         self.wheel(1, COLUMN_X)
         self.assertEqual(self.xs()[0], 12.0, "1 um at 0.5 um/px = 2 px")
 
-    def test_a_pixel_mask_among_the_selection_is_not_moved_and_says_why(self) -> None:
+    def test_a_pixel_map_among_the_selection_moves_a_whole_pixel_with_the_others(self) -> None:
         self.toolbox.roi_by_id(2).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
         self.select(1, 2)
-        self.wheel(1, COLUMN_X)
-        self.assertEqual(self.xs()[:2], [10.0, 20.0], "nothing half moved")
-        self.assertIn("pixel mask", self.footer())
+        self.wheel(1, COLUMN_X)  # a notch is half a pixel: the circle moves that, the map the nearest whole pixel (the half goes away from zero)
+        self.assertEqual(self.xs()[:2], [10.5, 21.0])
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.mask.x0, 1, "its pixels went with its label point")
+        self.assertNotIn("pixel map", self.footer())
+
+    def test_a_typed_position_under_half_a_pixel_leaves_a_pixel_map_where_it_is_and_says_why(self) -> None:
+        self.toolbox.roi_by_id(2).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
+        self.refresh()
+        self.edit(2, COLUMN_X, "20.3")
+        self.assertEqual(self.xs()[1], 20.0)
+        self.assertIn("pixel map", self.footer())
+        self.assertIn("whole pixels", self.footer())
 
     def test_a_rectangle_steps_its_width_and_angle(self) -> None:
         self.select(self.rectangle_id)
@@ -2223,14 +2232,16 @@ class CellCopyPasteTest(_PanelCase):
         self.assertIsNone(self.toolbox.roi_by_id(1).border)
         self.assertIsNone(self.toolbox.roi_by_id(2).border)
 
-    def test_a_pixel_mask_is_not_moved_by_a_pasted_position(self) -> None:
+    def test_a_pasted_position_moves_a_pixel_map_by_the_nearest_whole_pixels(self) -> None:
         self.toolbox.roi_by_id(2).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
         self.refresh()
         self.copy_cells((4,), (COLUMN_X,))
+        x = self.toolbox.roi_by_id(4).center_x
         self.select(1, 2)
         self.panel._paste_cells()
-        self.assertIn("pixel mask", self.tip())
-        self.assertEqual(self.toolbox.roi_by_id(1).center_x, 10.0, "nothing half moved")
+        self.assertEqual(self.toolbox.roi_by_id(1).center_x, x)
+        self.assertEqual(self.toolbox.roi_by_id(2).center_x, 20.0 + round(x - 20.0), "the map's centre went by whole pixels")
+        self.assertEqual(self.toolbox.roi_by_id(2).shape.mask.x0, round(x - 20.0))
 
     def test_text_from_another_program_still_pastes_its_first_value(self) -> None:
         QtWidgets.QApplication.clipboard().setText("7,5\t99\n1\t2")
