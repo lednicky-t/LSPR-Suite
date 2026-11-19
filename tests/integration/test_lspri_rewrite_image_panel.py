@@ -57,6 +57,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.render import RenderRequest, RenderResult
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -326,9 +327,9 @@ class RewriteImagePanelTest(unittest.TestCase):
         _pump()
         self.assertEqual(submitted, [], "a ROI move must not re-render the frame")
         self.assertTrue(drawn, "the ROI overlay must still be redrawn")
-        # The overlay really followed the ROI: its circle is centred on the new position.
+        # The overlay really followed the ROI: its circle is centred on the new position (drawn half a cell in: `CELL_OFFSET`; the outline's mean is a hair off its middle).
         sample_x, _sample_y = self.panel._roi_overlay.sample_circles.outline_xy()
-        self.assertAlmostEqual(float(np.nanmean(sample_x)), 45.0, delta=0.5)
+        self.assertAlmostEqual(float(np.nanmean(sample_x)), 45.0 + CELL_OFFSET, delta=0.25)
 
     def test_a_roi_move_still_renders_when_the_background_estimate_excludes_the_rois(self) -> None:
         """The one case where a ROI really does change the pixels: it is left out of the background estimate."""
@@ -385,10 +386,11 @@ class RewriteImagePanelTest(unittest.TestCase):
             frame = (self.panel._current_cube(), self.panel._current_wavelength())
             center = self.roi_toolbox.display_position(roi_id, frame, shifted)
             xs, ys = self.panel._roi_overlay.sample_circles.outline_xy()
-            self.assertEqual(center, (43.0, 28.0))
-            self.assertAlmostEqual(float(np.nanmean(xs[:-1])), center[0], places=6)
-            self.assertAlmostEqual(float(np.nanmean(ys[:-1])), center[1], places=6)
-            self.assertEqual(self.panel.roi_at(*center), roi_id)  # clicking where it is drawn selects it
+            self.assertEqual(center, (43.0, 28.0))  # pixel-index coordinates: the stored centre carried through the affine once
+            drawn = (center[0] + CELL_OFFSET, center[1] + CELL_OFFSET)  # the canvas draws them half a cell in
+            self.assertAlmostEqual(float(np.nanmean(xs[:-1])), drawn[0], places=6)
+            self.assertAlmostEqual(float(np.nanmean(ys[:-1])), drawn[1], places=6)
+            self.assertEqual(self.panel.roi_at(*drawn), roi_id)  # clicking where it is drawn selects it
 
     def _points(self, source) -> int:
         """Circles of one colour (a colour string; None = every circle) or on a curve item, counted by

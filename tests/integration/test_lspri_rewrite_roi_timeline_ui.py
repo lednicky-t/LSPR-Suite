@@ -40,6 +40,7 @@ try:
     from lspr_imaging_app.panels.roi_table.rows import COLUMN_X
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.domain.roi_model import SCOPE_INDIVIDUAL, SCOPE_PERSISTENT
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
@@ -92,7 +93,8 @@ class RoiTimelineUiTest(unittest.TestCase):
     # -- helpers ----------------------------------------------------------------------
 
     def scene(self, x: float, y: float) -> QPointF:
-        return self.panel._plot.vb.mapViewToScene(QPointF(x, y))
+        """The scene point of the cursor over pixel-index coordinate ``(x, y)`` (a ROI's stored centre): the canvas draws it half a cell further in (`CELL_OFFSET`)."""
+        return self.panel._plot.vb.mapViewToScene(QPointF(x + CELL_OFFSET, y + CELL_OFFSET))
 
     def drag(self, points: list[tuple[float, float]]) -> None:
         handler = self.panel._on_left_drag_event
@@ -200,11 +202,12 @@ class RoiTimelineUiTest(unittest.TestCase):
             xs = curve.getData()[0]
             return float(xs[~np.isnan(xs)].mean())
 
-        self.assertAlmostEqual(centre_x(), 40.0, delta=0.5)
+        # drawn around the stored centre half a cell in (the outline's mean is a little off its middle, hence the delta)
+        self.assertAlmostEqual(centre_x(), 40.0 + CELL_OFFSET, delta=0.25)
         self.go_to_cube(1)
-        self.assertAlmostEqual(centre_x(), 50.0, delta=0.5)
+        self.assertAlmostEqual(centre_x(), 50.0 + CELL_OFFSET, delta=0.25)
         self.go_to_cube(0)
-        self.assertAlmostEqual(centre_x(), 40.0, delta=0.5)
+        self.assertAlmostEqual(centre_x(), 40.0 + CELL_OFFSET, delta=0.25)
 
     def test_hit_testing_uses_the_geometry_of_the_cube(self) -> None:
         self.roi_toolbox.move_roi(2, 50.0, 30.0, cube=1)

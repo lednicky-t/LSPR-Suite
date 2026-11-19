@@ -441,7 +441,8 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         self.assertEqual(set(selection.selected_roi_ids()), {partly, outside})
 
     def test_rois_touching_is_an_exact_disc_square_overlap(self) -> None:
-        roi_id = self.roi_toolbox.add_roi(30.5, 30.5)  # radius 10
+        # stored in pixel-index coordinates: (30, 30) is drawn on the canvas at (30.5, 30.5), the middle of cell (30, 30) (`overlay_geometry.CELL_OFFSET`)
+        roi_id = self.roi_toolbox.add_roi(30.0, 30.0)  # radius 10, centred on the canvas at (30.5, 30.5)
         queries = self.image_panel._roi_queries
         mask = np.zeros(_SHAPE, dtype=bool)
         mask[30, 41] = True  # square x 41..42: nearest point 10.5 px away - outside the disc

@@ -38,6 +38,7 @@ try:
         environment_budget_mb,
     )
     from lspr_imaging_app.panels.ui_state import UiStateStore
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.storage.ui_state_keys import IMAGE_OVERLAY_CACHE_MB
 except ImportError as error:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(error)
@@ -178,12 +179,13 @@ class PanelOptionTests(unittest.TestCase):
             selection.set_wavelength(600.0)
             self.panel._draw_roi_overlay(only_if_changed=True)  # a hit: the items still hold 500 nm, the last one drawn
             stale_xs, _ = self.panel._roi_overlay.sample_circles.outline_xy()
+            # the position is in pixel-index coordinates, the overlay is drawn half a cell further in (`CELL_OFFSET`)
             stale = self.roi_toolbox.display_position(roi_id, (0, 500.0), shifts[500.0])
-            self.assertAlmostEqual(float(np.nanmean(stale_xs[:-1])), stale[0], places=6, msg="the scenario must start with stale items")
+            self.assertAlmostEqual(float(np.nanmean(stale_xs[:-1])), stale[0] + CELL_OFFSET, places=6, msg="the scenario must start with stale items")
             self.panel.set_overlay_cache_mb(0)
             xs, _ys = self.panel._roi_overlay.sample_circles.outline_xy()
             expected = self.roi_toolbox.display_position(roi_id, (0, 600.0), shifts[600.0])
-            self.assertAlmostEqual(float(np.nanmean(xs[:-1])), expected[0], places=6, msg="stale overlay left on screen")
+            self.assertAlmostEqual(float(np.nanmean(xs[:-1])), expected[0] + CELL_OFFSET, places=6, msg="stale overlay left on screen")
 
 
 class ChoicesTests(unittest.TestCase):

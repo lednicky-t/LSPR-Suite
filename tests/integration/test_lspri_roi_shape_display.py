@@ -271,10 +271,14 @@ class QueriesShapesTests(unittest.TestCase):
         apertures = q.selected_apertures()
         self.assertEqual(list(apertures.resizable), [False, True])
         along = (60.0 + 10.0 * np.cos(np.pi / 4), 50.0 + 10.0 * np.sin(np.pi / 4))
-        across = (60.0 + 10.0 * np.cos(np.pi / 4), 50.0 - 10.0 * np.sin(np.pi / 4))
+        # across the thin side of the 4 px thick rectangle: 12 px from its centre is 10 px beyond its edge, clear of its border band (gap 2, thickness 4: edges at 2 and 6)
+        across = (60.0 + 12.0 * np.cos(np.pi / 4), 50.0 - 12.0 * np.sin(np.pi / 4))
+        on_band = (60.0 + 8.0 * np.cos(np.pi / 4), 50.0 - 8.0 * np.sin(np.pi / 4))  # 6 px beyond the edge: the band's outer edge, which can be dragged since 2026-11-18
         hit = hit_test(*along, apertures, np.eye(2), 3.0)
         self.assertEqual((hit.roi_id, hit.zone), (1, "body"))
         self.assertIsNone(hit_test(*across, apertures, np.eye(2), 3.0))
+        band = hit_test(*on_band, apertures, np.eye(2), 3.0)
+        self.assertEqual((band.roi_id, band.zone), (1, "rect_border_outer"))
         circle_hit = hit_test(20.0, 20.0, apertures, np.eye(2), 3.0)
         self.assertEqual((circle_hit.roi_id, circle_hit.zone), (3, "body"))
 

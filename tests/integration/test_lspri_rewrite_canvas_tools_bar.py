@@ -51,6 +51,7 @@ try:
     from lspr_imaging_app.panels.image.canvas_tools import CanvasToolsBar, ToolVariant, _ToolGroupButton
     from lspr_imaging_app.panels.image.image_controls import controls_for, controls_text
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -266,8 +267,9 @@ class AddRoiToolTest(unittest.TestCase):
         self._click(40.0, 30.0)
         rois = self.roi_toolbox.rois()
         self.assertEqual(len(rois), 1)
-        self.assertAlmostEqual(rois[0].center_x, 40.0, places=5)
-        self.assertAlmostEqual(rois[0].center_y, 30.0, places=5)
+        # stored in pixel-index coordinates, half a cell back from the clicked view point: that is what draws the ROI under the pointer (`CELL_OFFSET`)
+        self.assertAlmostEqual(rois[0].center_x, 40.0 - CELL_OFFSET, places=5)
+        self.assertAlmostEqual(rois[0].center_y, 30.0 - CELL_OFFSET, places=5)
 
     def test_tool_stays_active_for_placing_several_rois_in_a_row(self) -> None:
         self.active_tool.set_active(ImageTool.ADD_ROI, True)  # no icon any more: armed from code

@@ -59,6 +59,7 @@ try:
     )
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.roi import rasterize as rz
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.shortcuts import display
     from lspr_imaging_app.undo import undo_manager
@@ -132,6 +133,13 @@ class Phase3UiTest(unittest.TestCase):
     def roi(self, roi_id: int):
         return self.roi_toolbox.roi_by_id(roi_id)
 
+    def drawn_centre(self, roi_id: int) -> np.ndarray:
+        """Where the canvas draws the ROI's centre at the frame on screen (the reference frame here: no chromatic correction)."""
+        queries = self.panel._roi_queries
+        frame = (queries._current_cube(), queries._current_wavelength())
+        index = [r.area_roi_id for r in self.roi_toolbox.rois()].index(roi_id)
+        return queries.view_centers(frame, queries.current_affine())[index]
+
     def select_pixels(self, *boxes) -> np.ndarray:
         shape = self.panel._last_image_shape[:2]
         plane = np.zeros(shape, dtype=bool)
@@ -146,13 +154,17 @@ class Phase3UiTest(unittest.TestCase):
         self.right_click(10.0, 55.0, RoiMenuChoice(ADD_ROI))
         self.assertEqual(len(self.roi_toolbox.rois()), 4)
         self.assertEqual(self.selection.selected_roi_ids(), frozenset({4}))
-        self.assertEqual((self.roi(4).center_x, self.roi(4).center_y), (10.0, 55.0))
+        # stored in pixel-index coordinates, half a cell back from the clicked view point (`overlay_geometry.CELL_OFFSET`) ...
+        self.assertEqual((self.roi(4).center_x, self.roi(4).center_y), (10.0 - CELL_OFFSET, 55.0 - CELL_OFFSET))
+        # ... which is what draws it under the pointer
+        self.assertEqual(tuple(self.drawn_centre(4)), (10.0, 55.0))
 
     def test_add_roi_rectangle_places_a_20_px_square_where_clicked_in_one_undo_step(self) -> None:
         self.right_click(10.0, 55.0, RoiMenuChoice(ADD_RECTANGLE))
         new = self.roi(4)
         self.assertEqual(new.shape, Rectangle(20.0, 20.0, 0.0))
-        self.assertEqual((new.center_x, new.center_y), (10.0, 55.0))
+        self.assertEqual((new.center_x, new.center_y), (10.0 - CELL_OFFSET, 55.0 - CELL_OFFSET))
+        self.assertEqual(tuple(self.drawn_centre(4)), (10.0, 55.0))
         self.assertEqual(self.selection.selected_roi_ids(), frozenset({4}))
         undo_manager.undo()
         self.assertEqual(len(self.roi_toolbox.rois()), 3)
@@ -162,8 +174,9 @@ class Phase3UiTest(unittest.TestCase):
         affine = np.array([[1.0, 0.0, 3.0], [0.0, 1.0, -2.0]])
         with mock.patch.object(self.chromatic, "affine_for", return_value=affine):
             self.panel._roi_creation.add_rectangle(30.0, 30.0)
-        self.assertEqual((self.roi(4).center_x, self.roi(4).center_y), (27.0, 32.0))
-        del frame
+        # the click is view point (30, 30): half a cell off, then the frame's shift undone
+        self.assertEqual((self.roi(4).center_x, self.roi(4).center_y), (27.0 - CELL_OFFSET, 32.0 - CELL_OFFSET))
+        np.testing.assert_allclose(self.panel._roi_queries.view_centers(frame, affine)[3], (30.0, 30.0))  # and that frame draws it back under the click
 
     # -- Add ROI > Current selection --------------------------------------------------------
 

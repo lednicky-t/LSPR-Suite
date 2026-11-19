@@ -39,6 +39,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image import tuning_overlay as to
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 
@@ -98,7 +99,8 @@ class OverlayTest(unittest.TestCase):
         view = make_view()
         self.overlay.update(view, IDENTITY)
         self.assertEqual(self.overlay.point_count(), 9 * 2)
-        expected = (view.roi_xy[None] + view.offsets[:, None]).reshape(-1, 2)
+        # the centres and offsets are in pixel-index coordinates; the crosses are drawn on the canvas, half a cell further in (`CELL_OFFSET`)
+        expected = (view.roi_xy[None] + view.offsets[:, None]).reshape(-1, 2) + CELL_OFFSET
         np.testing.assert_allclose(self.overlay.positions(), expected)
 
     def test_the_best_position_of_each_roi_has_the_larger_cross(self) -> None:
@@ -210,6 +212,13 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(self.panel._tuning_overlay.point_count(), 18)
         self.panel.set_tuning_view(None)
         self.assertEqual(self.panel._tuning_overlay.point_count(), 0)
+
+    def test_the_cross_at_a_rois_own_centre_sits_in_the_middle_of_its_drawn_circle(self) -> None:
+        """The crosses and the circles are drawn in the same coordinates: the lattice's centre position is the ROI where it is, so its cross is the circle's middle.
+        (A circle's mean vertex is a hair off its middle, `radius / 48` along x, hence the tolerance: half a cell, the old mismatch, is far outside it.)"""
+        self.panel.set_tuning_view(make_view())
+        crosses = self.panel._tuning_overlay.positions().reshape(LATTICE.n_points, 2, 2)[LATTICE.centre_index]
+        np.testing.assert_allclose(crosses, self.circle_centres(), atol=0.15)
 
     def test_the_best_view_draws_the_roi_at_its_best_centre_and_never_moves_the_roi(self) -> None:
         before = self.circle_centres()

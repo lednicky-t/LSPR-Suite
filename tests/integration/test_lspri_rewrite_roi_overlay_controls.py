@@ -52,6 +52,7 @@ try:
     from lspr_imaging_app.panels.image.roi_label_overlay import label_text
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 
@@ -253,7 +254,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
         texts = {text for _x, _y, _r, text in self.panel._roi_overlay.label_item.labels()}
         self.assertEqual(texts, {"1", "2 spot B"})
         x, y, radius, _ = next(entry for entry in self.panel._roi_overlay.label_item.labels() if entry[3] == "1")
-        self.assertEqual((x, y, radius), (40.0, 30.0, 5.0), "anchored at the right edge of the circle")
+        self.assertEqual((x, y, radius), (40.0 + CELL_OFFSET, 30.0 + CELL_OFFSET, 5.0), "anchored at the right edge of the circle (drawn half a cell in)")
         self.panel._roi_tab.labels_button.click()
         self.assertEqual(self.panel._roi_overlay.label_item.labels(), [])
 

@@ -38,7 +38,9 @@ try:
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.roi_gestures import KNOB_PX
+    from lspr_imaging_app.panels.image.rotate_cursor import rotate_cursor
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.roi.shape_hits import ZONE_CORNER, ZONE_HEIGHT, ZONE_ROTATE, ZONE_WIDTH, rectangle_handle_points
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
@@ -87,9 +89,15 @@ class RectangleHandlesPanelTest(unittest.TestCase):
     def shape(self, roi_id: int):
         return self.toolbox.roi_by_id(roi_id).shape
 
+    @staticmethod
+    def at(x: float, y: float) -> tuple[float, float]:
+        """The view point over pixel-index coordinate ``(x, y)`` (what a ROI's centre is stored in): the canvas draws it half a cell further in (`CELL_OFFSET`)."""
+        return x + CELL_OFFSET, y + CELL_OFFSET
+
     def handle(self, roi_id: int, name: str) -> tuple[float, float]:
+        """Where the named handle is on the canvas (view coordinates)."""
         roi = self.toolbox.roi_by_id(roi_id)
-        return rectangle_handle_points(roi.shape, (roi.center_x, roi.center_y), np.eye(2), KNOB_PX * self.pixel)[name]
+        return rectangle_handle_points(roi.shape, self.at(roi.center_x, roi.center_y), np.eye(2), KNOB_PX * self.pixel)[name]
 
     def drag(self, start: tuple[float, float], end: tuple[float, float]) -> bool:
         claimed = self.gestures.begin(*start, additive=False)
@@ -125,7 +133,7 @@ class RectangleHandlesPanelTest(unittest.TestCase):
             hit = self.gestures.hit(*self.handle(self.rect_a, name))
             self.assertIsNotNone(hit, name)
             self.assertEqual((hit.roi_id, hit.zone), (self.rect_a, zone), name)
-        self.assertEqual(self.gestures.hit(30.0, 34.0).zone, "body")  # the inside still moves it
+        self.assertEqual(self.gestures.hit(*self.at(30.0, 34.0)).zone, "body")  # the inside still moves it
 
     def test_an_unselected_rectangle_has_no_handles(self) -> None:
         self.selection.set_roi_selection({self.rect_b})
@@ -149,13 +157,13 @@ class RectangleHandlesPanelTest(unittest.TestCase):
         self.drag(south, (south[0], south[1] + 4.0))
         self.assertEqual(self.shape(self.rect_a), Rectangle(20.0, 18.0, 0.0))  # 2 x (43 - 34)
         corner = self.handle(self.rect_a, "se")
-        self.drag(corner, (30.0 + 14.0, 34.0 + 3.0))
+        self.drag(corner, self.at(30.0 + 14.0, 34.0 + 3.0))
         self.assertEqual(self.shape(self.rect_a), Rectangle(28.0, 6.0, 0.0))
 
     def test_dragging_the_knob_turns_the_rectangle_about_its_centre(self) -> None:
         self.selection.set_roi_selection({self.rect_a})
         knob = self.handle(self.rect_a, "knob")
-        self.drag(knob, (50.0, 34.0))  # straight to the right of the centre: a quarter turn clockwise
+        self.drag(knob, self.at(50.0, 34.0))  # straight to the right of the centre: a quarter turn clockwise
         self.assertAlmostEqual(self.shape(self.rect_a).angle_deg, 90.0, places=6)
         self.assertEqual((self.shape(self.rect_a).width_px, self.shape(self.rect_a).height_px), (20.0, 10.0))
         undo_manager.undo()
@@ -166,15 +174,15 @@ class RectangleHandlesPanelTest(unittest.TestCase):
         undo_manager.clear()
         self.selection.set_roi_selection({self.rect_a})
         east = self.handle(self.rect_a, "e")  # the rectangle's own east is down the screen
-        self.assertAlmostEqual(east[0], 30.0)
-        self.assertGreater(east[1], 34.0)
-        self.drag(east, (east[0], 34.0 + 20.0))
+        self.assertAlmostEqual(east[0], 30.0 + CELL_OFFSET)
+        self.assertGreater(east[1], 34.0 + CELL_OFFSET)
+        self.drag(east, self.at(30.0, 34.0 + 20.0))
         self.assertEqual(self.shape(self.rect_a), Rectangle(40.0, 10.0, 90.0))
 
     def test_every_selected_rectangle_gets_the_value_and_a_circle_is_left_alone(self) -> None:
         self.selection.set_roi_selection({self.rect_a, self.rect_b, self.circle})
         start = self.handle(self.rect_a, "e")
-        self.drag(start, (30.0 + 12.0, 34.0))
+        self.drag(start, self.at(30.0 + 12.0, 34.0))
         self.assertEqual(self.shape(self.rect_a).width_px, 24.0)
         self.assertEqual(self.shape(self.rect_b).width_px, 24.0)  # the same value for each, as a circle's diameter is
         self.assertEqual((self.shape(self.rect_a).height_px, self.shape(self.rect_b).height_px), (10.0, 8.0))
@@ -185,7 +193,7 @@ class RectangleHandlesPanelTest(unittest.TestCase):
     def test_a_size_cannot_be_dragged_below_the_minimum(self) -> None:
         self.selection.set_roi_selection({self.rect_a})
         east = self.handle(self.rect_a, "e")
-        self.drag(east, (30.0, 34.0))  # onto the centre
+        self.drag(east, self.at(30.0, 34.0))  # onto the centre
         from lspr_imaging_app.roi.toolbox import MIN_SAMPLE_DIAMETER_PX
 
         self.assertEqual(self.shape(self.rect_a).width_px, MIN_SAMPLE_DIAMETER_PX)
@@ -196,10 +204,10 @@ class RectangleHandlesPanelTest(unittest.TestCase):
         self.selection.set_roi_selection({self.rect_a})
         interaction = self.panel._interaction
         interaction._update_roi_hover_cursor(self.scene(*self.handle(self.rect_a, "knob")))
-        self.assertEqual(interaction._roi_cursor, Qt.CursorShape.OpenHandCursor)
+        self.assertIs(interaction._roi_cursor, rotate_cursor())  # the knob turns the rectangle: the rotate cursor, not the open hand
         interaction._update_roi_hover_cursor(self.scene(*self.handle(self.rect_a, "e")))
         self.assertEqual(interaction._roi_cursor, Qt.CursorShape.SizeHorCursor)
-        interaction._update_roi_hover_cursor(self.scene(30.0, 34.0))
+        interaction._update_roi_hover_cursor(self.scene(*self.at(30.0, 34.0)))
         self.assertEqual(interaction._roi_cursor, Qt.CursorShape.SizeAllCursor)
 
 

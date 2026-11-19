@@ -162,10 +162,20 @@ class RoiQueriesTests(unittest.TestCase):
         self.assertEqual(self.queries.rois_in_rect(35.0, 25.0, 50.0, 35.0), {1, 2})
         self.assertEqual(self.queries.rois_in_rect(0.0, 0.0, 10.0, 10.0), set())
 
-    def test_a_display_point_maps_back_to_the_reference_frame_through_the_affine(self) -> None:
-        self.affine = np.array([[2.0, 0.0, 10.0], [0.0, 2.0, -4.0]])  # display = 2 * reference + shift
-        self.assertEqual(self.queries.display_to_reference(30.0, 20.0), (10.0, 12.0))
+    def test_a_view_point_maps_back_to_the_reference_frame_through_the_cell_shift_and_the_affine(self) -> None:
+        self.affine = np.array([[2.0, 0.0, 10.0], [0.0, 2.0, -4.0]])  # display (pixel-index) = 2 * reference + shift
+        # the view point (30.5, 20.5) is the middle of the cell of pixel-index point (30, 20): half a cell comes off first, then the affine is undone
+        self.assertEqual(self.queries.display_to_reference(30.5, 20.5), (10.0, 12.0))
+        self.assertEqual(self.queries.display_to_reference(30.0, 20.0), (9.75, 11.75))
         np.testing.assert_array_equal(self.queries.display_linear(), np.array([[2.0, 0.0], [0.0, 2.0]]))
+
+    def test_the_view_centres_are_the_stored_positions_half_a_cell_in_and_map_back_exactly(self) -> None:
+        """A ROI at pixel-index (40, 30) measures the pixels around the point (40, 30); the canvas draws pixel 40 over [40, 41), so its centre is on the
+        canvas at (40.5, 30.5) - and the pointer there is the stored position again."""
+        centres = self.queries.view_centers((0, 550.0), self.affine)
+        np.testing.assert_array_equal(centres, np.array([[40.5, 30.5], [44.5, 30.5]]))
+        for (view_x, view_y), stored in zip(centres, ((40.0, 30.0), (44.0, 30.0)), strict=True):
+            self.assertEqual(self.queries.display_to_reference(float(view_x), float(view_y)), stored)
 
     def test_a_singular_affine_leaves_the_point_unchanged(self) -> None:
         self.affine = np.zeros((2, 3))

@@ -50,6 +50,7 @@ try:
         RoiMenuChoice,
     )
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from lspr_imaging_app.undo import undo_manager
 
@@ -140,7 +141,10 @@ class RoiGesturesTest(unittest.TestCase):
         undo_manager.clear()
 
     def scene(self, x: float, y: float) -> QPointF:
-        return self.panel._plot.vb.mapViewToScene(QPointF(x, y))
+        """The scene point of the cursor over pixel-index coordinate ``(x, y)`` - the coordinates a ROI's centre is stored in, which the tests below speak in.
+        The canvas draws that coordinate half a cell further in (`overlay_geometry.CELL_OFFSET`: pixel ``(row, col)`` covers ``[col, col + 1)``), so a cursor
+        'at the middle of ROI 2' is at ``stored + CELL_OFFSET`` in the view. Distances and drags are unaffected; only where a point is on the canvas."""
+        return self.panel._plot.vb.mapViewToScene(QPointF(x + CELL_OFFSET, y + CELL_OFFSET))
 
     def drag(self, button: Qt.MouseButton, points: list[tuple[float, float]], **kw) -> bool:
         """Start at the first point, move through the rest, finish at the last; returns whether the start was claimed."""
