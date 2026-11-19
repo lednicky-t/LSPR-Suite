@@ -39,6 +39,7 @@ try:
         MaskScopeModule,
     )
     from lspr_imaging_app.panels.image import ImagePanel
+    from lspr_imaging_app.panels.image.resize_cursor import resize_cursor
     from lspr_imaging_app.panels.image.roi_context_menu import (
         ADD_ROI,
         ADD_TO_GROUP,
@@ -395,9 +396,14 @@ class RoiGesturesTest(unittest.TestCase):
         return None if cursor == Qt.CursorShape.ArrowCursor else cursor
 
     def test_hovering_a_selected_rois_border_shows_a_resize_arrow_along_the_radius(self) -> None:
+        """The arrow is the app's own cursor (`resize_cursor.py`, drawn at the exact angle of the radius), not one of Qt's four standard resize cursors: a bitmap cursor,
+        the one cached for that angle (the hover code and the rectangle tests compare them by identity)."""
         self.selection.set_roi_selection({2})
-        self.assertEqual(self.hover_cursor(45.0, 30.0), Qt.CursorShape.SizeHorCursor)
-        self.assertEqual(self.hover_cursor(40.0, 35.0), Qt.CursorShape.SizeVerCursor)
+        self.assertEqual(self.hover_cursor(45.0, 30.0), Qt.CursorShape.BitmapCursor)
+        self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(0.0), "the pointer is right of the centre: a horizontal arrow")
+        self.assertEqual(self.hover_cursor(40.0, 35.0), Qt.CursorShape.BitmapCursor)
+        self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(90.0), "below the centre: a vertical arrow")
+        self.assertIsNot(resize_cursor(0.0), resize_cursor(90.0))
 
     def test_hovering_inside_a_selected_roi_shows_the_move_cursor(self) -> None:
         self.selection.set_roi_selection({2})
