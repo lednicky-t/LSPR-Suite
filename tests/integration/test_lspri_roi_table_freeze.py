@@ -35,7 +35,7 @@ try:
         COLUMN_COUNT,
         COLUMN_ID,
         COLUMN_NAME,
-        COLUMN_RING_OUT,
+        COLUMN_RIM_THICKNESS,
         COLUMN_SHAPE,
         COLUMN_TITLES,
         COLUMN_X,
@@ -193,7 +193,7 @@ class WhatIsDrawnTest(FreezeBase):
 
     def test_the_scrolled_columns_still_scroll(self) -> None:
         self.tree.set_frozen_upto(COLUMN_X)
-        outside = self.model.roi_index(1, COLUMN_RING_OUT)  # the last column on screen (the rectangle columns are hidden with no rectangle in the table), far right
+        outside = self.model.roi_index(1, COLUMN_RIM_THICKNESS)  # the last column on screen (the rectangle columns are hidden with no rectangle in the table), far right
         before = self.tree.visualRect(outside).left()
         self.scroll_to(SCROLLED)
         self.assertEqual(self.tree.visualRect(outside).left(), before - SCROLLED)
@@ -302,7 +302,7 @@ class RightClickAndMemoryTest(FreezeBase):
         freeze = self.panel._freeze
         freeze.prepare(COLUMN_COUNT)  # the first step column (none exist here, but the header may be asked)
         self.assertFalse(freeze._freeze.isEnabled())
-        freeze.prepare(COLUMN_RING_OUT)
+        freeze.prepare(COLUMN_RIM_THICKNESS)
         self.assertTrue(freeze._freeze.isEnabled())
 
 

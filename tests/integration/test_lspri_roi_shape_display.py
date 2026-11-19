@@ -229,7 +229,7 @@ class QueriesShapesTests(unittest.TestCase):
         found = q.region_at(60.0, 50.0 + 5.0 + 4.0, SHAPE)  # 4 px below the edge: in the band 2..6
         self.assertIsNotNone(found)
         plane, what = found
-        self.assertEqual(what, "ROI 1 reference border")
+        self.assertEqual(what, "ROI 1 reference rim")
         self.assertTrue(np.array_equal(plane, rz.rasterize_reference(rect, SHAPE, IDENTITY, default_border=DEFAULT_BORDER)))
         self.assertIsNone(q.region_at(60.0, 50.0 + 5.0 + 1.0, SHAPE))  # in the gap
         self.assertIsNone(q.region_at(60.0, 50.0 + 5.0 + 9.0, SHAPE))  # beyond the band

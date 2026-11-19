@@ -33,8 +33,8 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 
 def _row(roi_id: int, group_id: str | None) -> rw.RoiRow:
     return rw.RoiRow(
-        roi_id=roi_id, label="", group_id=group_id, color_hex="#fff", has_own_color=False, x=0.0, y=0.0, sample=6.0, inner=8.0, outer=12.0,
-        inner_inherited=True, outer_inherited=True, is_mask=False, nudge_count=0,
+        roi_id=roi_id, label="", group_id=group_id, color_hex="#fff", has_own_color=False, x=0.0, y=0.0, sample=6.0, rim_offset=1.0, rim_thickness=4.0,
+        rim_inherited=True, has_rim=True, is_mask=False, nudge_count=0,
     )
 
 

@@ -54,7 +54,7 @@ class RowsTest(unittest.TestCase):
     def test_a_sample_says_what_it_is_measured_against(self) -> None:
         self.assertEqual(self.rows[1].link_note, "Measured against references (pooled by pixel) R3, R4.")
         self.assertEqual(self.rows[6].link_note, "Measured against reference R4.")
-        self.assertEqual(self.rows[5].link_note, "Measured against its own border.")  # follows the default border
+        self.assertEqual(self.rows[5].link_note, "Measured against its own rim.")  # follows the default border
         self.assertEqual(self.rows[2].link_note, "No reference: its results are missing.")
 
     def test_a_reference_says_which_samples_use_it(self) -> None:
@@ -67,7 +67,7 @@ class RowsTest(unittest.TestCase):
 
     def test_a_link_to_a_roi_that_is_not_a_reference_is_not_claimed(self) -> None:
         rows = build_roi_rows([AreaRoi(1, 1.0, 1.0, Circle(8.0), reference_roi_ids=(2,)), AreaRoi(2, 9.0, 1.0, Circle(8.0))], [], AreaRoiDetectionSettings())
-        self.assertEqual(rows[0].link_note, "Measured against its own border.")
+        self.assertEqual(rows[0].link_note, "Measured against its own rim.")
 
     def test_a_rectangle_and_a_mask_have_a_shape_note(self) -> None:
         self.assertEqual(self.rows[4].shape, SHAPE_RECTANGLE)
@@ -96,8 +96,10 @@ class ModelCellsTest(unittest.TestCase):
 
     def test_the_first_column_tooltip_and_the_shape_cell(self) -> None:
         self.assertIn("used by", self._cell(3, COLUMN_ID, Qt.ItemDataRole.ToolTipRole))
-        self.assertEqual(self._cell(4, COLUMN_SHAPE, Qt.ItemDataRole.DisplayRole), "Rectangle")
-        self.assertEqual(self._cell(4, COLUMN_SHAPE, Qt.ItemDataRole.ToolTipRole), "Rectangle: 12 x 5 px, turned 30 degrees clockwise.")
+        self.assertEqual(self._cell(4, COLUMN_SHAPE, Qt.ItemDataRole.DisplayRole), "Rectangle")  # a reference: the plain shape
+        self.assertEqual(
+            self._cell(4, COLUMN_SHAPE, Qt.ItemDataRole.ToolTipRole), "Rectangle. Reference ROI, used by samples 1, 6. 12 x 5 px, turned 30 degrees clockwise."
+        )
 
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ try:
     from lspr_imaging_app.panels.image.rectangle_size_dialog import RectangleSizeDialog
     from lspr_imaging_app.panels.image.roi_context_menu import (
         ADD_RECTANGLE,
+        ADD_RIM,
         ADD_ROI,
         ADD_SELECTION_BLOBS,
         ADD_SELECTION_ONE,
@@ -54,6 +55,7 @@ try:
         LINK,
         MAKE_REFERENCE,
         MAKE_SAMPLE,
+        RIM_TO_REFERENCE,
         UNLINK,
         RoiMenuChoice,
     )
@@ -265,6 +267,49 @@ class Phase3UiTest(unittest.TestCase):
         self.assertFalse(kwargs["can_add_from_selection"])
         self.select_pixels((5, 9, 50, 55))
         self.assertTrue(self.right_click(20.0, 20.0, None).call_args.kwargs["can_add_from_selection"])
+
+    # -- rim pairs and linked pairs (plan 2026-11-19) ------------------------------------------------
+
+    def test_the_menu_is_told_what_can_get_a_rim_and_whose_rim_can_become_a_reference(self) -> None:
+        self.selection.set_roi_selection({1})  # a sample with the default rim, no links
+        kwargs = self.right_click(20.0, 20.0, None).call_args.kwargs
+        self.assertTrue(kwargs["can_rim_to_reference"])
+        self.assertFalse(kwargs["can_add_rim"], "it has a rim already")
+        self.roi_toolbox.set_roi_role([2], "reference")  # a reference nobody uses
+        self.selection.set_roi_selection({2})
+        kwargs = self.right_click(40.0, 30.0, None).call_args.kwargs
+        self.assertTrue(kwargs["can_add_rim"])
+        self.assertFalse(kwargs["can_rim_to_reference"], "a reference has no rim to turn")
+
+    def test_turn_rim_into_linked_reference_makes_a_map_reference_linked_to_the_sample_in_one_undo_step(self) -> None:
+        self.selection.set_roi_selection({1})
+        undo_manager.clear()
+        self.right_click(20.0, 20.0, RoiMenuChoice(RIM_TO_REFERENCE))
+        self.assertEqual(len(self.roi_toolbox.rois()), 4)
+        self.assertEqual(self.roi_toolbox.references_of(1), (4,))
+        self.assertIsInstance(self.roi(4).shape, MaskShape)
+        self.assertEqual(self.roi(4).role, "reference")
+        self.assertIn("Turned 1 rim into linked reference ROI 4", self.messages[-1])
+        undo_manager.undo()
+        self.assertFalse(undo_manager.can_undo, "one undo step")
+        self.assertEqual((len(self.roi_toolbox.rois()), self.roi_toolbox.references_of(1)), (3, ()))
+
+    def test_turn_rim_into_linked_reference_leaves_out_what_cannot_and_says_so(self) -> None:
+        self.roi_toolbox.set_roi_role([3], "reference")
+        self.selection.set_roi_selection({1, 3})
+        self.right_click(20.0, 20.0, RoiMenuChoice(RIM_TO_REFERENCE))
+        self.assertEqual(self.roi_toolbox.references_of(1), (4,))
+        self.assertIn("1 selected ROI left out", self.messages[-1])
+
+    def test_add_rim_turns_an_unused_reference_into_a_sample_with_a_rim(self) -> None:
+        self.roi_toolbox.set_roi_role([2], "reference")
+        self.selection.set_roi_selection({2})
+        undo_manager.clear()
+        self.right_click(40.0, 30.0, RoiMenuChoice(ADD_RIM))
+        self.assertEqual(self.roi(2).role, "sample")
+        self.assertIn("Added a rim to 1 ROI", self.messages[-1])
+        undo_manager.undo()
+        self.assertEqual(self.roi(2).role, "reference")
 
     # -- what the overlay shows ---------------------------------------------------------------
 
@@ -527,6 +572,19 @@ class ContextMenuTest(unittest.TestCase):
 
         delete = self._entry(menu, "Delete 2 ROIs")
         self.assertEqual(delete.icon().pixmap(36, 36).toImage(), menu_icon("delete").pixmap(36, 36).toImage())  # the table's Delete is this bin too
+
+    def test_the_rim_entries_are_in_the_menu_only_when_they_can_be_used_and_wear_icons(self) -> None:
+        menu, _parent = self._build(selected_count=1, selected_roles=(1, 0))
+        self.assertNotIn("Add rim", self._texts(menu))
+        self.assertNotIn("Turn rim into linked reference", self._texts(menu))
+        menu, _parent = self._build(selected_count=1, selected_roles=(1, 0), can_add_rim=True, can_rim_to_reference=True)
+        texts = self._texts(menu)
+        self.assertIn("Add rim", texts)
+        self.assertIn("Turn rim into linked reference", texts)
+        for text in ("Add rim", "Turn rim into linked reference"):
+            entry = self._entry(menu, text)
+            self.assertFalse(entry.icon().isNull(), text)
+            self.assertTrue(entry.toolTip(), text)
 
     def test_group_and_ungroup_show_their_keys(self) -> None:
         menu, _parent = self._build(selected_count=2, any_selected_grouped=True)

@@ -40,7 +40,7 @@ try:
         COLUMN_COUNT,
         COLUMN_ID,
         COLUMN_NAME,
-        COLUMN_RING_OUT,
+        COLUMN_RIM_THICKNESS,
         COLUMN_SAMPLE,
         COLUMN_TITLES,
         COLUMN_X,
@@ -165,11 +165,11 @@ class TheMenuTest(FixedColumnsBase):
         self.assertEqual(self.ui.get(KEY), [COLUMN_Y])
 
     def test_show_all_brings_every_hidden_column_back_and_forgets_them(self) -> None:
-        for column in (COLUMN_X, COLUMN_Y, COLUMN_RING_OUT):
+        for column in (COLUMN_X, COLUMN_Y, COLUMN_RIM_THICKNESS):
             self.hide._hide_section(column)
         self.hide.prepare(COLUMN_SAMPLE)
         self.hide._show_all.trigger()
-        self.assertFalse(any(self.tree.isColumnHidden(c) for c in (COLUMN_X, COLUMN_Y, COLUMN_RING_OUT)))
+        self.assertFalse(any(self.tree.isColumnHidden(c) for c in (COLUMN_X, COLUMN_Y, COLUMN_RIM_THICKNESS)))
         self.assertEqual(self.ui.get(KEY), [])
         self.hide.prepare(COLUMN_SAMPLE)
         self.assertFalse(self.hide._show_all.isEnabled())
@@ -213,13 +213,13 @@ class WithTheViewModeTest(FixedColumnsBase):
 class RememberedTest(FixedColumnsBase):
     def test_the_hidden_columns_are_saved_and_come_back_in_a_new_panel(self) -> None:
         self.hide._hide_section(COLUMN_X)
-        self.hide._hide_section(COLUMN_RING_OUT)
-        self.assertEqual(self.ui.get(KEY), [COLUMN_X, COLUMN_RING_OUT])
+        self.hide._hide_section(COLUMN_RIM_THICKNESS)
+        self.assertEqual(self.ui.get(KEY), [COLUMN_X, COLUMN_RIM_THICKNESS])
         again = RoiTablePanel(self.toolbox, SelectionModule(), GeometryModule())
         again.restore_ui_state(self.ui)
         again._view_actions[VIEW_GEOMETRY].trigger()
         again.refresh_now()
-        self.assertTrue(again._tree.isColumnHidden(COLUMN_X) and again._tree.isColumnHidden(COLUMN_RING_OUT))
+        self.assertTrue(again._tree.isColumnHidden(COLUMN_X) and again._tree.isColumnHidden(COLUMN_RIM_THICKNESS))
         self.assertFalse(again._tree.isColumnHidden(COLUMN_Y))
         again.deleteLater()
 

@@ -29,8 +29,8 @@ try:
     from lspr_imaging_app.panels.roi_table.rows import (
         COLUMN_ANGLE,
         COLUMN_HEIGHT,
-        COLUMN_RING_IN,
-        COLUMN_RING_OUT,
+        COLUMN_RIM_OFFSET,
+        COLUMN_RIM_THICKNESS,
         COLUMN_SAMPLE,
         COLUMN_WIDTH,
         COLUMN_X,
@@ -101,18 +101,18 @@ class PlanPasteTest(unittest.TestCase):
         self.assertIn("table ended after 2 of 3", plan.note)
 
     def test_only_matching_columns_are_filled_and_types_are_never_mixed(self) -> None:
-        source = block((COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT), (6.0, 10.0, 20.0))
+        source = block((COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS), (6.0, 10.0, 20.0))
         every_column = self.plan(source, [1])
-        self.assertEqual(set(every_column.values[1]), {"sample_diameter_px", "reference_inner_diameter_px", "reference_outer_diameter_px"}, "rows chosen, no cells: all columns match")
-        only_inner = self.plan(source, [1, 2], target_columns={COLUMN_RING_IN})
-        self.assertEqual(only_inner.values, {1: {"reference_inner_diameter_px": 10.0}, 2: {"reference_inner_diameter_px": 10.0}})
-        self.assertEqual(only_inner.columns, (COLUMN_RING_IN,))
+        self.assertEqual(set(every_column.values[1]), {"sample_diameter_px", "rim_offset_px", "rim_thickness_px"}, "rows chosen, no cells: all columns match")
+        only_offset = self.plan(source, [1, 2], target_columns={COLUMN_RIM_OFFSET})
+        self.assertEqual(only_offset.values, {1: {"rim_offset_px": 10.0}, 2: {"rim_offset_px": 10.0}})
+        self.assertEqual(only_offset.columns, (COLUMN_RIM_OFFSET,))
 
     def test_a_target_without_the_copied_column_is_refused_with_the_names(self) -> None:
-        plan = self.plan(block((COLUMN_RING_IN,), (10.0,)), [1, 2], target_columns={COLUMN_SAMPLE})
+        plan = self.plan(block((COLUMN_RIM_OFFSET,), (10.0,)), [1, 2], target_columns={COLUMN_SAMPLE})
         self.assertEqual(plan.values, {})
         self.assertIn("No matching column", plan.refusal)
-        self.assertIn("d_r", plan.refusal)
+        self.assertIn("copied d,", plan.refusal)
         self.assertIn("D_s", plan.refusal)
         self.assertEqual(self.plan(block((COLUMN_X, COLUMN_Y), (1.0, 2.0)), [1], target_columns={COLUMN_WIDTH}).values, {}, "a position does not go into a width")
 
@@ -221,7 +221,7 @@ class SetCellValuesTest(unittest.TestCase):
     def test_all_or_nothing_and_the_roi_is_named(self) -> None:
         for values, text in (
             ({1: {"sample_diameter_px": 8.0}, 2: {"sample_diameter_px": 1.0}}, "ROI 2: sample diameter must be at least 2"),
-            ({1: {"sample_diameter_px": 8.0}, 2: {"reference_inner_diameter_px": 50.0}}, "ROI 2: the reference ring needs"),
+            ({1: {"sample_diameter_px": 8.0}, 2: {"reference_inner_diameter_px": 50.0}}, "ROI 2: the rim needs"),
             ({1: {"sample_diameter_px": 8.0}, self.rect: {"sample_diameter_px": 8.0}}, f"ROI {self.rect} is not a circle"),
             ({1: {"sample_diameter_px": 8.0}, 3: {"width_px": 20.0}}, "ROI 3 is not a rectangle"),
             ({1: {"sample_diameter_px": 8.0}, self.rect: {"height_px": 1.0}}, f"ROI {self.rect}: height must be at least 2"),

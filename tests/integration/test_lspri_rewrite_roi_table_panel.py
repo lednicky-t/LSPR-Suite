@@ -62,8 +62,9 @@ try:
         COLUMN_NAME,
         COLUMN_COUNT,
         COLUMN_SHAPE,
-        COLUMN_RING_IN,
-        COLUMN_RING_OUT,
+        COLUMN_TITLES,
+        COLUMN_RIM_OFFSET,
+        COLUMN_RIM_THICKNESS,
         COLUMN_SAMPLE,
         COLUMN_WIDTH,
         COLUMN_X,
@@ -247,19 +248,20 @@ class AppearanceTest(_PanelCase):
         self.assertEqual([self.model.data(h) for h in self.model.group_headers()], ["A", "Ungrouped"])
         self.assertEqual(self.shown_ids(), [1, 2, 3, 4, 5])
 
-    def test_cells_show_the_values_and_mark_inherited_rings(self) -> None:
+    def test_cells_show_the_values_and_mark_inherited_rims(self) -> None:
         self.assertEqual(self.text(1, COLUMN_ID), "1")
         self.assertEqual(self.text(2, COLUMN_X), "20.0")
         self.assertEqual(self.text(2, COLUMN_Y), "5.0")
         self.assertEqual(self.text(2, COLUMN_SAMPLE), "6.0")
-        self.assertEqual(self.text(2, COLUMN_RING_IN), "14.0", "the shared default border (4, 4) around a 6 px sample")
-        self.assertTrue(self.model.data(self.cell(2, COLUMN_RING_IN), INHERITED_ROLE))
+        self.assertEqual((self.text(2, COLUMN_RIM_OFFSET), self.text(2, COLUMN_RIM_THICKNESS)), ("4.0", "4.0"), "the shared default rim: offset 4, thickness 4 from the edge")
+        self.assertTrue(self.model.data(self.cell(2, COLUMN_RIM_OFFSET), INHERITED_ROLE))
+        self.assertTrue(self.model.data(self.cell(2, COLUMN_RIM_THICKNESS), INHERITED_ROLE))
         self.assertFalse(self.model.data(self.cell(2, COLUMN_SAMPLE), INHERITED_ROLE))
-        self.toolbox.resize_rois((2,), reference_inner_diameter_px=10.0)
+        self.toolbox.resize_rois((2,), reference_inner_diameter_px=10.0)  # a ring from diameter 10 to 22 round the 6 px circle: offset 2, thickness 6
         self.refresh()
-        self.assertEqual(self.text(2, COLUMN_RING_IN), "10.0")
-        self.assertFalse(self.model.data(self.cell(2, COLUMN_RING_IN), INHERITED_ROLE))
-        self.assertFalse(self.model.data(self.cell(2, COLUMN_RING_OUT), INHERITED_ROLE))  # the border is one setting: editing an edge makes it the ROI's own
+        self.assertEqual((self.text(2, COLUMN_RIM_OFFSET), self.text(2, COLUMN_RIM_THICKNESS)), ("2.0", "6.0"))
+        self.assertFalse(self.model.data(self.cell(2, COLUMN_RIM_OFFSET), INHERITED_ROLE))
+        self.assertFalse(self.model.data(self.cell(2, COLUMN_RIM_THICKNESS), INHERITED_ROLE))  # the rim is one setting: editing a number makes it the ROI's own
 
     def test_groups_and_tints_show_in_the_model(self) -> None:
         self.toolbox.group_rois((1, 2), "A")
@@ -539,14 +541,17 @@ class EditingTest(_PanelCase):
         self.assertIn("at least 2", self.messages[-1])
         self.edit(2, COLUMN_SAMPLE, "abc")
         self.assertIn("'abc' is not a number", self.footer())
-        self.edit(2, COLUMN_RING_IN, "40")  # not below the current outer diameter (22)
-        self.assertIn("inner < outer", self.footer())
+        self.edit(2, COLUMN_RIM_THICKNESS, "-3")  # a band cannot be less than nothing wide (an offset may be negative: that is a rim starting inside the shape)
+        self.assertIn("thickness cannot be negative", self.footer())
         self.assertIsNone(self.toolbox.roi_by_id(2).border)
 
-    def test_a_ring_override_is_stored_for_that_roi(self) -> None:
-        self.edit(2, COLUMN_RING_IN, "10")
+    def test_a_rim_override_is_stored_for_that_roi(self) -> None:
+        self.edit(2, COLUMN_RIM_OFFSET, "10")
         roi = self.toolbox.roi_by_id(2)
-        self.assertEqual(ring_diameters(roi.shape, roi.border), (10.0, 22.0))  # the outer edge keeps the diameter it had
+        self.assertEqual((roi.border.gap_px, roi.border.thickness_px), (10.0, 4.0))  # the thickness keeps the value it had (the default's)
+        self.assertEqual(ring_diameters(roi.shape, roi.border), (26.0, 34.0))  # the same rim as diameters round the 6 px circle
+        self.edit(2, COLUMN_RIM_OFFSET, "-2")
+        self.assertEqual(self.toolbox.roi_by_id(2).border.gap_px, -2.0, "an offset can be negative")
 
     def test_names_and_group_names(self) -> None:
         self.edit(1, COLUMN_NAME, "  spot A ")
@@ -1051,7 +1056,7 @@ class RememberedStateTest(_PanelCase):
         self.assertEqual(self.panel._view_mode, "geometry")
         self.assertEqual(self.model.sort_state(), (COLUMN_X, True))
         self.assertEqual(self.tree.columnWidth(COLUMN_X), 61)
-        self.assertEqual(self.tree.columnWidth(COLUMN_RING_OUT), 65)
+        self.assertEqual(self.tree.columnWidth(COLUMN_RIM_THICKNESS), 65)
         self.panel._view_actions["simple"].trigger()
         self.assertEqual(store.get("roi_table/view_mode"), "simple")
         self.assertEqual(store.get("roi_table/sort"), [COLUMN_ID, False], "a sort by a hidden column goes back to #")
@@ -1059,7 +1064,7 @@ class RememberedStateTest(_PanelCase):
         self.assertEqual(store.get("roi_table/sort"), [COLUMN_NAME, False])
         self.tree.setColumnWidth(COLUMN_NAME, 77)
         self.assertEqual(store.get("roi_table/column_widths")[COLUMN_NAME], 77)
-        self.assertEqual(store.get("roi_table/column_widths")[COLUMN_RING_OUT], 65, "a hidden column keeps its width")
+        self.assertEqual(store.get("roi_table/column_widths")[COLUMN_RIM_THICKNESS], 65, "a hidden column keeps its width")
 
     def test_a_saved_sort_by_a_column_the_saved_mode_hides_is_ignored(self) -> None:
         self.panel.restore_ui_state(UiStateStore({"roi_table/view_mode": "simple", "roi_table/sort": [COLUMN_X, True]}))
@@ -1180,11 +1185,12 @@ class LayoutAndPaintTest(_PanelCase):
         to a different font than the app's on a real display)."""
         metrics = QFontMetrics(self.tree.font())
         widths = suggested_column_widths(metrics)
-        for column in (COLUMN_X, COLUMN_Y, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT):
+        for column in (COLUMN_X, COLUMN_Y, COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS):
             self.assertGreaterEqual(widths[column] - metrics.horizontalAdvance("9999.9" if column in (COLUMN_X, COLUMN_Y) else "999.9"), 12, column)
         from lspr_imaging_app.panels.roi_table.view import title_width
 
-        for column, title in ((COLUMN_SAMPLE, "D_s"), (COLUMN_RING_IN, "d_r"), (COLUMN_RING_OUT, "D_r")):
+        for column, title in ((COLUMN_SAMPLE, "D_s"), (COLUMN_RIM_OFFSET, "d"), (COLUMN_RIM_THICKNESS, "w")):
+            self.assertEqual(COLUMN_TITLES[column], title)
             self.assertGreaterEqual(widths[column] - title_width(metrics, title), 20, f"{title}: room for the sort arrow")
 
     def test_painting_does_not_raise_in_either_theme_with_groups_and_selection(self) -> None:
@@ -1442,7 +1448,7 @@ class ViewModeTest(_PanelCase):
         self.addCleanup(self.panel.hide)
 
     def test_geometry_is_the_default_and_simple_shows_only_id_and_label(self) -> None:
-        geometry = [COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT]
+        geometry = [COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS]
         self.assertEqual(self.shown_left_to_right(), geometry)
         self.panel._view_actions["simple"].trigger()
         self.assertEqual(self.shown_left_to_right(), [COLUMN_ID, COLUMN_NAME])
@@ -1499,32 +1505,33 @@ class ViewModeTest(_PanelCase):
     def test_the_shape_column_shows_the_shape_and_is_not_editable(self) -> None:
         self.toolbox.roi_by_id(1).border = NO_BORDER
         self.refresh()
-        self.assertEqual(self.text(1, COLUMN_SHAPE), "Circle, no reference")
-        self.assertEqual(self.text(2, COLUMN_SHAPE), "Circle with reference ring")
+        self.assertEqual(self.text(1, COLUMN_SHAPE), "Circle")
+        self.assertEqual(self.text(2, COLUMN_SHAPE), "Circle with rim")
         self.assertFalse(self.model.flags(self.cell(1, COLUMN_SHAPE)) & Qt.ItemFlag.ItemIsEditable)
-        self.assertIn("D = outer", self.model.headerData(COLUMN_SHAPE, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole))
+        tip = self.model.headerData(COLUMN_SHAPE, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole)
+        self.assertTrue("Amber" in tip and "Green" in tip and "rim" in tip)
 
     def test_a_disk_has_no_ring_cells_and_a_mask_no_diameter_cells(self) -> None:
         self.toolbox.roi_by_id(1).border = NO_BORDER
         self.toolbox.roi_by_id(2).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
         self.refresh()
         editable = Qt.ItemFlag.ItemIsEditable
-        self.assertEqual([self.text(1, c) for c in (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT)], ["6.0", "", ""])
+        self.assertEqual([self.text(1, c) for c in (COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS)], ["6.0", "", ""])
         self.assertTrue(self.model.flags(self.cell(1, COLUMN_SAMPLE)) & editable)
-        self.assertFalse(self.model.flags(self.cell(1, COLUMN_RING_IN)) & editable)
+        self.assertFalse(self.model.flags(self.cell(1, COLUMN_RIM_OFFSET)) & editable)
         self.assertEqual(self.text(2, COLUMN_SAMPLE), "mask")
         self.assertFalse(self.model.flags(self.cell(2, COLUMN_SAMPLE)) & editable)
         self.assertTrue(self.model.flags(self.cell(2, COLUMN_X)) & editable, "a mask ROI still has a position")
 
-    def test_setting_a_ring_diameter_skips_a_disk(self) -> None:
+    def test_setting_a_rim_thickness_skips_a_roi_with_no_rim(self) -> None:
         self.toolbox.roi_by_id(1).border = NO_BORDER
         self.refresh()
-        self.panel._set_numeric_cells([1, 2], COLUMN_RING_OUT, "40")
-        self.assertEqual(self.toolbox.roi_by_id(1).border, NO_BORDER)  # a disk has no ring to set
+        self.panel._set_numeric_cells([1, 2], COLUMN_RIM_THICKNESS, "40")
+        self.assertEqual(self.toolbox.roi_by_id(1).border, NO_BORDER)  # no rim to set
         roi = self.toolbox.roi_by_id(2)
-        self.assertEqual(ring_diameters(roi.shape, roi.border)[1], 40.0)
-        self.panel._set_numeric_cells([1], COLUMN_RING_OUT, "41")
-        self.assertIn("no such diameter", self.footer())
+        self.assertEqual((roi.border.gap_px, roi.border.thickness_px), (4.0, 40.0))
+        self.panel._set_numeric_cells([1], COLUMN_RIM_THICKNESS, "41")
+        self.assertIn("no rim to set", self.footer())
 
     def test_painting_every_view_does_not_raise(self) -> None:
         self.toolbox.group_rois((1, 2), "A")
@@ -1638,7 +1645,7 @@ class AreaColumnTest(_PanelCase):
         self.assertEqual(last(self.tree, self.model), COLUMN_ANGLE, "with a rectangle in the table")
         self.toolbox.delete_rois([self.rectangle_id])
         self.refresh()
-        self.assertEqual(last(self.tree, self.model), COLUMN_RING_OUT, "the angle is hidden without a rectangle")
+        self.assertEqual(last(self.tree, self.model), COLUMN_RIM_THICKNESS, "the angle is hidden without a rectangle")
         self.panel._view_actions["simple"].trigger()
         self.assertEqual(last(self.tree, self.model), COLUMN_NAME, "the Simple view has the number and the label")
 
@@ -1681,9 +1688,9 @@ class RectangleColumnsTest(_PanelCase):
         self.tree.set_hidden_keys(())
         self.assertTrue(self.shown(COLUMN_ANGLE))
 
-    def test_a_rectangle_shows_its_size_and_a_circle_and_the_diameters_stay_blank(self) -> None:
+    def test_a_rectangle_shows_its_size_and_its_rim_and_a_circle_shows_no_width(self) -> None:
         self.assertEqual([self.text(self.rectangle_id, c) for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)], ["30.0", "14.0", "33.0"])
-        self.assertEqual([self.text(self.rectangle_id, c) for c in (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT)], ["", "", ""])
+        self.assertEqual([self.text(self.rectangle_id, c) for c in (COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS)], ["", "4.0", "4.0"], "no diameter; the rim, as for any shape")
         self.assertEqual([self.text(1, c) for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)], ["", "", ""])
         editable = Qt.ItemFlag.ItemIsEditable
         self.assertTrue(all(self.model.flags(self.cell(self.rectangle_id, c)) & editable for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)))
@@ -1997,10 +2004,10 @@ class CellCopyPasteTest(_PanelCase):
 
     def test_dragging_picks_the_selected_rows_and_the_number_columns_between(self) -> None:
         self.select(1, 2, 3)
-        self.drag((1, COLUMN_SAMPLE), (3, COLUMN_RING_OUT))
-        self.assertEqual(self.picked(), ((1, 2, 3), (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT)))
-        self.drag((3, COLUMN_RING_IN), (1, COLUMN_SAMPLE))  # the other way round
-        self.assertEqual(self.picked(), ((1, 2, 3), (COLUMN_SAMPLE, COLUMN_RING_IN)))
+        self.drag((1, COLUMN_SAMPLE), (3, COLUMN_RIM_THICKNESS))
+        self.assertEqual(self.picked(), ((1, 2, 3), (COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS)))
+        self.drag((3, COLUMN_RIM_OFFSET), (1, COLUMN_SAMPLE))  # the other way round
+        self.assertEqual(self.picked(), ((1, 2, 3), (COLUMN_SAMPLE, COLUMN_RIM_OFFSET)))
         self.assertEqual(sorted(self.selection.selected_roi_ids()), [1, 2, 3], "the rows stay selected")
 
     def test_only_selected_rows_are_picked_and_the_shape_column_is_never(self) -> None:
@@ -2062,12 +2069,12 @@ class CellCopyPasteTest(_PanelCase):
 
     def test_esc_and_the_view_mode_and_hidden_columns_let_go(self) -> None:
         self.select(1, 2)
-        self.drag((1, COLUMN_SAMPLE), (2, COLUMN_RING_OUT))
+        self.drag((1, COLUMN_SAMPLE), (2, COLUMN_RIM_THICKNESS))
         QTest.keyClick(self.tree, Qt.Key.Key_Escape)
         self.assertEqual(self.picked(), ((), ()))
-        self.drag((1, COLUMN_SAMPLE), (2, COLUMN_RING_OUT))
-        self.tree.set_hidden_keys({COLUMN_RING_IN})
-        self.assertEqual(self.picked(), ((1, 2), (COLUMN_SAMPLE, COLUMN_RING_OUT)), "a column that is hidden leaves the picked cells")
+        self.drag((1, COLUMN_SAMPLE), (2, COLUMN_RIM_THICKNESS))
+        self.tree.set_hidden_keys({COLUMN_RIM_OFFSET})
+        self.assertEqual(self.picked(), ((1, 2), (COLUMN_SAMPLE, COLUMN_RIM_THICKNESS)), "a column that is hidden leaves the picked cells")
         self.tree.set_hidden_keys(())
         self.panel._view_actions["simple"].trigger()
         self.assertEqual(self.picked(), ((), ()), "the Simple view shows no numbers")
@@ -2082,7 +2089,7 @@ class CellCopyPasteTest(_PanelCase):
         self.assertEqual(mime.text(), "7.0\n8.0\n9.0")
         self.assertIsNotNone(self.tree.copied_edges(self.cell(2, COLUMN_SAMPLE)))
         self.assertIsNone(self.tree.copied_edges(self.cell(4, COLUMN_SAMPLE)))
-        self.assertIsNone(self.tree.copied_edges(self.cell(2, COLUMN_RING_IN)))
+        self.assertIsNone(self.tree.copied_edges(self.cell(2, COLUMN_RIM_OFFSET)))
         self.assertEqual(self.tree.copied_edges(self.cell(1, COLUMN_SAMPLE)), (True, True, False, True), "the top of the block")
         self.assertEqual(self.tree.copied_edges(self.cell(3, COLUMN_SAMPLE)), (False, True, True, True), "the bottom of the block")
         self.assertIn("Copied 3 cells", self.footer())
@@ -2157,18 +2164,18 @@ class CellCopyPasteTest(_PanelCase):
         self.toolbox.resize_rois([1], reference_inner_diameter_px=10.0, reference_outer_diameter_px=20.0)
         self.refresh()
         undo_manager.clear()
-        self.copy_cells((1,), (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT))
+        self.copy_cells((1,), (COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS))
         self.select(2, 3)
-        self.tree.set_cell_range((2, 3), (COLUMN_RING_IN,))  # the picked cells name the column: only the inner diameter
+        self.tree.set_cell_range((2, 3), (COLUMN_RIM_OFFSET,))  # the picked cells name the column: only the offset (2 px: the copied ROI's)
         self.panel._paste_cells()
-        self.assertEqual([ring_diameters(self.toolbox.roi_by_id(i).shape, self.toolbox.roi_by_id(i).border) for i in (2, 3)], [(10.0, 22.0)] * 2, "the outer edge kept its diameter")
+        self.assertEqual([ring_diameters(self.toolbox.roi_by_id(i).shape, self.toolbox.roi_by_id(i).border) for i in (2, 3)], [(10.0, 18.0)] * 2, "the thickness kept its value (4 px)")
         self.assertEqual(self.diameters(2, 3), [6.0, 6.0], "the sample diameter was not touched")
 
     def test_a_block_of_columns_goes_to_its_matching_columns_when_only_rows_are_chosen(self) -> None:
         self.toolbox.resize_rois([1], sample_diameter_px=8.0, reference_inner_diameter_px=12.0, reference_outer_diameter_px=24.0)
         self.refresh()
         undo_manager.clear()
-        self.copy_cells((1,), (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT))
+        self.copy_cells((1,), (COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS))
         self.select(2, 3)
         self.panel._paste_cells()
         for roi_id in (2, 3):
@@ -2193,12 +2200,12 @@ class CellCopyPasteTest(_PanelCase):
         self.assertEqual([self.toolbox.roi_by_id(i).center_x for i in (3, 4, 5)], [10.0, 20.0, 10.0], "10, 20, then the pattern starts again")
 
     def test_a_paste_into_the_wrong_column_is_refused_with_a_tip_at_the_pointer(self) -> None:
-        self.copy_cells((1,), (COLUMN_RING_IN,))
+        self.copy_cells((1,), (COLUMN_RIM_OFFSET,))
         self.select(2, 3)
         self.tree.set_cell_range((2, 3), (COLUMN_SAMPLE,))
         before = undo_manager.undo_label
         self.panel._paste_cells()
-        self.assertIn("No matching column: copied d_r, selected D_s", self.footer())
+        self.assertIn("No matching column: copied d, selected D_s", self.footer())
         self.assertIn("No matching column", self.tip())
         self.assertEqual(self.diameters(2, 3), [6.0, 6.0])
         self.assertEqual(undo_manager.undo_label, before, "nothing was done")
@@ -2207,12 +2214,12 @@ class CellCopyPasteTest(_PanelCase):
         mime = QMimeData()
         from lspr_imaging_app.panels.roi_table import cell_clipboard as cc
 
-        block = cc.CellBlock((COLUMN_RING_IN,), ((50.0,),))  # an inner diameter of 50 is beyond every outer diameter (22)
+        block = cc.CellBlock((COLUMN_RIM_THICKNESS,), ((-5.0,),))  # a thickness below zero is refused for every ROI
         mime.setData(cc.MIME_TYPE, cc.block_to_payload(block))
         QtWidgets.QApplication.clipboard().setMimeData(mime)
         self.select(1, 2)
         self.panel._paste_cells()
-        self.assertIn("ROI 1: the reference ring needs", self.tip())
+        self.assertIn("ROI 1: the rim's thickness cannot be negative", self.tip())
         self.assertIsNone(self.toolbox.roi_by_id(1).border)
         self.assertIsNone(self.toolbox.roi_by_id(2).border)
 
@@ -2260,7 +2267,7 @@ class CellCopyPasteTest(_PanelCase):
 
     def test_painting_the_picked_and_copied_cells_does_not_raise(self) -> None:
         self.select(1, 2, 3)
-        self.drag((1, COLUMN_SAMPLE), (3, COLUMN_RING_OUT))
+        self.drag((1, COLUMN_SAMPLE), (3, COLUMN_RIM_THICKNESS))
         self.panel._copy_cell()
         self.tree.set_cell_range((1, 2), (COLUMN_X, COLUMN_Y))
         self.assertFalse(self.tree.viewport().grab().isNull())

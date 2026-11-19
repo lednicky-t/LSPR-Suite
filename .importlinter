@@ -148,6 +148,7 @@ source_modules =
     lspr_imaging_app.roi.array_pipeline
     lspr_imaging_app.roi.detection
     lspr_imaging_app.roi.edge_size
+    lspr_imaging_app.roi.mask_regions
     lspr_imaging_app.roi.ordering
     lspr_imaging_app.roi.overlay_geometry
     lspr_imaging_app.roi.palette

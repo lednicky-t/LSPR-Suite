@@ -274,7 +274,7 @@ class ImageLayersPanelTest(unittest.TestCase):
         ring = self.area.mask(SHAPE)
         self.assertFalse(ring[int(y), int(x)], "the ring does not cover the disk")
         self.assertTrue(ring[int(y), int(x + middle)])
-        self.assertIn("ring", self.messages[-1])
+        self.assertIn("rim", self.messages[-1])
         # With the rings hidden, the same click finds nothing.
         self.panel._roi_tab.reference_controls.set_visible(False)
         self.area.clear()

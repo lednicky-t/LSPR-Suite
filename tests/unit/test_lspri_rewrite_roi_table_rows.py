@@ -27,8 +27,8 @@ try:
         COLUMN_HEIGHT,
         COLUMN_ID,
         COLUMN_NAME,
-        COLUMN_RING_IN,
-        COLUMN_RING_OUT,
+        COLUMN_RIM_OFFSET,
+        COLUMN_RIM_THICKNESS,
         COLUMN_SAMPLE,
         COLUMN_SHAPE,
         COLUMN_WIDTH,
@@ -36,6 +36,7 @@ try:
         COLUMN_Y,
         PIXELS,
         RECTANGLE_COLUMNS,
+        RIM_COLUMNS,
         SHAPE_DISK,
         SHAPE_FIELDS,
         SHAPE_MASK,
@@ -48,11 +49,13 @@ try:
         angle_step_text,
         build_roi_rows,
         build_sections,
+        cell_number,
         edit_text,
         format_angle,
         format_area,
         format_length,
         from_display,
+        has_cell,
         micrometers,
         movement_scope,
         parse_angle,
@@ -153,10 +156,10 @@ class RowTest(unittest.TestCase):
     def setUp(self) -> None:
         self.defaults = AreaRoiDetectionSettings()  # ring 28 / 36
 
-    def test_a_ring_with_no_override_is_inherited_and_shows_the_default(self) -> None:
+    def test_a_rim_with_no_override_is_inherited_and_shows_the_default(self) -> None:
         (row,) = build_roi_rows([_roi(1)], [], self.defaults)
-        self.assertEqual((row.inner, row.outer), (14.0, 22.0))  # the default border (4, 4) around a 6 px sample
-        self.assertTrue(row.inner_inherited and row.outer_inherited)
+        self.assertEqual((row.rim_offset, row.rim_thickness), (4.0, 4.0))  # the default rim: offset 4, thickness 4 from the shape's edge
+        self.assertTrue(row.rim_inherited and row.has_rim)
 
     def test_a_roi_with_no_colour_takes_the_given_default_and_an_own_colour_wins(self) -> None:
         plain, own = _roi(1), _roi(2, sample_color_hex="#112233")
@@ -165,14 +168,13 @@ class RowTest(unittest.TestCase):
         self.assertEqual((b.color_hex, b.has_own_color), ("#112233", True))
 
     def test_an_override_is_not_inherited(self) -> None:
-        roi = _roi(1, border=Border.from_ring_diameters(6.0, 10.0, 36.0))
+        roi = _roi(1, border=Border.from_ring_diameters(6.0, 10.0, 36.0))  # a ring from diameter 10 to 36 round a 6 px circle: offset 2, thickness 13
         (row,) = build_roi_rows([roi], [], self.defaults)
-        self.assertEqual((row.inner, row.outer), (10.0, 36.0))
-        self.assertFalse(row.inner_inherited)
-        self.assertFalse(row.outer_inherited)
-        (follower,) = build_roi_rows([_roi(2)], [], self.defaults)  # no border of its own: the default (4, 4) around the 6 px sample
-        self.assertEqual((follower.inner, follower.outer), (14.0, 22.0))
-        self.assertTrue(follower.inner_inherited and follower.outer_inherited)
+        self.assertEqual((row.rim_offset, row.rim_thickness), (2.0, 13.0))
+        self.assertFalse(row.rim_inherited)
+        (follower,) = build_roi_rows([_roi(2)], [], self.defaults)  # no border of its own: the default (4, 4)
+        self.assertEqual((follower.rim_offset, follower.rim_thickness), (4.0, 4.0))
+        self.assertTrue(follower.rim_inherited)
 
     def test_colour_label_group_mask_and_nudges(self) -> None:
         plain = _roi(1)
@@ -295,7 +297,7 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual(VIEW_MODE_COLUMNS[VIEW_SIMPLE], (COLUMN_ID, COLUMN_NAME))
         self.assertEqual(
             VIEW_MODE_COLUMNS[VIEW_GEOMETRY],
-            (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT, COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE),
+            (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS, COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE),
         )
 
     def test_the_area_of_a_shape_in_pixels_and_in_the_display_unit(self) -> None:
@@ -318,11 +320,28 @@ class ShapeTest(unittest.TestCase):
         ordered = sort_rows([big, small], COLUMN_AREA, descending=False)
         self.assertEqual([r.area_px for r in ordered], sorted(r.area_px for r in ordered))
 
+    def test_the_rim_columns_are_the_same_for_every_shape_and_blank_without_a_rim(self) -> None:
+        """Offset and thickness are the same two numbers for a circle, a rectangle and a pixel map; a reference has no rim, nor has a ROI whose rim is switched off."""
+        mask = MaskShape(RoiMask(0, 0, np.ones((4, 4), dtype=bool)))
+        rois = [
+            _roi(1), _roi(2, shape=Rectangle(20.0, 10.0, 0.0)), _roi(3, shape=mask),
+            _roi(4, role="reference"), _roi(5, border=NO_BORDER), _roi(6, shape=Rectangle(20.0, 10.0, 0.0), border=Border(-1.5, 3.0)),
+        ]
+        rows = {r.roi_id: r for r in build_roi_rows(rois, [], self.defaults)}
+        for roi_id in (1, 2, 3):
+            self.assertTrue(all(has_cell(rows[roi_id], c) for c in RIM_COLUMNS), roi_id)
+            self.assertEqual((cell_number(rows[roi_id], COLUMN_RIM_OFFSET), cell_number(rows[roi_id], COLUMN_RIM_THICKNESS)), (4.0, 4.0), roi_id)
+        for roi_id in (4, 5):
+            self.assertFalse(any(has_cell(rows[roi_id], c) for c in RIM_COLUMNS), roi_id)
+            self.assertEqual([cell_number(rows[roi_id], c) for c in RIM_COLUMNS], [None, None], roi_id)
+        self.assertEqual((rows[6].rim_offset, rows[6].rim_thickness), (-1.5, 3.0), "an offset can be negative: the rim starts inside the shape")
+        self.assertEqual([r.roi_id for r in sort_rows(list(rows.values()), COLUMN_RIM_OFFSET, False)], [4, 5, 6, 1, 2, 3], "a ROI with no rim first, then by offset")
+
     def test_a_rectangle_has_a_width_a_height_and_an_angle_and_nothing_else_has(self) -> None:
         self.assertEqual(SHAPE_FIELDS[SHAPE_RECTANGLE], RECTANGLE_COLUMNS)
         for shape in (SHAPE_RING, SHAPE_DISK, SHAPE_MASK):
             self.assertFalse(set(SHAPE_FIELDS[shape]) & set(RECTANGLE_COLUMNS), shape)
-        self.assertFalse(set(SHAPE_FIELDS[SHAPE_RECTANGLE]) & {COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT})
+        self.assertFalse(set(SHAPE_FIELDS[SHAPE_RECTANGLE]) & {COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS})
 
     def test_a_rectangle_row_carries_its_size_and_angle(self) -> None:
         rectangle = self.row(shape=Rectangle(30.0, 14.5, 33.0))
@@ -340,4 +359,4 @@ class ShapeTest(unittest.TestCase):
 
     def test_the_shape_column_sorts(self) -> None:
         rows = build_roi_rows([_roi(1, 30.0), _roi(2, 10.0, border=NO_BORDER), _roi(3, 20.0)], [], self.defaults)
-        self.assertEqual([r.roi_id for r in sort_rows(rows, COLUMN_SHAPE, False)], [2, 1, 3], "disk before ring")
+        self.assertEqual([r.roi_id for r in sort_rows(rows, COLUMN_SHAPE, False)], [1, 3, 2], "the kinds together: the samples with a rim, then the one with no reference")
