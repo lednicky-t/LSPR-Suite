@@ -324,7 +324,7 @@ class ImagePanelTest(unittest.TestCase):
         self.assertEqual(self.selection.selected_roi_ids(), frozenset({self.first}))
         self.assertIn(roi_selection_lock.REFUSED_TEXT, self.messages, "and the status line says why nothing happened")
 
-    def test_the_roi_menu_has_lock_selection_and_greys_what_would_change_the_selection(self) -> None:
+    def test_the_roi_menu_has_lock_selection_and_leaves_out_what_would_change_the_selection(self) -> None:
         self.selection.set_roi_selection({self.first})
         scene = self._scene(40.0, 40.0)
         patcher, seen = _menu_probe(pick=roi_selection_lock.MENU_TEXT)
@@ -332,7 +332,7 @@ class ImagePanelTest(unittest.TestCase):
             self.panel._interaction._show_roi_menu(scene)
         entries = {text: (enabled, checked) for text, enabled, checked in seen[0]}
         self.assertEqual(entries[roi_selection_lock.MENU_TEXT], (True, False))
-        self.assertTrue(entries["Deselect"][0], "free: Deselect is offered")
+        self.assertIn("Deselect 1 ROI", entries, "free: Deselect is offered")
         self.assertTrue(self.selection.roi_selection_locked(), "the entry locked the selection")
 
         patcher, seen = _menu_probe()
@@ -340,7 +340,7 @@ class ImagePanelTest(unittest.TestCase):
             self.panel._interaction._show_roi_menu(self._scene(100.0, 80.0))  # a right-click on the other ROI
         entries = {text: (enabled, checked) for text, enabled, checked in seen[0]}
         self.assertEqual(entries[roi_selection_lock.MENU_TEXT], (True, True), "locked: the entry is checked")
-        self.assertFalse(entries["Deselect"][0], "locked: Deselect would be refused, so it is greyed")
+        self.assertNotIn("Deselect 1 ROI", entries, "locked: Deselect would be refused, so it is left out (2026-11-19: not greyed)")
         self.assertEqual(self.selection.selected_roi_ids(), frozenset({self.first}), "the right-click did not select the other ROI")
 
     def test_the_menu_choice_toggles_the_lock(self) -> None:

@@ -56,6 +56,7 @@ try:
     )
     from lspr_imaging_app.panels.roi_table.rows import (
         COLUMN_ANGLE,
+        COLUMN_AREA,
         COLUMN_HEIGHT,
         COLUMN_ID,
         COLUMN_NAME,
@@ -844,26 +845,113 @@ class CommandTest(_PanelCase):
         self.assertIn("Ungroup (keeps the ROIs)", labels)
         self.assertIn("Delete group and its ROIs", labels)
         self.assertNotIn("Select members", labels)  # a group's members are always selected with it
-        move = next(a for a in menu.actions() if a.text() == "Move group").menu()
-        down = next(a for a in move.actions() if a.text() == "Down")
-        self.assertFalse(down.isEnabled(), "only one group")
+        self.assertNotIn("Move group", labels, "one group has nowhere to move: no Move entry (2026-11-19: what cannot be done is left out)")
         ungrouped = self.model.group_index(None)
         menu = QMenu()
         self.panel._fill_group_menu(menu, ungrouped)
         self.assertEqual([a.text() for a in menu.actions() if a.text()], ["Expand", "Collapse"])
 
-    def test_the_roi_menu_disables_moves_when_not_sorted_by_number(self) -> None:
+    @staticmethod
+    def _entries(menu):
+        """Every entry of a menu and its submenus (not the separators)."""
+        found = []
+        for action in menu.actions():
+            if action.isSeparator():
+                continue
+            found.append(action)
+            if action.menu() is not None:
+                found.extend(CommandTest._entries(action.menu()))
+        return found
+
+    def test_every_entry_of_the_roi_and_group_menus_wears_an_icon(self) -> None:
+        """2026-11-19 (maintainer: icons before the texts). The names of the groups under "Add to group" are the one kind of entry with no command to picture."""
+        self.toolbox.group_rois((1, 2), "A")
+        self.refresh()
+        self.selection.set_roi_selection({1, 3})
+        menu = QMenu()
+        self.panel._fill_roi_menu(menu)
+        add_to = next(a for a in menu.actions() if a.text() == "Add to group").menu()
+        bare = [a.text() for a in self._entries(menu) if a.icon().isNull() and a not in add_to.actions()]
+        self.assertEqual(bare, [])
+        menu = QMenu()
+        self.panel._fill_group_menu(menu, self.header("group_1"))
+        self.assertEqual([a.text() for a in self._entries(menu) if a.icon().isNull()], [])
+
+    def _texts(self, fill, *args) -> list[str]:
+        menu = QMenu()
+        fill(menu, *args)
+        return [a.text() for a in menu.actions() if a.text()]
+
+    def test_the_roi_menu_offers_only_what_the_selection_allows(self) -> None:
+        """2026-11-19 (maintainer): an entry whose prerequisite is not met is not in the menu."""
+        self.selection.set_roi_selection({1})
+        texts = self._texts(self.panel._fill_roi_menu)
+        self.assertNotIn("Remove from group", [t.split("\t")[0] for t in texts], "no selected ROI is grouped")
+        self.assertNotIn("Clear color", texts, "no selected ROI has a colour of its own")
+        self.assertNotIn("Add to group", texts, "there is no group to add to")
+        self.assertIn("Delete ROI", texts)
+        self.toolbox.group_rois((1, 2), "A")
+        self.toolbox.set_roi_colors((1,), "#112233")
+        self.refresh()
+        texts = self._texts(self.panel._fill_roi_menu)
+        self.assertIn("Remove from group\tCtrl+Shift+G", texts)
+        self.assertIn("Clear color", texts)
+        self.assertIn("Add to group", texts)
+
+    def test_with_no_roi_selected_the_roi_menu_offers_no_roi_command(self) -> None:
+        """A locked, empty selection: the menu a right click on a row opens then has nothing that acts on ROIs."""
+        self.selection.set_roi_selection(set())
+        self.assertEqual(self._texts(self.panel._fill_roi_menu), [])
+
+    def test_the_group_menu_offers_the_moves_that_would_change_something(self) -> None:
+        self._three_groups()
+        def move(group_id):
+            menu = self._menu_of(group_id)
+            return [a.text() for a in next(x for x in menu.actions() if x.text() == "Move group").menu().actions()]
+
+        self.assertEqual(move("group_1"), ["Down", "To bottom"], "the first group cannot go up")
+        self.assertEqual(move("group_2"), ["To top", "Up", "Down", "To bottom"])
+        self.assertEqual(move("group_3"), ["To top", "Up"], "the last group cannot go down")
+
+    def _menu_of(self, group_id: str):
+        menu = QMenu()
+        self.panel._fill_group_menu(menu, self.header(group_id))
+        return menu
+
+    def test_rename_is_left_out_for_several_groups_and_expand_in_the_groups_only_view(self) -> None:
+        self._three_groups()
+        texts = self._texts(self.panel._fill_group_menu, self.header("group_1"))
+        self.assertIn("Rename…", texts)
+        self.assertIn("Expand", texts)
+        self.select_in_view(self.header("group_1"), self.header("group_2"))
+        self.assertNotIn("Rename…", self._texts(self.panel._fill_group_menu, self.header("group_1")))
+        self.panel.set_group_only(True)
+        self.assertNotIn("Expand", self._texts(self.panel._fill_group_menu, self.header("group_1")))
+
+    def test_the_roi_menu_shows_the_group_keys(self) -> None:
+        self.toolbox.group_rois((1, 2), "A")
+        self.refresh()
+        self.selection.set_roi_selection({1, 3})
+        menu = QMenu()
+        self.panel._fill_roi_menu(menu)
+        texts = [a.text() for a in menu.actions()]
+        self.assertIn("Group 2 ROIs…\tCtrl+G", texts)
+        self.assertIn("Remove from group\tCtrl+Shift+G", texts)
+
+    def test_the_header_menu_entries_wear_icons(self) -> None:
+        bare = [a.text() for a in self._entries(self.panel._view_menu) if a.icon().isNull()]
+        self.assertEqual(bare, [])
+
+    def test_the_roi_menu_leaves_out_moves_when_not_sorted_by_number(self) -> None:
         self.selection.set_roi_selection({2})
         menu = QMenu()
         self.panel._fill_roi_menu(menu)
         move = next(a for a in menu.actions() if a.text() == "Move")
-        self.assertTrue(move.isEnabled())
         self.assertEqual([a.text() for a in move.menu().actions()], ["To top", "Up", "Down", "To bottom"])
         self.panel._on_header_clicked(COLUMN_Y)
         menu = QMenu()
         self.panel._fill_roi_menu(menu)
-        move = next(a for a in menu.actions() if a.text() == "Move")
-        self.assertFalse(move.isEnabled())
+        self.assertNotIn("Move", [a.text() for a in menu.actions()], "sorted by something else: Move is left out, not greyed")
 
     def test_sorting_by_label_orders_the_groups_and_keeps_collapsed_groups_collapsed(self) -> None:
         self.toolbox.group_rois((1,), "B")
@@ -1354,7 +1442,7 @@ class ViewModeTest(_PanelCase):
         self.addCleanup(self.panel.hide)
 
     def test_geometry_is_the_default_and_simple_shows_only_id_and_label(self) -> None:
-        geometry = [COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT]
+        geometry = [COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT]
         self.assertEqual(self.shown_left_to_right(), geometry)
         self.panel._view_actions["simple"].trigger()
         self.assertEqual(self.shown_left_to_right(), [COLUMN_ID, COLUMN_NAME])
@@ -1449,6 +1537,110 @@ class ViewModeTest(_PanelCase):
             self.panel._view_actions[mode].trigger()
             _APP.processEvents()
             self.assertFalse(self.tree.viewport().grab().isNull())
+
+
+class AreaColumnTest(_PanelCase):
+    """The Area column (2026-11-19): the area of each ROI's own region, in pixels or µm² as the unit says, on screen right after Shape (Geometry view)."""
+
+    def setUp(self) -> None:
+        super().setUp()  # ROIs 1-5: circles of 6 px diameter
+        self.rectangle_id = self.toolbox.add_shaped_roi(60.0, 5.0, Rectangle(30.0, 14.0, 33.0))  # ROI 6
+        plane = np.zeros((4, 5), dtype=bool)
+        plane[:, :3] = True
+        plane[0, 4] = True  # 13 pixels, not all joined: a count, not an area of an outline
+        self.mask_id = self.toolbox.add_shaped_roi(80.0, 5.0, MaskShape(RoiMask(78, 3, plane)))  # ROI 7
+        self.refresh()
+
+    def on_screen(self) -> list[int]:
+        return sorted((c for c in range(COLUMN_COUNT) if not self.tree.isColumnHidden(c)), key=self.tree.header().visualIndex)
+
+    def use_micrometers(self) -> None:
+        self.geometry.restore_settings(
+            GeometrySettings(calibration_enabled=True, microns_per_pixel_x=0.5, microns_per_pixel_y=0.5, display_units="um")
+        )
+        self.refresh()
+
+    def test_it_sits_between_the_shape_and_the_first_size_column(self) -> None:
+        order = self.on_screen()
+        self.assertEqual(order[order.index(COLUMN_SHAPE) + 1], COLUMN_AREA)
+        self.assertEqual(order[order.index(COLUMN_AREA) + 1], COLUMN_SAMPLE)
+        self.assertEqual(self.model.headerData(COLUMN_AREA, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole), "Area")
+
+    def test_the_simple_view_does_not_show_it(self) -> None:
+        self.panel._view_actions["simple"].trigger()
+        self.assertTrue(self.tree.isColumnHidden(COLUMN_AREA))
+        self.panel._view_actions["geometry"].trigger()
+        self.assertFalse(self.tree.isColumnHidden(COLUMN_AREA))
+        order = self.on_screen()
+        self.assertEqual(order[order.index(COLUMN_SHAPE) + 1], COLUMN_AREA, "still after the shape when the mode comes back")
+
+    def test_pixels_are_a_count_for_every_shape(self) -> None:
+        self.assertEqual(self.text(1, COLUMN_AREA), "28", "a circle of 6 px: pi x 3^2 = 28.27")
+        self.assertEqual(self.text(self.rectangle_id, COLUMN_AREA), "420", "30 x 14, whatever its angle")
+        self.assertEqual(self.text(self.mask_id, COLUMN_AREA), "13", "a mask is its own pixels, counted")
+
+    def test_micrometers_are_the_pixel_area_times_the_pixel_size_squared(self) -> None:
+        self.use_micrometers()
+        self.assertEqual(self.text(1, COLUMN_AREA), "7.1", "28.27 px^2 x 0.25 (0.5 µm per px, squared)")
+        self.assertEqual(self.text(self.rectangle_id, COLUMN_AREA), "105.0")
+        self.assertEqual(self.text(self.mask_id, COLUMN_AREA), "3.2")
+
+    def test_it_follows_a_resize(self) -> None:
+        self.toolbox.resize_rois([1], sample_diameter_px=10.0)
+        self.refresh()
+        self.assertEqual(self.text(1, COLUMN_AREA), "79", "pi x 5^2 = 78.54")
+        self.toolbox.resize_rectangles([self.rectangle_id], width_px=20.0)
+        self.refresh()
+        self.assertEqual(self.text(self.rectangle_id, COLUMN_AREA), "280")
+
+    def test_nothing_can_be_typed_into_it(self) -> None:
+        for roi_id in (1, self.rectangle_id, self.mask_id):
+            self.assertFalse(self.model.flags(self.cell(roi_id, COLUMN_AREA)) & Qt.ItemFlag.ItemIsEditable, roi_id)
+
+    def test_the_numbers_are_right_aligned_and_the_tool_tips_say_where_they_come_from(self) -> None:
+        align = self.model.data(self.cell(1, COLUMN_AREA), Qt.ItemDataRole.TextAlignmentRole)
+        self.assertTrue(align & int(Qt.AlignmentFlag.AlignRight))
+        tip = lambda roi_id: self.model.data(self.cell(roi_id, COLUMN_AREA), Qt.ItemDataRole.ToolTipRole)  # noqa: E731
+        self.assertIn("13 pixels", tip(self.mask_id))
+        self.assertIn("420.0 px²", tip(self.rectangle_id))
+        self.assertIn("28.3 px²", tip(1))
+        self.assertNotIn("µm²", tip(1))
+        self.use_micrometers()
+        self.assertIn("7.07 µm²", tip(1))
+        self.assertIn("pixels", self.model.headerData(COLUMN_AREA, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole))
+
+    def test_sorting_by_it_orders_by_size_and_ties_by_id(self) -> None:
+        self.model.set_sort(COLUMN_AREA, False)
+        ascending = self.shown_ids()
+        self.assertEqual(ascending, [self.mask_id, 1, 2, 3, 4, 5, self.rectangle_id], "13 px, five equal circles in id order, 420 px")
+        self.model.set_sort(COLUMN_AREA, True)
+        self.assertEqual(self.shown_ids(), ascending[::-1], "descending is the exact reverse, as for every other column")
+
+    def test_it_can_be_hidden_like_any_column_and_a_saved_hide_of_another_column_still_means_the_same(self) -> None:
+        self.tree.set_hidden_keys({COLUMN_AREA})
+        self.assertTrue(self.tree.isColumnHidden(COLUMN_AREA))
+        self.tree.set_hidden_keys({COLUMN_ANGLE})  # the numbers of the older columns are unchanged: 10 is still the angle
+        self.assertFalse(self.tree.isColumnHidden(COLUMN_AREA))
+        self.assertTrue(self.tree.isColumnHidden(COLUMN_ANGLE))
+
+    def test_a_width_list_saved_before_the_area_existed_is_still_read(self) -> None:
+        store = UiStateStore({"roi_table/column_widths": [70, 90, 61, 62, 63, 64, 65, 40, 41, 42, 43]})  # the 11 columns of the day before
+        self.panel.restore_ui_state(store)
+        self.assertEqual(self.tree.columnWidth(COLUMN_X), 61)
+        self.assertEqual(self.tree.columnWidth(COLUMN_ANGLE), 43)
+        self.assertGreater(self.tree.columnWidth(COLUMN_AREA), 0, "the column it did not have keeps its default")
+
+    def test_the_rightmost_column_on_screen_has_no_line_on_its_right_whatever_its_number(self) -> None:
+        """The area has the highest number but sits in the middle: the delegate must not take the model's last column for the rightmost one."""
+        from lspr_imaging_app.panels.roi_table.delegate import RoiTableDelegate
+
+        last = RoiTableDelegate._last_column_on_screen
+        self.assertEqual(last(self.tree, self.model), COLUMN_ANGLE, "with a rectangle in the table")
+        self.toolbox.delete_rois([self.rectangle_id])
+        self.refresh()
+        self.assertEqual(last(self.tree, self.model), COLUMN_RING_OUT, "the angle is hidden without a rectangle")
+        self.panel._view_actions["simple"].trigger()
+        self.assertEqual(last(self.tree, self.model), COLUMN_NAME, "the Simple view has the number and the label")
 
 
 class RectangleColumnsTest(_PanelCase):
@@ -2049,23 +2241,20 @@ class CellCopyPasteTest(_PanelCase):
 
     # -- the menu and the painting --------------------------------------------------------------
     def test_the_menu_has_copy_paste_and_cancel_with_their_keys_and_states(self) -> None:
-        menu = QMenu()
-        self.panel._fill_cell_menu(menu)
-        copy, paste, cancel = [a for a in menu.actions() if not a.isSeparator()]
-        self.assertEqual((copy.text(), paste.text(), cancel.text()), ("Copy cells\tCtrl+C", "Paste cells\tCtrl+V", "Cancel cell selection\tEsc"))
-        self.assertFalse(copy.isEnabled() or paste.isEnabled() or cancel.isEnabled(), "nothing picked, nothing copied")
+        def entries():
+            self._menu = QMenu()  # (kept: the entries go with their menu)
+            self.panel._fill_cell_menu(self._menu)
+            return [a for a in self._menu.actions() if not a.isSeparator()]
+
+        self.assertEqual(entries(), [], "nothing picked, nothing copied: none of the three is offered (2026-11-19: left out, not greyed)")
         self.select(1, 2)
         self.drag((1, COLUMN_SAMPLE), (2, COLUMN_SAMPLE))
-        menu = QMenu()
-        self.panel._fill_cell_menu(menu)
-        copy, paste, cancel = [a for a in menu.actions() if not a.isSeparator()]
-        self.assertTrue(copy.isEnabled() and cancel.isEnabled())
-        self.assertFalse(paste.isEnabled(), "nothing copied yet")
+        copy, cancel = entries()  # cells are picked: Copy and Cancel; nothing copied yet, so no Paste
+        self.assertEqual((copy.text(), cancel.text()), ("Copy cells\tCtrl+C", "Cancel cell selection\tEsc"))
         copy.trigger()
-        menu = QMenu()
-        self.panel._fill_cell_menu(menu)
-        self.assertTrue([a for a in menu.actions() if a.text().startswith("Paste")][0].isEnabled())
-        [a for a in menu.actions() if a.text().startswith("Cancel")][0].trigger()
+        copy, paste, cancel = entries()
+        self.assertEqual(paste.text(), "Paste cells\tCtrl+V")
+        cancel.trigger()
         self.assertEqual(self.picked(), ((), ()))
         self.assertIsNone(self.tree.copied_edges(self.cell(1, COLUMN_SAMPLE)))
 

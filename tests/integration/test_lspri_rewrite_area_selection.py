@@ -178,6 +178,78 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         plain_labels = [label for label, _enabled in plain.call_args.args[1]]
         self.assertEqual(plain_labels[-2:], ["Invert selection", "Deselect"])
 
+    def test_the_armed_tools_right_click_menu_offers_add_roi_from_the_selection_only_with_a_selection(self) -> None:
+        """2026-11-19 (maintainer): an armed selection tool's menu offers Add ROI > Current selection, as the ROIs tab's menu does."""
+        from unittest.mock import patch
+
+        from PyQt6.QtCore import QPointF
+
+        from lspr_imaging_app.panels.image.roi_context_menu import ADD_ROI_SUBMENU, ADD_SELECTION_BLOBS, ADD_SELECTION_ONE
+
+        interaction = self.image_panel._interaction
+        scene = self.image_panel._plot.vb.mapViewToScene(QPointF(10.5, 10.5))
+        target = "lspr_imaging_app.panels.image.interaction.show_tool_context_menu"
+
+        with patch(target, return_value=None) as menu:  # nothing selected: the entry is not available (the menu leaves it out)
+            interaction._show_select_area_context_menu(scene)
+        self.assertIn((ADD_ROI_SUBMENU, False), menu.call_args.args[1])
+
+        self.area.set_rectangle(5, 5, 20, 20)
+        with patch(target, return_value=None) as menu:
+            interaction._show_select_area_context_menu(scene)
+        entries = menu.call_args.args[1]
+        self.assertIn((ADD_ROI_SUBMENU, True), entries)
+        labels = [label for label, _available in entries]
+        self.assertGreater(labels.index(ADD_ROI_SUBMENU), labels.index("Select ROIs in selection"), "ROI entries together, ahead of Lock")
+        self.assertLess(labels.index(ADD_ROI_SUBMENU), labels.index("Lock"))
+        self.assertIn(ADD_ROI_SUBMENU, menu.call_args.kwargs["submenus"])
+        self.assertFalse(menu.call_args.kwargs["icons"][ADD_ROI_SUBMENU].isNull())
+
+        before = len(self.roi_toolbox.rois())
+        with patch(target, return_value=ADD_SELECTION_ONE):
+            interaction._show_select_area_context_menu(scene)
+        self.assertEqual(len(self.roi_toolbox.rois()), before + 1)
+        self.assertTrue(self.area.has_selection(), "the selection stays")
+        with patch(target, return_value=ADD_SELECTION_BLOBS):
+            interaction._show_select_area_context_menu(scene)
+        self.assertGreater(len(self.roi_toolbox.rois()), before + 1)
+
+    def test_the_armed_tools_add_roi_submenu_holds_current_selection_with_its_two_choices(self) -> None:
+        """The real submenu (no pop-up): Add ROI > Current selection > All together / Separate blobs, and a picked entry answers with its choice."""
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMenu, QWidget
+
+        from lspr_imaging_app.panels.image import context_menu
+        from lspr_imaging_app.panels.image.roi_context_menu import (
+            ADD_ROI_SUBMENU,
+            ADD_SELECTION_BLOBS,
+            ADD_SELECTION_ONE,
+            fill_add_roi_from_selection,
+        )
+
+        shown: list = []
+        pick = {"text": "Separate blobs"}
+
+        class Spy(QMenu):
+            def exec(self, *_args):  # noqa: A003 - Qt's name
+                add_roi = next(a for a in self.actions() if a.text() == ADD_ROI_SUBMENU)
+                current = next(a for a in add_roi.menu().actions() if a.text() == "Current selection")
+                shown.append([a.text() for a in current.menu().actions()])
+                return next(a for a in current.menu().actions() if a.text() == pick["text"])
+
+        with mock.patch.object(context_menu, "QMenu", Spy):
+            chosen = context_menu.show_tool_context_menu(
+                QWidget(), [(ADD_ROI_SUBMENU, True), ("Exit tool", True)], submenus={ADD_ROI_SUBMENU: fill_add_roi_from_selection}
+            )
+            pick["text"] = "All together as one ROI"
+            chosen_one = context_menu.show_tool_context_menu(
+                QWidget(), [(ADD_ROI_SUBMENU, True), ("Exit tool", True)], submenus={ADD_ROI_SUBMENU: fill_add_roi_from_selection}
+            )
+        self.assertEqual(shown[0], ["All together as one ROI", "Separate blobs"])
+        self.assertEqual(chosen, ADD_SELECTION_BLOBS)
+        self.assertEqual(chosen_one, ADD_SELECTION_ONE)
+
     def test_only_the_picked_tool_is_checked(self) -> None:
         self._pick(AreaSelectionMode.LASSO)
         self._pick(AreaSelectionMode.WAND)

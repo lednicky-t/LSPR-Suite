@@ -50,8 +50,8 @@ try:
         ADD_ROI,
         ADD_SELECTION_BLOBS,
         ADD_SELECTION_ONE,
+        DESELECT_AREA,
         LINK,
-        RESIZE_RECTANGLE,
         MAKE_REFERENCE,
         MAKE_SAMPLE,
         UNLINK,
@@ -61,6 +61,7 @@ try:
     from lspr_imaging_app.roi import rasterize as rz
     from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
+    from lspr_imaging_app.panels import roi_selection_lock
     from lspr_imaging_app.shortcuts import display
     from lspr_imaging_app.undo import undo_manager
 
@@ -359,46 +360,24 @@ class Phase3UiTest(unittest.TestCase):
         self.assertEqual(self.roi(1).center_x, 20.0)
 
 
-    # -- Rectangle size... ----------------------------------------------------------------------
+    # -- Deselect area (2026-11-19): with no tool armed the ROI menu is the only one, and it must be able to drop the pixel selection ---------
 
-    def _two_rectangles(self) -> None:
-        self.roi_toolbox.add_shaped_roi(10.0, 55.0, Rectangle(20.0, 10.0, 0.0))  # id 4
-        self.roi_toolbox.add_shaped_roi(40.0, 55.0, Rectangle(30.0, 12.0, 10.0))  # id 5
+    def test_the_menu_is_told_whether_there_is_an_area_selection(self) -> None:
+        self.assertFalse(self.right_click(10.0, 55.0, None).call_args.kwargs["can_deselect_area"])
+        self.select_pixels((10, 30, 10, 30))
+        self.assertTrue(self.right_click(10.0, 55.0, None).call_args.kwargs["can_deselect_area"])
+
+    def test_deselect_area_drops_the_area_selection_in_one_undo_step_and_leaves_the_roi_selection(self) -> None:
+        self.selection.set_roi_selection({1, 2})
+        self.select_pixels((10, 30, 10, 30))
         undo_manager.clear()
+        self.right_click(10.0, 55.0, RoiMenuChoice(DESELECT_AREA))
+        self.assertFalse(self.panel._area_selection.has_selection())
+        self.assertEqual(self.selection.selected_roi_ids(), frozenset({1, 2}), "only the pixel selection is dropped")
+        undo_manager.undo()
+        self.assertTrue(self.panel._area_selection.has_selection())
 
-    def test_rectangle_size_applies_only_the_fields_that_were_changed_to_every_selected_rectangle(self) -> None:
-        self._two_rectangles()
-        self.selection.set_roi_selection({1, 4, 5})  # a circle among them is left alone
-        with mock.patch("lspr_imaging_app.panels.image.roi_creation.ask_rectangle_size", return_value={"angle_deg": 30.0}) as ask:
-            self.right_click(10.0, 55.0, RoiMenuChoice(RESIZE_RECTANGLE))
-        self.assertEqual([s.width_px for s in ask.call_args.args[1]], [20.0, 30.0])  # the dialog is offered the rectangles only
-        self.assertEqual(self.roi(4).shape, Rectangle(20.0, 10.0, 30.0))  # its own width and height kept
-        self.assertEqual(self.roi(5).shape, Rectangle(30.0, 12.0, 30.0))
-        self.assertEqual(type(self.roi(1).shape).__name__, "Circle")
-        self.assertIn("Resized 2 rectangle ROIs", self.messages[-1])
-        undo_manager.undo()  # one step
-        self.assertEqual((self.roi(4).shape.angle_deg, self.roi(5).shape.angle_deg), (0.0, 10.0))
-
-    def test_cancelling_the_dialog_changes_nothing(self) -> None:
-        self._two_rectangles()
-        self.selection.set_roi_selection({4})
-        with mock.patch("lspr_imaging_app.panels.image.roi_creation.ask_rectangle_size", return_value=None):
-            self.right_click(10.0, 55.0, RoiMenuChoice(RESIZE_RECTANGLE))
-        self.assertEqual(self.roi(4).shape, Rectangle(20.0, 10.0, 0.0))
-        self.assertFalse(undo_manager.can_undo)
-
-    def test_a_refused_size_says_why(self) -> None:
-        self._two_rectangles()
-        self.selection.set_roi_selection({4})
-        with mock.patch("lspr_imaging_app.panels.image.roi_creation.ask_rectangle_size", return_value={"width_px": 0.2}):
-            self.right_click(10.0, 55.0, RoiMenuChoice(RESIZE_RECTANGLE))
-        self.assertIn("width must be at least", self.messages[-1])
-        self.assertEqual(self.roi(4).shape, Rectangle(20.0, 10.0, 0.0))
-
-    def test_the_menu_is_told_how_many_rectangles_are_selected(self) -> None:
-        self._two_rectangles()
-        self.selection.set_roi_selection({1, 4, 5})
-        self.assertEqual(self.right_click(10.0, 55.0, None).call_args.kwargs["selected_rectangles"], 2)
+    # -- the size dialog (no menu entry opens it since 2026-11-19: the table's W / H / angle columns and the handles do the job) ------
 
     def test_the_dialog_reports_only_what_was_changed(self) -> None:
         dialog = RectangleSizeDialog(self.panel, Rectangle(20.0, 10.0, 5.0), 3)
@@ -424,9 +403,15 @@ class ContextMenuTest(unittest.TestCase):
         parent = QtWidgets.QWidget()
         with mock.patch.object(menu_module, "QMenu", Recording):
             menu_module.show_roi_context_menu(
-                parent, selected_count=kwargs.pop("selected_count", 0), groups=[], any_selected_grouped=False, can_add=kwargs.pop("can_add", True), **kwargs
+                parent, selected_count=kwargs.pop("selected_count", 0), groups=kwargs.pop("groups", []),
+                any_selected_grouped=kwargs.pop("any_selected_grouped", False), can_add=kwargs.pop("can_add", True), **kwargs,
             )
         return built[0], parent
+
+    @staticmethod
+    def _texts(menu) -> list[str]:
+        """The entries of the menu itself (no separators), in order."""
+        return [a.text() for a in menu.actions() if not a.isSeparator()]
 
     @staticmethod
     def _entry(menu, *path):
@@ -441,14 +426,14 @@ class ContextMenuTest(unittest.TestCase):
         self.assertEqual([a.text() for a in add.menu().actions()], ["Circle", "Rectangle", "Current selection"])
         self.assertEqual([a.text() for a in self._entry(menu, "Add ROI", "Current selection").menu().actions()], ["All together as one ROI", "Separate blobs"])
 
-    def test_current_selection_is_greyed_without_an_area_selection_and_circle_rectangle_without_room(self) -> None:
+    def test_add_roi_offers_only_what_can_be_done_and_is_left_out_when_nothing_can(self) -> None:
+        """2026-11-19 (maintainer): an entry whose prerequisite is not met is not in the menu."""
         menu, _parent = self._build(can_add_from_selection=False)
-        self.assertFalse(self._entry(menu, "Add ROI", "Current selection").isEnabled())
-        self.assertTrue(self._entry(menu, "Add ROI", "Circle").isEnabled())
+        self.assertEqual([a.text() for a in self._entry(menu, "Add ROI").menu().actions()], ["Circle", "Rectangle"])  # no area selection: no Current selection
         menu, _parent = self._build(can_add=False, can_add_from_selection=True)
-        self.assertFalse(self._entry(menu, "Add ROI", "Circle").isEnabled())
-        self.assertFalse(self._entry(menu, "Add ROI", "Rectangle").isEnabled())
-        self.assertTrue(self._entry(menu, "Add ROI", "Current selection").isEnabled())
+        self.assertEqual([a.text() for a in self._entry(menu, "Add ROI").menu().actions()], ["Current selection"])  # no room for a circle here
+        menu, _parent = self._build(can_add=False, can_add_from_selection=False)
+        self.assertNotIn("Add ROI", self._texts(menu))
 
     def test_make_this_roi_checks_the_role_the_whole_selection_has(self) -> None:
         menu, _parent = self._build(selected_count=2, selected_roles=(0, 2))
@@ -457,21 +442,113 @@ class ContextMenuTest(unittest.TestCase):
         menu, _parent = self._build(selected_count=2, selected_roles=(1, 1))  # mixed: neither
         self.assertFalse(self._entry(menu, "Make these ROIs", "Reference").isChecked() or self._entry(menu, "Make these ROIs", "Sample").isChecked())
         menu, _parent = self._build(selected_count=0)
-        self.assertFalse(self._entry(menu, "Make these ROIs").isEnabled())
+        self.assertFalse([t for t in self._texts(menu) if t.startswith("Make ")], "no ROI selected: nothing to make a sample or a reference")
 
-    def test_rectangle_size_is_enabled_only_with_a_rectangle_selected(self) -> None:
-        menu, _parent = self._build(selected_count=1, selected_rectangles=0)
-        self.assertFalse(self._entry(menu, "Rectangle size...").isEnabled())
-        menu, _parent = self._build(selected_count=1, selected_rectangles=1)
-        self.assertTrue(self._entry(menu, "Rectangle size...").isEnabled())
+    def test_the_selection_commands_come_first_together(self) -> None:
+        """Add ROI, Delete, Select whole group, Deselect, Lock ROI selection: the first block (maintainer, 2026-11-19)."""
+        menu, _parent = self._build(
+            selected_count=2, selected_roles=(1, 1), can_add_from_selection=True, can_link=True, can_unlink=True, any_selected_grouped=True,
+            clicked_group=("G", 3), groups=[("g1", "G")],
+        )
+        texts = self._texts(menu)
+        first_separator = next(i for i, a in enumerate(menu.actions()) if a.isSeparator())
+        self.assertEqual(
+            [a.text() for a in menu.actions()[:first_separator]],
+            ["Add ROI", "Delete 2 ROIs", 'Select whole group "G" (3 ROIs)', "Deselect 2 ROIs", roi_selection_lock.MENU_TEXT],
+        )
+        self.assertEqual(texts[5:], ["Make these ROIs", "Link references", "Unlink", "Group 2 selected ROIs...", "Add to group", "Ungroup"])
 
-    def test_link_and_unlink_are_enabled_by_what_the_selection_holds_and_show_their_keys(self) -> None:
+    def test_deselect_area_is_offered_only_with_an_area_selection_and_sits_by_the_roi_deselect(self) -> None:
+        menu, _parent = self._build(selected_count=2)
+        self.assertNotIn("Deselect area", self._texts(menu))
+        menu, _parent = self._build(selected_count=2, can_deselect_area=True)
+        texts = self._texts(menu)
+        self.assertEqual(texts[texts.index("Deselect 2 ROIs") + 1], "Deselect area")
+        menu, _parent = self._build(can_deselect_area=True)  # no ROI selected, no ROI to deselect: this one is still there
+        self.assertEqual(self._texts(menu), ["Add ROI", "Deselect area", roi_selection_lock.MENU_TEXT])
+        self.assertFalse(self._entry(menu, "Deselect area").icon().isNull())
+
+    def test_without_a_selection_only_add_roi_and_the_lock_remain(self) -> None:
+        menu, _parent = self._build()
+        self.assertEqual(self._texts(menu), ["Add ROI", roi_selection_lock.MENU_TEXT])
+
+    def test_deselect_and_select_whole_group_are_left_out_while_the_selection_is_locked(self) -> None:
+        menu, _parent = self._build(selected_count=2, clicked_group=("G", 3), locked=True)
+        texts = self._texts(menu)
+        self.assertNotIn("Deselect 2 ROIs", texts)
+        self.assertFalse([t for t in texts if t.startswith("Select whole group")])
+        self.assertTrue(self._entry(menu, roi_selection_lock.MENU_TEXT).isChecked())
+        self.assertIn("Delete 2 ROIs", texts)  # deleting does not change the selection
+
+    def test_select_whole_group_is_left_out_once_every_member_is_selected(self) -> None:
+        menu, _parent = self._build(selected_count=3, clicked_group=("G", 3), clicked_group_fully_selected=True)
+        self.assertFalse([t for t in self._texts(menu) if t.startswith("Select whole group")])
+        menu, _parent = self._build(selected_count=1, clicked_group=("G", 3))
+        self.assertIn('Select whole group "G" (3 ROIs)', self._texts(menu))
+
+    def test_ungroup_and_add_to_group_need_a_grouped_roi_and_a_group(self) -> None:
+        menu, _parent = self._build(selected_count=1)
+        self.assertNotIn("Ungroup", self._texts(menu))
+        self.assertNotIn("Add to group", self._texts(menu))
+        menu, _parent = self._build(selected_count=1, any_selected_grouped=True, groups=[("g1", "G")])
+        self.assertIn("Ungroup", self._texts(menu))
+        self.assertEqual([a.text() for a in self._entry(menu, "Add to group").menu().actions()], ["G"])
+
+    def test_remove_this_cubes_edit_needs_an_edit_on_this_cube(self) -> None:
+        menu, _parent = self._build(selected_count=1)
+        self.assertNotIn("Remove this cube's edit", self._texts(menu))
+        menu, _parent = self._build(selected_count=1, can_remove_cube_edit=True)
+        self.assertIn("Remove this cube's edit", self._texts(menu))
+
+    def test_the_menu_has_no_rectangle_size_entry(self) -> None:
+        """Removed 2026-11-19 (maintainer): the ROI table's W / H / angle columns and the rectangle's handles replace it."""
+        menu, _parent = self._build(selected_count=1)
+        self.assertFalse([a.text() for a in menu.actions() if a.text().startswith("Rectangle size")])
+
+    def test_every_entry_wears_an_icon_and_the_same_command_the_same_icon(self) -> None:
+        menu, _parent = self._build(
+            selected_count=2, selected_roles=(1, 1), can_add_from_selection=True, can_link=True, can_unlink=True,
+            clicked_group=("G", 2),
+        )
+        entries = []
+
+        def walk(node):
+            for action in node.actions():
+                if action.isSeparator():
+                    continue
+                entries.append(action)
+                if action.menu() is not None:
+                    walk(action.menu())
+
+        walk(menu)
+        self.assertGreater(len(entries), 15)
+        self.assertEqual([a.text() for a in entries if a.icon().isNull()], [])
+        from lspr_imaging_app.panels.menu_icons import menu_icon
+
+        delete = self._entry(menu, "Delete 2 ROIs")
+        self.assertEqual(delete.icon().pixmap(36, 36).toImage(), menu_icon("delete").pixmap(36, 36).toImage())  # the table's Delete is this bin too
+
+    def test_group_and_ungroup_show_their_keys(self) -> None:
+        menu, _parent = self._build(selected_count=2, any_selected_grouped=True)
+        group, ungroup = self._entry(menu, "Group 2 selected ROIs..."), self._entry(menu, "Ungroup")
+        self.assertEqual(group.shortcut(), QKeySequence(display("groups.group")))
+        self.assertEqual(ungroup.shortcut(), QKeySequence(display("groups.ungroup")))
+        self.assertTrue(group.isShortcutVisibleInContextMenu() and ungroup.isShortcutVisibleInContextMenu())
+
+    def test_link_and_unlink_are_in_the_menu_only_when_the_selection_holds_something_to_link_or_unlink(self) -> None:
         menu, _parent = self._build(selected_count=2, selected_roles=(1, 1), can_link=True, can_unlink=False)
-        link, unlink = self._entry(menu, "Link references"), self._entry(menu, "Unlink")
-        self.assertTrue(link.isEnabled())
-        self.assertFalse(unlink.isEnabled())
-        self.assertEqual(link.shortcut(), QKeySequence(display("links.link")))
+        texts = self._texts(menu)
+        self.assertIn("Link references", texts)
+        self.assertNotIn("Unlink", texts, "nothing selected is linked: Unlink is not offered (2026-11-19)")
+        menu, _parent = self._build(selected_count=2, selected_roles=(1, 1), can_link=False, can_unlink=True)  # already linked to each other
+        texts = self._texts(menu)
+        self.assertIn("Unlink", texts)
+        self.assertNotIn("Link references", texts)
+        link, unlink = None, self._entry(menu, "Unlink")
         self.assertEqual(unlink.shortcut(), QKeySequence(display("links.unlink")))
+        menu, _parent = self._build(selected_count=2, selected_roles=(1, 1), can_link=True, can_unlink=True)
+        link = self._entry(menu, "Link references")
+        self.assertEqual(link.shortcut(), QKeySequence(display("links.link")))
         self.assertTrue(link.isShortcutVisibleInContextMenu())
 
 

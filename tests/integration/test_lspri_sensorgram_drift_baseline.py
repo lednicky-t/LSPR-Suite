@@ -440,7 +440,10 @@ class DriftBaselinePanelTest(unittest.TestCase):
         self.assertTrue(entry().isEnabled())
         entry().trigger()
         self.assertEqual(self._points(), ((0, cube),))
-        self.assertFalse(entry().isEnabled())
+        menu = QMenu()  # nothing is left to share: the entry is left out, not greyed (2026-11-19)
+        self.drift.fill_context_menu(menu, self._x_of(3))
+        self._keep_menu = menu
+        self.assertNotIn(text, [a.text() for a in menu.actions()])
 
 
     # -- anchor marks and the plan bar during the edit mode ---------------------------------------------------------------------
@@ -550,7 +553,7 @@ class DriftBaselinePanelTest(unittest.TestCase):
         next(a for a in self._step_menu(1) if a.text() == "Make this step a baseline anchor").trigger()
         self._settle()
         self.assertEqual(len(said), 1)  # enough steps now: no second note
-        self.assertEqual(self._step_menu(0)[1].text(), "Make this step a baseline anchor")
+        self.assertEqual(self._step_menu(0)[1].text(), "Remove this step from the baseline anchors")  # step 0 is an anchor now: only Remove is offered
         self.assertTrue(all(line.baseline_note == "" for line in self._lines()))
         self.assertNotIn("Not corrected now", self.drift.shape.toolTip())
 

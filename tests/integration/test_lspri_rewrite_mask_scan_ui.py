@@ -142,7 +142,7 @@ class MaskScanUiTest(unittest.TestCase):
     def right_click(self, strip, index: int, count: int, y: int, choice: str | None):
         seen: dict[str, object] = {}
 
-        def fake_menu(_parent, *, header, entries, pos=None):
+        def fake_menu(_parent, *, header, entries, pos=None, icons=None):  # (`icons`: the menu icons of 2026-11-19, not looked at here)
             seen["header"], seen["entries"] = header, list(entries)
             return choice
 

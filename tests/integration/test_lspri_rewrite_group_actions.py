@@ -103,6 +103,36 @@ class GroupActionsTests(unittest.TestCase):
         self.controls.create_requested.emit()
         self.assertEqual(len(self.toolbox.groups()), 2)
 
+    def test_ctrl_g_groups_and_ctrl_shift_g_ungroups_like_the_buttons(self) -> None:
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QKeySequence
+
+        group, ungroup = self.actions.group_action, self.actions.ungroup_action
+        self.assertEqual(group.shortcut(), QKeySequence("Ctrl+G"))
+        self.assertEqual(ungroup.shortcut(), QKeySequence("Ctrl+Shift+G"))
+        self.assertEqual((group.shortcutContext(), ungroup.shortcutContext()), (Qt.ShortcutContext.ApplicationShortcut,) * 2)
+        self.names = ["Keyed"]
+        self.selection.set_roi_selection({1, 2})
+        group.trigger()
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["Keyed"])
+        ungroup.trigger()
+        self.assertEqual(self.toolbox.groups(), ())
+        self.assertEqual(len(self.toolbox.rois()), 6, "the ROIs stay")
+
+    def test_ctrl_shift_g_with_nothing_grouped_says_so_instead_of_doing_nothing(self) -> None:
+        self.selection.set_roi_selection({1, 2})
+        self.actions.ungroup_action.trigger()
+        self.assertEqual(self.statuses[-1], "Groups: none of the selected ROIs is in a group.")
+
+    def test_the_key_actions_live_on_the_given_widget_not_on_the_ribbon_buttons(self) -> None:
+        """A ribbon tab that is not the open one is hidden, and a hidden widget's shortcut does not fire: `action_parent` is the Image panel."""
+        from PyQt6.QtWidgets import QWidget
+
+        holder = QWidget()
+        actions = GroupActions(GroupControls(), toolbox=self.toolbox, selection=self.selection, action_parent=holder, ask_name=lambda *_a: None)
+        self.assertIn(actions.group_action, holder.actions())
+        self.assertIn(actions.ungroup_action, holder.actions())
+
     def test_ungroup_takes_the_place_of_group_when_grouped_rois_are_selected(self) -> None:
         self.names = ["Mine"]
         self.selection.set_roi_selection({1, 2})

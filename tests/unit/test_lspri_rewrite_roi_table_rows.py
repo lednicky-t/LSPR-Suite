@@ -23,6 +23,7 @@ if str(APP_SRC) not in sys.path:
 try:
     from lspr_imaging_app.panels.roi_table.rows import (
         COLUMN_ANGLE,
+        COLUMN_AREA,
         COLUMN_HEIGHT,
         COLUMN_ID,
         COLUMN_NAME,
@@ -49,6 +50,7 @@ try:
         build_sections,
         edit_text,
         format_angle,
+        format_area,
         format_length,
         from_display,
         micrometers,
@@ -59,9 +61,10 @@ try:
         sort_rows,
         step_target_index,
         to_display,
+        to_display_area,
     )
     from lspr_imaging_app.domain.roi_model import AreaRoi, AreaRoiDetectionSettings, AreaRoiGroup, RoiMask
-    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER, Rectangle
+    from lspr_imaging_app.domain.roi_shapes import Border, Circle, MaskShape, NO_BORDER, Rectangle, shape_area_px
     from lspr_imaging_app.roi.palette import DEFAULT_ROI_COLOR_HEX
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -292,8 +295,28 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual(VIEW_MODE_COLUMNS[VIEW_SIMPLE], (COLUMN_ID, COLUMN_NAME))
         self.assertEqual(
             VIEW_MODE_COLUMNS[VIEW_GEOMETRY],
-            (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT, COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE),
+            (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT, COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE),
         )
+
+    def test_the_area_of_a_shape_in_pixels_and_in_the_display_unit(self) -> None:
+        """2026-11-19: circle pi (D/2)^2, rectangle W x H (the angle changes nothing), mask its pixel count; µm^2 = px^2 x (µm per px)^2."""
+        plane = np.zeros((6, 7), dtype=bool)
+        plane[1:4, 2:6] = True
+        plane[5, 0] = True  # 13 pixels in two blobs
+        self.assertAlmostEqual(shape_area_px(Circle(20.0)), math.pi * 100.0, places=9)
+        self.assertEqual(shape_area_px(Rectangle(30.0, 14.0, 0.0)), 420.0)
+        self.assertEqual(shape_area_px(Rectangle(30.0, 14.0, 33.0)), 420.0)
+        self.assertEqual(shape_area_px(MaskShape(RoiMask(4, 5, plane))), 13.0)
+        self.assertEqual(self.row(shape=Rectangle(8.0, 4.0)).area_px, 32.0)
+        self.assertEqual(format_area(314.159, PIXELS), "314", "pixels: a count, no decimals")
+        self.assertEqual(format_area(314.159, micrometers(0.5)), "78.5", "µm^2: 314.159 x 0.25, one decimal")
+        self.assertAlmostEqual(to_display_area(100.0, micrometers(0.2)), 4.0, places=12, msg="the pixel size is squared, not just applied")
+
+    def test_the_area_column_sorts_by_area_and_ties_by_id(self) -> None:
+        small, big = self.row(shape=Circle(4.0)), self.row(shape=Rectangle(40.0, 40.0))
+        self.assertLess(small.area_px, big.area_px)
+        ordered = sort_rows([big, small], COLUMN_AREA, descending=False)
+        self.assertEqual([r.area_px for r in ordered], sorted(r.area_px for r in ordered))
 
     def test_a_rectangle_has_a_width_a_height_and_an_angle_and_nothing_else_has(self) -> None:
         self.assertEqual(SHAPE_FIELDS[SHAPE_RECTANGLE], RECTANGLE_COLUMNS)

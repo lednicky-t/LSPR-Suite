@@ -625,11 +625,13 @@ class PlanBarActionsTest(unittest.TestCase):
     def test_the_menu_offers_what_applies_to_the_step(self) -> None:
         self.actions.set_structure_tools(False)  # the tools of the Experimental plan tab are off: the menu of 2026-10-26
         menu, actions = self._actions_of(0)
-        self.assertEqual(list(actions), [f"Step 1: {NOTE_1}", "Edit text...", "Colour...", "Default colour", "Reset step to measured", "Reset all steps"])
+        self.assertEqual(list(actions), [f"Step 1: {NOTE_1}", "Edit text...", "Colour..."])  # nothing edited yet: no Default colour, no Reset (left out, not greyed)
         self.assertFalse(actions[f"Step 1: {NOTE_1}"].isEnabled())
         self.assertTrue(actions["Colour..."].isEnabled())
-        for greyed in ("Default colour", "Reset step to measured", "Reset all steps"):
-            self.assertFalse(actions[greyed].isEnabled(), greyed)  # nothing edited yet
+        menu.deleteLater()
+        self.module.set_color(0, "#112233")
+        menu, actions = self._actions_of(0)
+        self.assertEqual(list(actions)[3:], ["Default colour", "Reset step to measured", "Reset all steps"])
         menu.deleteLater()
         self.assertIsNone(self.actions.build_menu(7))
 
@@ -648,13 +650,13 @@ class PlanBarActionsTest(unittest.TestCase):
     def test_the_menu_has_the_structure_tools_and_the_roles_while_they_are_on(self) -> None:
         self.assertTrue(self.actions.structure_tools_active())
         _menu, actions = self._actions_of(0)
+        # (2026-11-19: only what can be done now. Nothing is edited, one step is nothing to unify and none is removed: no Default colour, Reset, Unify, Restore.)
         self.assertEqual(
-            list(actions)[5:],
-            ["Reset all steps", "Remove step", "Add step", "Unify selected steps", "Restore removed steps", "Use as", "Use for S_bulk (Sb)"],
+            list(actions)[3:],
+            ["Remove step", "Add step", "Use as", "Use for S_bulk (Sb)"],
         )
-        self.assertFalse(actions["Unify selected steps"].isEnabled())  # one step is nothing to unify
-        self.assertFalse(actions["Restore removed steps"].isEnabled())
-        self.assertTrue(actions["Add step"].isEnabled())
+        self.assertNotIn("Unify selected steps", actions)
+        self.assertNotIn("Restore removed steps", actions)
         self.assertEqual([a.text() for a in actions["Add step"].menu().actions()], ["In front of this step", "Behind this step"])
 
     def test_remove_step_takes_the_selection_away_in_one_undo_step_and_restore_brings_it_back(self) -> None:
@@ -692,7 +694,7 @@ class PlanBarActionsTest(unittest.TestCase):
         self.assertEqual([(s.start_unix_ms, s.end_unix_ms) for s in self.module.steps()], [(10_000, 30_000), (30_000, 40_000), (40_000, 50_000)])
         self.context = None
         _menu, actions = self._actions_of(0)
-        self.assertFalse(actions["Add step"].menu().actions()[0].isEnabled())  # no plotted cubes, no grid to snap to
+        self.assertNotIn("Add step", actions)  # no plotted cubes, no grid to snap to: nothing to offer (left out, not greyed)
 
     def test_unify_is_offered_for_neighbours_only_and_joins_them_in_one_undo_step(self) -> None:
         self._follow_the_module()
@@ -765,13 +767,22 @@ class PlanBarActionsTest(unittest.TestCase):
         actions["Use for S_bulk (Sb)"].trigger()  # all in: the item takes them out
         self.assertEqual(self.module.bulk_steps(), ())
 
-    def test_the_roles_are_for_one_step_so_use_as_is_greyed_out_for_a_selection(self) -> None:
+    def test_the_roles_are_for_one_step_so_use_as_is_left_out_for_a_selection(self) -> None:
         self.plot.plan_bar().select_many((0, 1), anchor=0)
         _menu, actions = self._actions_of(0)
-        self.assertFalse(actions["Use as"].isEnabled())
+        self.assertNotIn("Use as", actions)
         self.plot.plan_bar().clear_selection()
         _menu, actions = self._actions_of(0)
         self.assertTrue(actions["Use as"].isEnabled())
+
+    def test_unify_and_restore_appear_when_they_can_be_done(self) -> None:
+        self.plot.plan_bar().select_many((0, 1), anchor=0)
+        _menu, actions = self._actions_of(0)
+        self.assertIn("Unify selected steps", actions)  # two steps that touch
+        self.plot.plan_bar().clear_selection()
+        self.module.remove_steps([0])
+        _menu, actions = self._actions_of(0)
+        self.assertIn("Restore removed steps", actions)
 
     def test_pairs_offered_never_hides_a_pair_that_has_a_role_set(self) -> None:
         refs = [self.module.steps()[0].ref, self.module.steps()[1].ref]
@@ -788,9 +799,9 @@ class PlanBarActionsTest(unittest.TestCase):
         self.module.add_step(0, "after", self.context.grid_unix_ms)
         self.module.set_color(1, "#112233")
         _menu, actions = self._actions_of(1)
-        self.assertTrue(actions["Default colour"].isEnabled())  # an added step keeps its colour in its own record
-        self.assertFalse(actions["Reset step to measured"].isEnabled())  # nothing measured to go back to
-        self.assertTrue(actions["Reset all steps"].isEnabled())
+        self.assertIn("Default colour", actions)  # an added step keeps its colour in its own record
+        self.assertNotIn("Reset step to measured", actions)  # nothing measured to go back to: the entry is left out, not greyed (2026-11-19)
+        self.assertIn("Reset all steps", actions)
 
     def test_a_notice_from_the_module_is_shown_as_a_tooltip(self) -> None:
         with mock.patch("lspr_imaging_app.panels.sensorgram.plan_actions.QToolTip.showText") as show:
@@ -822,10 +833,12 @@ class PlanBarActionsTest(unittest.TestCase):
         self.plot.plan_bar().select_many((0, 1), anchor=0)
         menu, actions = self._actions_of(0)
         self.assertEqual(list(actions)[0], "2 steps selected")
-        self.assertIn("Reset steps to measured", actions)
+        self.assertNotIn("Reset steps to measured", actions)  # nothing edited yet
         with mock.patch("lspr_imaging_app.panels.sensorgram.plan_actions.QColorDialog.getColor", return_value=QColor("#336699")):
             actions["Colour..."].trigger()
         self.assertEqual([s.color for s in self.module.steps()], ["#336699", "#336699"])
+        _menu, actions = self._actions_of(0)
+        self.assertIn("Reset steps to measured", actions)  # now they are edited
         undo_manager.undo()
         self.assertEqual(self.module.state().edits, ())  # one undo step for both
         self.assertFalse(undo_manager.can_undo)

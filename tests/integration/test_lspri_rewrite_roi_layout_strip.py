@@ -496,7 +496,7 @@ class RoiLayoutRowTest(unittest.TestCase):
         _pump(0.2)
         self.assertEqual(int(self.selection.current_cube()), 4)
 
-    def test_the_menu_text_names_the_rois_and_greys_the_start_layout(self) -> None:
+    def test_the_menu_text_names_the_rois_and_leaves_out_what_the_start_layout_cannot_do(self) -> None:
         seen: list[list[tuple[str, bool]]] = []
 
         class SpyMenu(QMenu):
@@ -515,8 +515,7 @@ class RoiLayoutRowTest(unittest.TestCase):
         self.assertIn(("Make persistent (1 ROI)", True), individual)
         self.assertEqual(start[0], ("Cube 0 - start layout", False))
         self.assertIn(("Go to this cube", True), start)  # the menu never opens with nothing to click
-        self.assertIn(("Make individual (3 ROIs)", False), start)
-        self.assertIn(("Delete this change (3 ROIs)", False), start)
+        self.assertEqual([text for text, _enabled in start], ["Cube 0 - start layout", "Go to this cube"])  # (2026-11-19) always persistent, nothing to delete: no entries for it
 
     def test_the_rois_and_mask_sections_have_just_their_toggles_and_no_colour_swatches(self) -> None:
         from lspr_imaging_app.panels.image.slider_colors import ColorSwatch

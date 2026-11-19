@@ -148,7 +148,7 @@ class MaskRowsTest(unittest.TestCase):
         """A real right click on the mark at tick `index`; the menu is replaced by `choice`. Returns the (header, entries) it was given."""
         seen: dict[str, object] = {}
 
-        def fake_menu(_parent, *, header, entries, pos=None):
+        def fake_menu(_parent, *, header, entries, pos=None, icons=None):
             seen["header"], seen["entries"] = header, list(entries)
             return choice
 

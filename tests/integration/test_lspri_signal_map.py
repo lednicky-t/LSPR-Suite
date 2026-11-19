@@ -269,6 +269,10 @@ class SignalMapDrawingTest(unittest.TestCase):
         self.assertTrue(group.baseline_check.isChecked())
         group.show_combo.setCurrentIndex(group.show_combo.findData(SHOW_CUBE))
         self.assertFalse(group.pair_combo.isEnabled())  # current cube needs no pair
+        context = group.context_menu()
+        self.assertFalse(next(a for a in context.actions() if a.text() == "Pair").isVisible())  # so the legend menu leaves Pair out (2026-11-19), not greyed
+        self.assertTrue(next(a for a in context.actions() if a.text() == "Show").isVisible())
+        self.assertNotIn("Refresh", [a.text() for a in context.actions()])  # nothing to refresh
         group.deleteLater()
 
 

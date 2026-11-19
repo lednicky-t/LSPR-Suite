@@ -489,8 +489,9 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         crop" and "Cancel crop" with nothing pending - the whole menu had
         nothing clickable in it, which read as "the menu is broken" (not
         "there's nothing to do"). "Cancel" now always means "exit Crop
-        mode", always a valid thing to do, so it stays enabled even when
-        "Apply" is grayed out."""
+        mode", always a valid thing to do, so the menu always has it. Since
+        2026-11-19 (maintainer: an entry that cannot apply is left out, not
+        greyed) "Apply" is not in the menu while nothing is pending."""
         self.active_tool.set_active(ImageTool.CROP, True)
         seen_menus: list[QtWidgets.QMenu] = []
 
@@ -501,9 +502,8 @@ class CropToolPanelIntegrationTest(unittest.TestCase):
         with mock.patch.object(QtWidgets.QMenu, "exec", _capture):
             self.panel._on_scene_clicked(_Click(self.panel._plot.vb.mapViewToScene(QPointF(0.0, 0.0)), Qt.MouseButton.RightButton))
         self.assertEqual(len(seen_menus), 1)
-        apply_action, cancel_action = seen_menus[0].actions()
-        self.assertEqual((apply_action.text(), cancel_action.text()), ("Apply crop", "Cancel crop"))
-        self.assertFalse(apply_action.isEnabled())  # nothing new to commit
+        (cancel_action,) = seen_menus[0].actions()  # nothing new to commit: no "Apply crop" in it
+        self.assertEqual(cancel_action.text(), "Cancel crop")
         self.assertTrue(cancel_action.isEnabled())
         self.assertIs(self.active_tool.active(), ImageTool.CROP)  # nothing chosen above, unaffected
 

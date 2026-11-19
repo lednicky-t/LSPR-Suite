@@ -142,12 +142,16 @@ class TheMenuTest(FixedColumnsBase):
         self.hide.prepare(-1)  # a right-click that is not on a column
         self.assertFalse(self.hide._hide.isEnabled())
 
-    def test_with_nothing_hidden_the_two_show_entries_are_greyed_and_say_why(self) -> None:
+    def test_with_nothing_hidden_the_two_show_entries_are_left_out(self) -> None:
+        """2026-11-19 (maintainer): an entry that cannot be used is not in the menu; it used to be greyed with "No column is hidden"."""
         self.hide.prepare(COLUMN_Y)
-        self.assertFalse(self.hide._show_menu.isEnabled())
-        self.assertFalse(self.hide._show_all.isEnabled())
-        self.assertIn("No column is hidden", self.hide._show_all.toolTip())
+        self.assertFalse(self.hide._show_menu.menuAction().isVisible())
+        self.assertFalse(self.hide._show_all.isVisible())
         self.assertEqual(self.shown_list(), [])
+        self.hide._set_hidden(frozenset({self.tree.column_key(COLUMN_Y)}))
+        self.hide.prepare(COLUMN_X)
+        self.assertTrue(self.hide._show_menu.menuAction().isVisible())
+        self.assertTrue(self.hide._show_all.isVisible())
 
     def test_the_list_holds_the_hidden_columns_left_to_right_and_a_click_brings_one_back(self) -> None:
         self.hide._hide_section(COLUMN_Y)
