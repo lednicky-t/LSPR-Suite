@@ -57,6 +57,21 @@ class ResizeCursorTest(unittest.TestCase):
             off = abs((measured - angle + 90.0) % 180.0 - 90.0)  # the smaller difference between two lines
             self.assertLess(off, 1.5, f"arrow asked at {angle} degrees was drawn at {measured:.1f}")
 
+    def test_the_arrow_grows_with_the_screen_scale_like_windows_own_cursors(self) -> None:
+        """23 pixels long at 100 %, and 1.5 times that at 150 % (a fixed size came out a third too small beside the move cursor, 2026-11-19); the picture is odd-sized."""
+
+        def length(ratio: float) -> int:
+            image = module._picture(0.0, ratio).toImage()
+            columns = [x for x in range(image.width()) if any(image.pixelColor(x, y).alpha() > 128 for y in range(image.height()))]
+            return max(columns) - min(columns) + 1
+
+        self.assertEqual(length(1.0), 23)
+        self.assertLessEqual(abs(length(1.5) - 34.5), 1.5)
+        self.assertLessEqual(abs(length(2.0) - 46), 1.5)
+        for ratio in (1.0, 1.25, 1.5, 2.0):
+            self.assertEqual(module._picture(0.0, ratio).width() % 2, 1, f"odd side at {ratio}")
+            self.assertEqual(module._picture(0.0, ratio).devicePixelRatio(), ratio)
+
     def test_one_step_is_one_shared_cursor_and_a_half_turn_is_the_same_line(self) -> None:
         self.assertIs(module.resize_cursor(0.0), module.resize_cursor(0.0))
         self.assertIs(module.resize_cursor(0.0), module.resize_cursor(180.0))

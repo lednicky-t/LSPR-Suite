@@ -184,6 +184,23 @@ class AppearanceTest(_PanelCase):
         self.assertEqual(len(rebuilds), 1)
         self.assertEqual(self.panel._model.rowCount(), rows_before + 1)
 
+    def test_the_table_is_not_rebuilt_in_the_middle_of_a_roi_drag_and_catches_up_once_after_it(self) -> None:
+        """2026-11-19: the rebuild ran when the mouse paused during a resize and the next move waited behind it (~0.5 s on a large dataset)."""
+        self.panel.refresh_now()
+        rebuilds = []
+        original = self.panel.refresh_now
+        self.panel.refresh_now = lambda: (rebuilds.append(1), original())[1]
+        self.panel.set_edit_running(True)  # what the Image panel's roi_edit_running does
+        for diameter in (7.0, 8.0, 9.0):
+            self.toolbox.resize_rois([1], sample_diameter_px=diameter)  # one write per mouse step
+            _pump_events(0.05)
+        _pump_events(0.3)  # a pause: longer than the table's refresh delay
+        self.assertEqual(rebuilds, [], "no rebuild during the drag, not even after a pause")
+        self.assertFalse(self.panel._redraw_timer.isActive())
+        self.panel.set_edit_running(False)
+        _pump_events(0.3)
+        self.assertEqual(len(rebuilds), 1, "one catch-up when the button is let go")
+
     def test_a_cube_change_rebuilds_the_table_only_when_a_roi_has_a_timeline(self) -> None:
         self.panel.refresh_now()
         timer = self.panel._redraw_timer

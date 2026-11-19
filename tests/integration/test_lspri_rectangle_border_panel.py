@@ -290,6 +290,58 @@ class RectangleBorderPanelTest(unittest.TestCase):
         self.hover((x + 4.0, y - 5.0))  # on the top edge, off to the side of its middle
         self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(90.0))  # vertical
 
+    def drag_cursors(self, start: tuple[float, float], *path: tuple[float, float]) -> list[object]:
+        """Press at ``start``, move through ``path`` with the button down, and the canvas cursor (our ``_roi_cursor``) after each move; the button is let go at the end."""
+        handler = self.panel._on_left_drag_event
+        down = self.scene(start)
+        handler(_Drag(down, start=True, finish=False, down=down))
+        seen = []
+        for point in path:
+            handler(_Drag(self.scene(point), start=False, finish=False, down=down))
+            self.hover(point)  # the hover handler runs during a drag too, and must not undo what the drag set
+            seen.append(self.panel._interaction._roi_cursor)
+        handler(_Drag(self.scene(path[-1]), start=False, finish=True, down=down))
+        return seen
+
+    def test_an_edit_drag_says_when_it_starts_and_ends_so_other_panels_can_wait(self) -> None:
+        """`edit_running`: True at the press of a resize / handle / border / move, False at the release; nothing for a rubber band."""
+        events: list[bool] = []
+        self.gestures.edit_running.connect(events.append)
+        self.selection.set_roi_selection({self.circle})
+        x, y = self.view_centre(self.circle)
+        radius = self.toolbox.roi_by_id(self.circle).shape.diameter_px / 2.0
+        self.drag((x + radius, y), (x + radius + 2.0, y))  # the circle's edge: a resize
+        self.assertEqual(events, [True, False])
+        events.clear()
+        self.drag((x, y), (x + 1.0, y + 1.0))  # inside it: a move
+        self.assertEqual(events, [True, False])
+        events.clear()
+        self.drag((70.0, 5.0), (75.0, 9.0))  # empty image: a rubber band, which only selects
+        self.assertEqual(events, [])
+
+    def test_a_circles_arrow_turns_with_the_pointer_while_it_is_being_resized(self) -> None:
+        """2026-11-19: during the drag the arrow kept the direction it started with; it must keep lying along the radius, wherever the pointer goes round the circle."""
+        self.selection.set_roi_selection({self.circle})
+        x, y = self.view_centre(self.circle)
+        radius = self.toolbox.roi_by_id(self.circle).shape.diameter_px / 2.0
+        angles = (20.0, 75.0, 130.0, 200.0, 290.0)
+        path = [(x + (radius + 2.0) * np.cos(np.radians(a)), y + (radius + 2.0) * np.sin(np.radians(a))) for a in angles]
+        seen = self.drag_cursors((x + radius, y), *path)
+        for angle, cursor in zip(angles, seen, strict=True):
+            self.assertIs(cursor, resize_cursor(angle % 180.0), f"pointer at {angle} degrees round the centre")
+
+    def test_a_rectangle_corners_arrow_follows_its_changing_proportions_while_it_is_being_resized(self) -> None:
+        """A corner arrow lies along the diagonal: 26.6 degrees for the 20 x 10 rectangle, 45 once the pointer has made it square."""
+        self.selection.set_roi_selection({self.rect_a})
+        x, y = self.view_centre(self.rect_a)
+        corner = rectangle_handle_points(self.toolbox.roi_by_id(self.rect_a).shape, (x, y), np.eye(2), KNOB_PX * float(self.gestures._view_pixel_size()))["se"]
+        self.hover(corner)
+        self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(np.degrees(np.arctan2(5.0, 10.0))), "20 x 10: the diagonal is 26.6 degrees")
+        seen = self.drag_cursors(corner, (x + 8.0, y + 8.0), (x + 5.0, y + 5.0))
+        self.assertIs(seen[0], resize_cursor(45.0), "16 x 16")
+        self.assertIs(seen[1], resize_cursor(45.0), "10 x 10")
+        self.assertEqual(self.toolbox.roi_by_id(self.rect_a).shape.width_px, 10.0, "the drag did resize it")
+
     def test_the_border_band_shows_an_arrow_across_it(self) -> None:
         self.selection.set_roi_selection({self.rect_a})
         self.hover(self.above_top_edge(self.rect_a, GAP))

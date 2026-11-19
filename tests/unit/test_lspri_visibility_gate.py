@@ -59,6 +59,52 @@ class HiddenPanelGateTest(unittest.TestCase):
         gate.set_visible(True)
         self.assertEqual(log, ["ran"])
 
+    # -- held: an edit drag is running (2026-11-19) -----------------------------------------------
+
+    def test_a_held_panel_defers_and_catches_up_once_when_released(self) -> None:
+        shown = []
+        gate = HiddenPanelGate(on_shown=lambda: shown.append(1))
+        gate.set_held(True)
+        self.assertTrue(gate.held)
+        self.assertTrue(gate.visible, "held is not hidden")
+        self.assertTrue(gate.defer())
+        self.assertTrue(gate.defer())
+        self.assertEqual(shown, [], "nothing runs during the drag")
+        gate.set_held(False)
+        self.assertEqual(shown, [1], "one catch-up on release")
+        self.assertFalse(gate.defer())
+        self.assertFalse(gate.stale)
+
+    def test_releasing_a_hold_that_missed_nothing_does_no_work(self) -> None:
+        shown = []
+        gate = HiddenPanelGate(on_shown=lambda: shown.append(1))
+        gate.set_held(True)
+        gate.set_held(False)
+        self.assertEqual(shown, [])
+
+    def test_hidden_and_held_are_independent_and_the_catch_up_waits_for_both(self) -> None:
+        shown = []
+        gate = HiddenPanelGate(on_shown=lambda: shown.append(1))
+        gate.set_held(True)
+        gate.set_visible(False)
+        gate.defer()
+        gate.set_held(False)
+        self.assertEqual(shown, [], "released, but still hidden")
+        gate.set_visible(True)
+        self.assertEqual(shown, [1])
+        gate.set_visible(False)
+        gate.defer()
+        gate.set_held(True)
+        gate.set_visible(True)
+        self.assertEqual(shown, [1], "shown again, but still held")
+        gate.set_held(False)
+        self.assertEqual(shown, [1, 1])
+
+    def test_a_gate_that_is_never_held_behaves_as_before(self) -> None:
+        gate = HiddenPanelGate(on_shown=lambda: None)
+        self.assertFalse(gate.held)
+        self.assertFalse(gate.defer())
+
 
 if __name__ == "__main__":
     unittest.main()
