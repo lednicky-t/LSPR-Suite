@@ -193,7 +193,7 @@ class WhatIsDrawnTest(FreezeBase):
 
     def test_the_scrolled_columns_still_scroll(self) -> None:
         self.tree.set_frozen_upto(COLUMN_X)
-        outside = self.model.roi_index(1, COLUMN_COUNT - 1)  # the last fixed column, far right
+        outside = self.model.roi_index(1, COLUMN_RING_OUT)  # the last column on screen (the rectangle columns are hidden with no rectangle in the table), far right
         before = self.tree.visualRect(outside).left()
         self.scroll_to(SCROLLED)
         self.assertEqual(self.tree.visualRect(outside).left(), before - SCROLLED)

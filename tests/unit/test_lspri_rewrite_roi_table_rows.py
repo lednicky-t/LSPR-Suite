@@ -22,29 +22,38 @@ if str(APP_SRC) not in sys.path:
 
 try:
     from lspr_imaging_app.panels.roi_table.rows import (
+        COLUMN_ANGLE,
+        COLUMN_HEIGHT,
         COLUMN_ID,
         COLUMN_NAME,
         COLUMN_RING_IN,
         COLUMN_RING_OUT,
         COLUMN_SAMPLE,
         COLUMN_SHAPE,
+        COLUMN_WIDTH,
         COLUMN_X,
         COLUMN_Y,
         PIXELS,
+        RECTANGLE_COLUMNS,
         SHAPE_DISK,
+        SHAPE_FIELDS,
         SHAPE_MASK,
         SHAPE_RECTANGLE,
         SHAPE_RING,
         VIEW_GEOMETRY,
         VIEW_MODE_COLUMNS,
         VIEW_SIMPLE,
+        angle_edit_text,
+        angle_step_text,
         build_roi_rows,
         build_sections,
         edit_text,
+        format_angle,
         format_length,
         from_display,
         micrometers,
         movement_scope,
+        parse_angle,
         parse_length,
         shape_of,
         sort_rows,
@@ -104,6 +113,37 @@ class LengthUnitTest(unittest.TestCase):
         for bad in (0.0, -1.0, math.inf, math.nan):
             with self.assertRaises(ValueError):
                 micrometers(bad)
+
+
+class AngleTest(unittest.TestCase):
+    """A rectangle's angle: degrees clockwise, typed, shown and stepped like a length but never converted to µm."""
+
+    def test_parse_accepts_a_comma_and_any_finite_number(self) -> None:
+        self.assertEqual(parse_angle(" 12,5 "), 12.5)
+        self.assertEqual(parse_angle("-30"), -30.0)
+        self.assertEqual(parse_angle("370"), 370.0, "stored as typed: 370 is a turn of 10, but it is the user's number")
+
+    def test_unreadable_input_raises_a_message_fit_to_show(self) -> None:
+        for bad in ("abc", "", "1.2.3", "inf", "nan"):
+            with self.assertRaises(ValueError):
+                parse_angle(bad)
+        with self.assertRaisesRegex(ValueError, "'abc' is not a number"):
+            parse_angle("abc")
+
+    def test_shown_with_one_decimal_and_edited_without_trailing_zeros(self) -> None:
+        self.assertEqual(format_angle(33.04), "33.0")
+        self.assertEqual(angle_edit_text(33.04), "33")
+        self.assertEqual(angle_edit_text(33.5), "33.5")
+        self.assertEqual(angle_edit_text(-0.0001), "0")
+        self.assertEqual(angle_edit_text(-12.5), "-12.5")
+
+    def test_a_step_is_one_degree_and_shift_five(self) -> None:
+        self.assertEqual(angle_step_text("30", 1, False), "31")
+        self.assertEqual(angle_step_text("30", -1, False), "29")
+        self.assertEqual(angle_step_text("30", 1, True), "35")
+        self.assertEqual(angle_step_text("0", -1, False), "-1", "an angle has no lower limit")
+        self.assertEqual(angle_step_text("0,5", 1, False), "1.5")
+        self.assertIsNone(angle_step_text("abc", 1, False))
 
 
 class RowTest(unittest.TestCase):
@@ -250,7 +290,30 @@ class ShapeTest(unittest.TestCase):
 
     def test_each_view_mode_shows_the_id_column_and_the_modes_differ(self) -> None:
         self.assertEqual(VIEW_MODE_COLUMNS[VIEW_SIMPLE], (COLUMN_ID, COLUMN_NAME))
-        self.assertEqual(VIEW_MODE_COLUMNS[VIEW_GEOMETRY], (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT))
+        self.assertEqual(
+            VIEW_MODE_COLUMNS[VIEW_GEOMETRY],
+            (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT, COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE),
+        )
+
+    def test_a_rectangle_has_a_width_a_height_and_an_angle_and_nothing_else_has(self) -> None:
+        self.assertEqual(SHAPE_FIELDS[SHAPE_RECTANGLE], RECTANGLE_COLUMNS)
+        for shape in (SHAPE_RING, SHAPE_DISK, SHAPE_MASK):
+            self.assertFalse(set(SHAPE_FIELDS[shape]) & set(RECTANGLE_COLUMNS), shape)
+        self.assertFalse(set(SHAPE_FIELDS[SHAPE_RECTANGLE]) & {COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT})
+
+    def test_a_rectangle_row_carries_its_size_and_angle(self) -> None:
+        rectangle = self.row(shape=Rectangle(30.0, 14.5, 33.0))
+        self.assertEqual((rectangle.width, rectangle.height, rectangle.angle), (30.0, 14.5, 33.0))
+        circle = self.row()
+        self.assertEqual((circle.width, circle.height, circle.angle), (0.0, 0.0, 0.0))
+
+    def test_the_new_columns_sort(self) -> None:
+        rows = build_roi_rows(
+            [_roi(1, shape=Rectangle(30.0, 10.0, 5.0)), _roi(2, shape=Rectangle(20.0, 40.0, -10.0)), _roi(3)], [], self.defaults
+        )
+        self.assertEqual([r.roi_id for r in sort_rows(rows, COLUMN_WIDTH, False)], [3, 2, 1], "a circle has no width: first")
+        self.assertEqual([r.roi_id for r in sort_rows(rows, COLUMN_HEIGHT, True)], [2, 1, 3])
+        self.assertEqual([r.roi_id for r in sort_rows(rows, COLUMN_ANGLE, False)], [2, 3, 1])
 
     def test_the_shape_column_sorts(self) -> None:
         rows = build_roi_rows([_roi(1, 30.0), _roi(2, 10.0, border=NO_BORDER), _roi(3, 20.0)], [], self.defaults)

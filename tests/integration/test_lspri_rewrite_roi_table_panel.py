@@ -55,6 +55,8 @@ try:
         KIND_ROLE,
     )
     from lspr_imaging_app.panels.roi_table.rows import (
+        COLUMN_ANGLE,
+        COLUMN_HEIGHT,
         COLUMN_ID,
         COLUMN_NAME,
         COLUMN_COUNT,
@@ -62,6 +64,7 @@ try:
         COLUMN_RING_IN,
         COLUMN_RING_OUT,
         COLUMN_SAMPLE,
+        COLUMN_WIDTH,
         COLUMN_X,
         COLUMN_Y,
     )
@@ -1358,6 +1361,23 @@ class ViewModeTest(_PanelCase):
         self.panel._view_actions["geometry"].trigger()
         self.assertEqual(self.shown_left_to_right(), geometry)
 
+    def test_the_toolbar_button_toggles_geometry_and_simple_and_follows_the_menu(self) -> None:
+        button = self.panel._view_toggle
+        layout = self.panel.layout().itemAt(0).layout()
+        widgets = [w for w in (layout.itemAt(i).widget() for i in range(layout.count())) if w is not None]  # (spacers have no widget)
+        self.assertEqual(widgets[widgets.index(self.panel._delete_button) + 1], self.panel._view_toggle, "right behind the delete button")
+        self.assertTrue(button.isChecked())  # Geometry is the default
+        button.click()
+        self.assertEqual(self.panel._view_mode, "simple")
+        self.assertEqual(self.shown_left_to_right(), [COLUMN_ID, COLUMN_NAME])
+        self.assertIn("Simple view", button.toolTip())
+        button.click()
+        self.assertEqual(self.panel._view_mode, "geometry")
+        self.panel._view_actions["simple"].trigger()  # a choice made in the header menu moves the button
+        self.assertFalse(button.isChecked())
+        self.panel._view_actions["geometry"].trigger()
+        self.assertTrue(button.isChecked())
+
     def test_a_right_click_on_the_headers_opens_the_view_menu(self) -> None:
         from unittest import mock
 
@@ -1429,3 +1449,631 @@ class ViewModeTest(_PanelCase):
             self.panel._view_actions[mode].trigger()
             _APP.processEvents()
             self.assertFalse(self.tree.viewport().grab().isNull())
+
+
+class RectangleColumnsTest(_PanelCase):
+    """The width, height and angle columns (W, H, θ): they exist for rectangles only, show only while the table holds one, and edit through
+    `RoiToolbox.resize_rectangles` like the handles and the size dialog do (2026-11-19)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.rectangle_id = self.toolbox.add_shaped_roi(60.0, 5.0, Rectangle(30.0, 14.0, 33.0))  # ROI 6; ROIs 1-5 are circles
+        self.second_id = self.toolbox.add_shaped_roi(70.0, 5.0, Rectangle(20.0, 10.0, 0.0))  # ROI 7
+        self.refresh()
+
+    def rectangle(self, roi_id: int | None = None) -> Rectangle:
+        return self.toolbox.roi_by_id(roi_id or self.rectangle_id).shape
+
+    def shown(self, column: int) -> bool:
+        return not self.tree.isColumnHidden(column)
+
+    def test_the_columns_show_while_a_rectangle_is_in_the_table_and_go_when_the_last_one_does(self) -> None:
+        columns = (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)
+        self.assertEqual([self.shown(c) for c in columns], [True, True, True])
+        order = sorted((c for c in range(COLUMN_COUNT) if self.shown(c)), key=self.tree.header().visualIndex)
+        self.assertEqual(order[-3:], list(columns), "after the diameters, left to right")
+        self.toolbox.delete_rois([self.rectangle_id, self.second_id])
+        self.refresh()
+        self.assertEqual([self.shown(c) for c in columns], [False, False, False], "three empty columns would say nothing")
+        self.toolbox.add_shaped_roi(60.0, 5.0, Rectangle(30.0, 14.0, 0.0))
+        self.refresh()
+        self.assertEqual([self.shown(c) for c in columns], [True, True, True])
+
+    def test_the_simple_view_never_shows_them(self) -> None:
+        self.panel._view_actions["simple"].trigger()
+        self.assertFalse(any(self.shown(c) for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)))
+
+    def test_a_column_the_user_hid_stays_hidden_with_rectangles_present(self) -> None:
+        self.tree.set_hidden_keys({COLUMN_ANGLE})
+        self.assertEqual([self.shown(c) for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)], [True, True, False])
+        self.tree.set_hidden_keys(())
+        self.assertTrue(self.shown(COLUMN_ANGLE))
+
+    def test_a_rectangle_shows_its_size_and_a_circle_and_the_diameters_stay_blank(self) -> None:
+        self.assertEqual([self.text(self.rectangle_id, c) for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)], ["30.0", "14.0", "33.0"])
+        self.assertEqual([self.text(self.rectangle_id, c) for c in (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT)], ["", "", ""])
+        self.assertEqual([self.text(1, c) for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)], ["", "", ""])
+        editable = Qt.ItemFlag.ItemIsEditable
+        self.assertTrue(all(self.model.flags(self.cell(self.rectangle_id, c)) & editable for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)))
+        self.assertFalse(any(self.model.flags(self.cell(1, c)) & editable for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)))
+        self.assertFalse(self.model.flags(self.cell(self.rectangle_id, COLUMN_SAMPLE)) & editable, "a rectangle has no diameter")
+
+    def test_a_mask_shows_nothing_in_them(self) -> None:
+        self.toolbox.roi_by_id(1).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
+        self.refresh()
+        self.assertEqual([self.text(1, c) for c in (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE)], ["", "", ""])
+
+    def test_editing_a_width_height_or_angle_is_a_toolbox_command_and_undoes(self) -> None:
+        self.edit(self.rectangle_id, COLUMN_WIDTH, "40")
+        self.assertEqual(self.rectangle(), Rectangle(40.0, 14.0, 33.0))
+        self.edit(self.rectangle_id, COLUMN_HEIGHT, "8,5")
+        self.assertEqual(self.rectangle(), Rectangle(40.0, 8.5, 33.0))
+        self.edit(self.rectangle_id, COLUMN_ANGLE, "-45")
+        self.assertEqual(self.rectangle(), Rectangle(40.0, 8.5, -45.0))
+        self.assertEqual(self.rectangle(self.second_id), Rectangle(20.0, 10.0, 0.0), "the other rectangle is untouched")
+        undo_manager.undo()
+        self.assertEqual(self.rectangle(), Rectangle(40.0, 8.5, 33.0))
+
+    def test_an_edit_applies_to_every_selected_rectangle_and_skips_a_circle(self) -> None:
+        self.selection.set_roi_selection({1, self.rectangle_id, self.second_id})
+        self.edit(self.rectangle_id, COLUMN_ANGLE, "90")
+        self.assertEqual([self.rectangle(i).angle_deg for i in (self.rectangle_id, self.second_id)], [90.0, 90.0])
+        self.assertEqual(self.toolbox.roi_by_id(1).shape.diameter_px, 6.0, "a circle has no angle")
+        self.assertIn("2 rectangles", self.footer())
+        undo_manager.undo()
+        self.assertEqual([self.rectangle(i).angle_deg for i in (self.rectangle_id, self.second_id)], [33.0, 0.0], "one undo step")
+
+    def test_a_circle_alone_says_why_nothing_happened(self) -> None:
+        self.panel._set_numeric_cells([1], COLUMN_WIDTH, "40")
+        self.assertIn("not rectangles", self.footer())
+        self.assertEqual(self.toolbox.roi_by_id(1).shape.diameter_px, 6.0)
+
+    def test_a_bad_value_is_refused_shown_and_changes_nothing(self) -> None:
+        self.edit(self.rectangle_id, COLUMN_WIDTH, "1")
+        self.assertIn("at least 2", self.footer())
+        self.edit(self.rectangle_id, COLUMN_ANGLE, "abc")
+        self.assertIn("'abc' is not a number", self.footer())
+        self.assertEqual(self.rectangle(), Rectangle(30.0, 14.0, 33.0))
+
+    def test_committing_an_unchanged_cell_does_nothing(self) -> None:
+        edits: list[tuple] = []
+        self.model.cell_edited.connect(lambda *args: edits.append(args))
+        index = self.cell(self.rectangle_id, COLUMN_ANGLE)
+        self.model.setData(index, self.model.data(index, Qt.ItemDataRole.EditRole), Qt.ItemDataRole.EditRole)
+        self.assertEqual(edits, [])
+
+    def test_a_length_follows_the_unit_but_the_angle_never_does(self) -> None:
+        self.geometry.restore_settings(
+            GeometrySettings(calibration_enabled=True, microns_per_pixel_x=0.5, microns_per_pixel_y=0.5, display_units="um")
+        )
+        self.refresh()
+        self.assertEqual(self.text(self.rectangle_id, COLUMN_WIDTH), "15", "30 px at 0.5 µm/px")
+        self.assertEqual(self.text(self.rectangle_id, COLUMN_ANGLE), "33.0", "degrees, whatever the unit")
+        self.edit(self.rectangle_id, COLUMN_WIDTH, "10")  # typed in µm, stored in px
+        self.edit(self.rectangle_id, COLUMN_ANGLE, "45")
+        self.assertEqual(self.rectangle(), Rectangle(20.0, 14.0, 45.0))
+
+        def tip(column: int) -> str:
+            return self.model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole)
+
+        self.assertIn("(µm)", tip(COLUMN_WIDTH))
+        self.assertNotIn("µm", tip(COLUMN_ANGLE))
+
+    def test_the_new_columns_sort(self) -> None:
+        self.panel._on_header_clicked(COLUMN_WIDTH)
+        self.assertEqual(self.model.sort_state(), (COLUMN_WIDTH, False))
+        self.assertEqual(self.shown_ids()[-2:], [self.second_id, self.rectangle_id], "narrowest rectangle last of the circles, which have no width")
+
+    def test_copy_paste_and_the_wheel_work_on_them(self) -> None:
+        self.tree.selectionModel().setCurrentIndex(self.cell(self.rectangle_id, COLUMN_ANGLE), QItemSelectionModel.SelectionFlag.NoUpdate)
+        self.panel._copy_cell()
+        self.selection.set_roi_selection({self.second_id})
+        self.refresh()
+        self.tree.selectionModel().setCurrentIndex(self.cell(self.second_id, COLUMN_ANGLE), QItemSelectionModel.SelectionFlag.NoUpdate)
+        self.panel._paste_cells()
+        self.assertEqual(self.rectangle(self.second_id).angle_deg, 33.0)
+        self.refresh()  # (the table shows a change after a short pause; a step reads what the cell shows)
+        self.panel._step_cell(self.cell(self.second_id, COLUMN_ANGLE), 1, False)
+        self.assertEqual(self.rectangle(self.second_id).angle_deg, 34.0, "one degree")
+        self.refresh()
+        self.panel._step_cell(self.cell(self.second_id, COLUMN_ANGLE), -1, True)
+        self.assertEqual(self.rectangle(self.second_id).angle_deg, 29.0, "Shift: five degrees")
+        self.refresh()
+        self.panel._step_cell(self.cell(self.second_id, COLUMN_WIDTH), 1, False)
+        self.assertEqual(self.rectangle(self.second_id).width_px, 20.5, "a width steps like a diameter")
+
+    def test_the_editor_steps_a_width_and_an_angle_with_up_and_down(self) -> None:
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        delegate = self.tree.itemDelegate()
+        editor = delegate.createEditor(self.tree, QStyleOptionViewItem(), self.cell(self.rectangle_id, COLUMN_ANGLE))
+        editor.setText("30")
+        QTest.keyClick(editor, Qt.Key.Key_Up)
+        self.assertEqual(editor.text(), "31")
+        QTest.keyClick(editor, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual(editor.text(), "26")
+        editor = delegate.createEditor(self.tree, QStyleOptionViewItem(), self.cell(self.rectangle_id, COLUMN_WIDTH))
+        editor.setText("30")
+        QTest.keyClick(editor, Qt.Key.Key_Up)
+        self.assertEqual(editor.text(), "30.5")
+
+    def test_widths_saved_before_these_columns_existed_are_still_read_and_the_new_list_has_every_column(self) -> None:
+        store = UiStateStore({"roi_table/column_widths": [70, 90, 61, 62, 63, 64, 65, 40]})
+        self.panel.restore_ui_state(store)
+        self.assertEqual(self.tree.columnWidth(COLUMN_X), 61)
+        self.assertGreater(self.tree.columnWidth(COLUMN_WIDTH), 0, "the columns an old list did not have keep their default")
+        self.tree.setColumnWidth(COLUMN_X, 66)
+        self.assertEqual(len(store.get("roi_table/column_widths")), COLUMN_COUNT)
+
+    def test_painting_with_rectangles_does_not_raise(self) -> None:
+        self.panel.resize(900, 300)
+        self.panel.show()
+        _APP.processEvents()
+        self.addCleanup(self.panel.hide)
+        self.assertFalse(self.tree.viewport().grab().isNull())
+
+
+class WheelEditTest(_PanelCase):
+    """The mouse wheel over a number of a selected ROI row steps it (Ctrl+wheel: any row); elsewhere it scrolls (2026-11-19). Real `QWheelEvent`s into the table."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.rectangle_id = self.toolbox.add_shaped_roi(60.0, 5.0, Rectangle(30.0, 14.0, 33.0))  # ROI 6; ROIs 1-5 are circles of 6 px at x = 10 ... 50
+        self.panel.resize(1100, 320)
+        self.panel.show()
+        self.addCleanup(self.panel.hide)
+        self.refresh()
+        _APP.processEvents()
+
+    def select(self, *ids: int) -> None:
+        self.selection.set_roi_selection(set(ids))
+        self.refresh()
+        _APP.processEvents()
+
+    def wheel(self, roi_id: int, column: int, delta: int = 120, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+        from PyQt6.QtCore import QPoint, QPointF
+        from PyQt6.QtGui import QWheelEvent
+
+        rect = self.tree.visualRect(self.cell(roi_id, column))
+        self.assertTrue(rect.isValid() and self.tree.viewport().rect().contains(rect.center()), f"ROI {roi_id} column {column} is not on screen")
+        position = QPointF(rect.center())
+        event = QWheelEvent(
+            position, self.tree.viewport().mapToGlobal(position), QPoint(0, 0), QPoint(0, delta), Qt.MouseButton.NoButton, modifiers,
+            Qt.ScrollPhase.NoScrollPhase, False,
+        )
+        QtWidgets.QApplication.sendEvent(self.tree.viewport(), event)
+
+    def diameters(self, *ids: int) -> list[float]:
+        return [self.toolbox.roi_by_id(i).shape.diameter_px for i in ids]
+
+    def test_a_plain_wheel_over_a_number_of_a_selected_row_steps_it_on_every_selected_roi(self) -> None:
+        self.select(1, 2)
+        self.wheel(1, COLUMN_SAMPLE)
+        self.assertEqual(self.diameters(1, 2, 3), [6.5, 6.5, 6.0])
+        self.wheel(1, COLUMN_SAMPLE, -120, Qt.KeyboardModifier.ShiftModifier)  # Shift: the large step (5 px): 6.5 - 5 = 1.5, below the 2 px minimum
+        self.assertEqual(self.diameters(1, 2, 3), [6.5, 6.5, 6.0], "refused, nothing changes")
+        self.assertIn("at least", self.footer())
+        self.wheel(1, COLUMN_SAMPLE, 120, Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual(self.diameters(1, 2, 3), [11.5, 11.5, 6.0], "large step up")
+
+    def test_the_wheel_scrolls_where_it_does_not_step(self) -> None:
+        self.select(1)
+        before = self.diameters(1, 2, 3)
+        self.assertFalse(self.tree.wheel_steps(self.cell(2, COLUMN_SAMPLE)), "a row that is not selected")
+        self.wheel(2, COLUMN_SAMPLE)
+        self.assertEqual(self.diameters(1, 2, 3), before)
+        self.assertFalse(self.tree.wheel_steps(self.cell(1, COLUMN_NAME)), "the label")
+        self.assertFalse(self.tree.wheel_steps(self.cell(1, COLUMN_SHAPE)), "the shape")
+        self.assertFalse(self.tree.wheel_steps(self.cell(1, COLUMN_WIDTH)), "a circle has no width: a blank cell")
+        self.assertTrue(self.tree.wheel_steps(self.cell(1, COLUMN_SAMPLE)))
+
+    def test_a_group_header_is_never_a_step(self) -> None:
+        self.toolbox.group_rois((1, 2), "A")
+        self.select(1, 2)
+        self.assertFalse(self.tree.wheel_steps(self.model.group_index("group_1")))
+
+    def test_ctrl_wheel_steps_any_row_but_only_that_row(self) -> None:
+        self.select(1)
+        self.wheel(3, COLUMN_SAMPLE, 120, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(self.diameters(1, 3), [6.0, 6.5])
+
+    def test_fast_notches_do_not_lose_steps(self) -> None:
+        """The table shows a change only after a short pause: the second notch must start from the stored value, not from the one the cell still shows."""
+        self.select(1)
+        self.wheel(1, COLUMN_SAMPLE)
+        self.wheel(1, COLUMN_SAMPLE)
+        self.wheel(1, COLUMN_SAMPLE)
+        self.assertEqual(self.diameters(1), [7.5])
+
+    def test_small_turns_add_up_to_a_step_and_a_change_of_direction_starts_again(self) -> None:
+        self.select(1)
+        for _ in range(2):
+            self.wheel(1, COLUMN_SAMPLE, 40)
+        self.assertEqual(self.diameters(1), [6.0], "80 units: not a notch yet")
+        self.wheel(1, COLUMN_SAMPLE, 40)
+        self.assertEqual(self.diameters(1), [6.5], "120: one step")
+        self.wheel(1, COLUMN_SAMPLE, 60)
+        self.wheel(1, COLUMN_SAMPLE, -120)
+        self.assertEqual(self.diameters(1), [6.0], "the other way counts from zero: one step down, not none")
+
+    def test_a_position_moves_the_selected_rois_together(self) -> None:
+        self.select(1, 2)
+        self.wheel(1, COLUMN_X)
+        self.assertEqual(self.xs()[:3], [10.5, 20.5, 30.0], "both move, the 10 px between them stays")
+        self.wheel(2, COLUMN_Y, -120, Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual([roi.center_y for roi in self.toolbox.rois()][:3], [0.0, 0.0, 5.0])
+        undo_manager.undo()
+        self.assertEqual([roi.center_y for roi in self.toolbox.rois()][:3], [5.0, 5.0, 5.0], "one notch, one undo step")
+
+    def test_a_position_step_is_a_micrometre_in_micrometres(self) -> None:
+        self.geometry.restore_settings(
+            GeometrySettings(calibration_enabled=True, microns_per_pixel_x=0.5, microns_per_pixel_y=0.5, display_units="um")
+        )
+        self.refresh()
+        _APP.processEvents()
+        self.select(1)
+        self.wheel(1, COLUMN_X)
+        self.assertEqual(self.xs()[0], 12.0, "1 um at 0.5 um/px = 2 px")
+
+    def test_a_pixel_mask_among_the_selection_is_not_moved_and_says_why(self) -> None:
+        self.toolbox.roi_by_id(2).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
+        self.select(1, 2)
+        self.wheel(1, COLUMN_X)
+        self.assertEqual(self.xs()[:2], [10.0, 20.0], "nothing half moved")
+        self.assertIn("pixel mask", self.footer())
+
+    def test_a_rectangle_steps_its_width_and_angle(self) -> None:
+        self.select(self.rectangle_id)
+        self.wheel(self.rectangle_id, COLUMN_ANGLE)
+        self.wheel(self.rectangle_id, COLUMN_WIDTH, -120)
+        self.assertEqual(self.toolbox.roi_by_id(self.rectangle_id).shape, Rectangle(29.5, 14.0, 34.0))
+        self.wheel(self.rectangle_id, COLUMN_ANGLE, 120, Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual(self.toolbox.roi_by_id(self.rectangle_id).shape.angle_deg, 39.0, "Shift: five degrees")
+
+
+class CellCopyPasteTest(_PanelCase):
+    """Picking cells (click a selected row's number again and drag), copying them, and pasting into matching columns (2026-11-19)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.rectangle_id = self.toolbox.add_shaped_roi(60.0, 5.0, Rectangle(30.0, 14.0, 33.0))  # ROI 6; ROIs 1-5 are circles of 6 px
+        self.panel.resize(1100, 320)
+        self.panel.show()
+        self.addCleanup(self.panel.hide)
+        self.addCleanup(lambda: QtWidgets.QApplication.clipboard().clear())
+        self.refresh()
+        _APP.processEvents()
+
+    # -- helpers --------------------------------------------------------------------
+    def select(self, *ids: int) -> None:
+        self.selection.set_roi_selection(set(ids))
+        self.refresh()
+        _APP.processEvents()
+
+    def where(self, roi_id: int, column: int):
+        rect = self.tree.visualRect(self.cell(roi_id, column))
+        self.assertTrue(rect.isValid() and self.tree.viewport().rect().contains(rect.center()), f"ROI {roi_id} column {column} is not on screen")
+        return rect.center()
+
+    def press(self, roi_id: int, column: int, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+        QTest.mousePress(self.tree.viewport(), Qt.MouseButton.LeftButton, modifiers, self.where(roi_id, column))
+
+    def move(self, roi_id: int, column: int) -> None:
+        QTest.mouseMove(self.tree.viewport(), self.where(roi_id, column))
+
+    def release(self, roi_id: int, column: int) -> None:
+        QTest.mouseRelease(self.tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, self.where(roi_id, column))
+
+    def drag(self, start: tuple[int, int], end: tuple[int, int]) -> None:
+        self.press(*start)
+        self.move(*end)
+        self.release(*end)
+
+    def picked(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        return self.tree.cell_range()
+
+    def diameters(self, *ids: int) -> list[float]:
+        return [self.toolbox.roi_by_id(i).shape.diameter_px for i in ids]
+
+    def set_diameters(self, **by_id) -> None:
+        for roi_id, value in by_id.items():
+            self.toolbox.resize_rois([int(roi_id[1:])], sample_diameter_px=value)
+        self.refresh()
+        undo_manager.clear()
+
+    def copy_cells(self, rows, columns) -> None:
+        self.tree.set_cell_range(rows, columns)
+        self.panel._copy_cell()
+        self.tree.clear_cell_marks()  # (the copy is on the clipboard; the marks are not needed for what follows)
+
+    def tip(self) -> str:
+        return QtWidgets.QToolTip.text()
+
+    # -- picking --------------------------------------------------------------------------
+    def test_a_first_click_selects_the_row_as_always_and_picks_no_cells(self) -> None:
+        self.press(2, COLUMN_SAMPLE)
+        self.release(2, COLUMN_SAMPLE)
+        self.assertEqual(sorted(self.selection.selected_roi_ids()), [2])
+        self.assertEqual(self.picked(), ((), ()))
+
+    def test_clicking_a_selected_rows_number_again_picks_that_cell_and_keeps_the_selection(self) -> None:
+        self.select(1, 2, 3)
+        self.press(2, COLUMN_SAMPLE)
+        self.release(2, COLUMN_SAMPLE)
+        self.assertEqual(sorted(self.selection.selected_roi_ids()), [1, 2, 3], "the click did not collapse the selection to one row")
+        self.assertEqual(self.picked(), ((2,), (COLUMN_SAMPLE,)))
+
+    def test_dragging_picks_the_selected_rows_and_the_number_columns_between(self) -> None:
+        self.select(1, 2, 3)
+        self.drag((1, COLUMN_SAMPLE), (3, COLUMN_RING_OUT))
+        self.assertEqual(self.picked(), ((1, 2, 3), (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT)))
+        self.drag((3, COLUMN_RING_IN), (1, COLUMN_SAMPLE))  # the other way round
+        self.assertEqual(self.picked(), ((1, 2, 3), (COLUMN_SAMPLE, COLUMN_RING_IN)))
+        self.assertEqual(sorted(self.selection.selected_roi_ids()), [1, 2, 3], "the rows stay selected")
+
+    def test_only_selected_rows_are_picked_and_the_shape_column_is_never(self) -> None:
+        self.select(1, 3)
+        self.drag((1, COLUMN_X), (3, COLUMN_SAMPLE))
+        self.assertEqual(self.picked(), ((1, 3), (COLUMN_X, COLUMN_Y, COLUMN_SAMPLE)), "row 2 is not selected; the Shape column lies between y and D_s and is not a number")
+
+    def test_pressing_anywhere_else_is_the_usual_row_click(self) -> None:
+        self.select(1, 2)
+        self.press(1, COLUMN_SHAPE)  # the shape: not a number
+        self.release(1, COLUMN_SHAPE)
+        self.assertEqual(self.picked(), ((), ()))
+        self.select(1, 2)
+        self.press(4, COLUMN_SAMPLE)  # a row that is not selected
+        self.release(4, COLUMN_SAMPLE)
+        self.assertEqual(sorted(self.selection.selected_roi_ids()), [4])
+        self.assertEqual(self.picked(), ((), ()))
+        self.select(1, 2)
+        self.press(1, COLUMN_SAMPLE, Qt.KeyboardModifier.ControlModifier)  # Ctrl: the usual selection gesture
+        self.release(1, COLUMN_SAMPLE)
+        self.assertEqual(self.picked(), ((), ()))
+
+    def test_a_click_elsewhere_lets_go_of_the_cells_and_so_does_another_selection(self) -> None:
+        self.select(1, 2, 3)
+        self.drag((1, COLUMN_SAMPLE), (2, COLUMN_SAMPLE))
+        self.assertTrue(self.picked()[0])
+        self.press(3, COLUMN_SHAPE)
+        self.release(3, COLUMN_SHAPE)
+        self.assertEqual(self.picked(), ((), ()))
+        self.select(1, 2, 3)
+        self.drag((1, COLUMN_SAMPLE), (3, COLUMN_SAMPLE))
+        self.select(2, 3)  # the selection changed from outside (the image, say): the range keeps the rows still selected
+        self.assertEqual(self.picked()[0], (2, 3))
+        self.select(5)
+        self.assertEqual(self.picked(), ((), ()))
+
+    def test_a_double_click_on_a_selected_rows_number_still_opens_the_editor(self) -> None:
+        """A real double-click is press, release, then the double-click event (`QTest.mouseDClick` sends only that last part). Qt opens the editor only if its own press ran for that cell:
+        the press that starts picking cells lets it run."""
+        self.select(1, 2)
+        where = self.where(1, COLUMN_SAMPLE)
+        self.press(1, COLUMN_SAMPLE)
+        self.release(1, COLUMN_SAMPLE)
+        QTest.mouseDClick(self.tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, where)
+        self.assertEqual(self.tree.state(), QtWidgets.QAbstractItemView.State.EditingState)
+        self.assertEqual(sorted(self.selection.selected_roi_ids()), [1, 2], "the selection is still both rows")
+
+    def test_the_wheel_only_scrolls_while_cells_are_being_picked(self) -> None:
+        from PyQt6.QtCore import QPoint, QPointF
+        from PyQt6.QtGui import QWheelEvent
+
+        self.select(1, 2)
+        self.press(1, COLUMN_SAMPLE)
+        position = QPointF(self.where(1, COLUMN_SAMPLE))
+        event = QWheelEvent(position, self.tree.viewport().mapToGlobal(position), QPoint(0, 0), QPoint(0, 120), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QtWidgets.QApplication.sendEvent(self.tree.viewport(), event)
+        self.assertEqual(self.diameters(1, 2), [6.0, 6.0], "a wheel turn during the drag did not step the numbers")
+        self.release(1, COLUMN_SAMPLE)
+
+    def test_esc_and_the_view_mode_and_hidden_columns_let_go(self) -> None:
+        self.select(1, 2)
+        self.drag((1, COLUMN_SAMPLE), (2, COLUMN_RING_OUT))
+        QTest.keyClick(self.tree, Qt.Key.Key_Escape)
+        self.assertEqual(self.picked(), ((), ()))
+        self.drag((1, COLUMN_SAMPLE), (2, COLUMN_RING_OUT))
+        self.tree.set_hidden_keys({COLUMN_RING_IN})
+        self.assertEqual(self.picked(), ((1, 2), (COLUMN_SAMPLE, COLUMN_RING_OUT)), "a column that is hidden leaves the picked cells")
+        self.tree.set_hidden_keys(())
+        self.panel._view_actions["simple"].trigger()
+        self.assertEqual(self.picked(), ((), ()), "the Simple view shows no numbers")
+
+    # -- copy -----------------------------------------------------------------------------
+    def test_copy_puts_the_numbers_and_tab_text_on_the_clipboard_and_marks_the_cells(self) -> None:
+        self.set_diameters(r1=7.0, r2=8.0, r3=9.0)
+        self.tree.set_cell_range((1, 2, 3), (COLUMN_SAMPLE,))
+        self.panel._copy_cell()
+        mime = QtWidgets.QApplication.clipboard().mimeData()
+        self.assertTrue(mime.hasFormat("application/x-lspr-roi-cells"))
+        self.assertEqual(mime.text(), "7.0\n8.0\n9.0")
+        self.assertIsNotNone(self.tree.copied_edges(self.cell(2, COLUMN_SAMPLE)))
+        self.assertIsNone(self.tree.copied_edges(self.cell(4, COLUMN_SAMPLE)))
+        self.assertIsNone(self.tree.copied_edges(self.cell(2, COLUMN_RING_IN)))
+        self.assertEqual(self.tree.copied_edges(self.cell(1, COLUMN_SAMPLE)), (True, True, False, True), "the top of the block")
+        self.assertEqual(self.tree.copied_edges(self.cell(3, COLUMN_SAMPLE)), (False, True, True, True), "the bottom of the block")
+        self.assertIn("Copied 3 cells", self.footer())
+
+    def test_copy_without_picked_cells_copies_the_current_cell(self) -> None:
+        self.select(2)
+        self.tree.selectionModel().setCurrentIndex(self.cell(2, COLUMN_SAMPLE), QItemSelectionModel.SelectionFlag.NoUpdate)
+        self.panel._copy_cell()
+        self.assertEqual(QtWidgets.QApplication.clipboard().mimeData().text(), "6.0")
+        self.assertIsNotNone(self.tree.copied_edges(self.cell(2, COLUMN_SAMPLE)))
+
+    def test_the_ants_move_while_the_table_is_shown_and_stop_on_esc_or_when_hidden(self) -> None:
+        self.tree.set_cell_range((1,), (COLUMN_SAMPLE,))
+        self.panel._copy_cell()
+        self.assertTrue(self.tree._ants.isActive())
+        phase = self.tree.ants_phase()
+        self.tree._ants_tick()
+        self.assertNotEqual(self.tree.ants_phase(), phase)
+        self.panel.hide()
+        _APP.processEvents()
+        self.assertFalse(self.tree._ants.isActive(), "a hidden panel does no work")
+        self.panel.show()
+        _APP.processEvents()
+        self.assertTrue(self.tree._ants.isActive(), "and they march again when it is shown")
+        QTest.keyClick(self.tree, Qt.Key.Key_Escape)
+        self.assertFalse(self.tree._ants.isActive())
+        self.assertIsNone(self.tree.copied_edges(self.cell(1, COLUMN_SAMPLE)))
+
+    def test_copying_something_else_ends_the_ants(self) -> None:
+        self.tree.set_cell_range((1,), (COLUMN_SAMPLE,))
+        self.panel._copy_cell()
+        self.assertTrue(self.tree.copied_token())
+        QtWidgets.QApplication.clipboard().setText("from another program")
+        _APP.processEvents()
+        self.panel._on_clipboard_changed()  # (the signal says it too; asked directly so the test does not depend on the platform's clipboard)
+        self.assertEqual(self.tree.copied_token(), "")
+
+    # -- paste ----------------------------------------------------------------------------
+    def test_one_copied_row_fills_every_selected_row(self) -> None:
+        self.set_diameters(r5=9.0)
+        self.copy_cells((5,), (COLUMN_SAMPLE,))
+        self.select(1, 2, 3)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(1, 2, 3, 4), [9.0, 9.0, 9.0, 6.0])
+        self.assertEqual(undo_manager.undo_label, "Paste cells")
+        undo_manager.undo()
+        self.assertEqual(self.diameters(1, 2, 3), [6.0, 6.0, 6.0], "one undo step")
+
+    def test_several_copied_rows_repeat_down_the_selected_rows_until_they_run_out(self) -> None:
+        self.set_diameters(r1=7.0, r2=8.0, r3=9.0)
+        self.copy_cells((1, 2, 3), (COLUMN_SAMPLE,))
+        self.select(1, 2, 3, 4, 5)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(1, 2, 3, 4, 5), [7.0, 8.0, 9.0, 7.0, 8.0])
+        undo_manager.undo()
+        self.select(4, 5)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(4, 5), [7.0, 8.0], "the pattern is cut where the selection ends")
+
+    def test_one_selected_row_and_several_copied_rows_run_on_down_and_select_what_was_pasted(self) -> None:
+        self.set_diameters(r1=7.0, r2=8.0, r3=9.0)
+        self.copy_cells((1, 2, 3), (COLUMN_SAMPLE,))
+        self.select(4)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(4, 5), [7.0, 8.0])
+        self.assertEqual(self.toolbox.roi_by_id(6).shape, Rectangle(30.0, 14.0, 33.0), "ROI 6 is a rectangle: it has no diameter, nothing was put there")
+        self.assertEqual(sorted(self.selection.selected_roi_ids()), [4, 5], "what was pasted is selected")
+        self.assertEqual(self.picked(), ((4, 5), (COLUMN_SAMPLE,)))
+        self.assertIn("1 row has no D_s", self.footer())
+
+    def test_only_matching_columns_are_filled(self) -> None:
+        self.toolbox.resize_rois([1], reference_inner_diameter_px=10.0, reference_outer_diameter_px=20.0)
+        self.refresh()
+        undo_manager.clear()
+        self.copy_cells((1,), (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT))
+        self.select(2, 3)
+        self.tree.set_cell_range((2, 3), (COLUMN_RING_IN,))  # the picked cells name the column: only the inner diameter
+        self.panel._paste_cells()
+        self.assertEqual([ring_diameters(self.toolbox.roi_by_id(i).shape, self.toolbox.roi_by_id(i).border) for i in (2, 3)], [(10.0, 22.0)] * 2, "the outer edge kept its diameter")
+        self.assertEqual(self.diameters(2, 3), [6.0, 6.0], "the sample diameter was not touched")
+
+    def test_a_block_of_columns_goes_to_its_matching_columns_when_only_rows_are_chosen(self) -> None:
+        self.toolbox.resize_rois([1], sample_diameter_px=8.0, reference_inner_diameter_px=12.0, reference_outer_diameter_px=24.0)
+        self.refresh()
+        undo_manager.clear()
+        self.copy_cells((1,), (COLUMN_SAMPLE, COLUMN_RING_IN, COLUMN_RING_OUT))
+        self.select(2, 3)
+        self.panel._paste_cells()
+        for roi_id in (2, 3):
+            roi = self.toolbox.roi_by_id(roi_id)
+            self.assertEqual((roi.shape.diameter_px, ring_diameters(roi.shape, roi.border)), (8.0, (12.0, 24.0)))
+
+    def test_rectangle_numbers_go_to_rectangles_and_skip_circles(self) -> None:
+        second = self.toolbox.add_shaped_roi(70.0, 5.0, Rectangle(20.0, 10.0, 0.0))
+        self.refresh()
+        undo_manager.clear()
+        self.copy_cells((self.rectangle_id,), (COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE))
+        self.select(1, second)
+        self.panel._paste_cells()
+        self.assertEqual(self.toolbox.roi_by_id(second).shape, Rectangle(30.0, 14.0, 33.0))
+        self.assertEqual(self.diameters(1), [6.0], "a circle has no width, height or angle")
+        self.assertIn("1 row has no W", self.footer())
+
+    def test_a_position_pasted_into_several_rows_sets_each_one(self) -> None:
+        self.copy_cells((1, 2), (COLUMN_X,))
+        self.select(3, 4, 5)
+        self.panel._paste_cells()
+        self.assertEqual([self.toolbox.roi_by_id(i).center_x for i in (3, 4, 5)], [10.0, 20.0, 10.0], "10, 20, then the pattern starts again")
+
+    def test_a_paste_into_the_wrong_column_is_refused_with_a_tip_at_the_pointer(self) -> None:
+        self.copy_cells((1,), (COLUMN_RING_IN,))
+        self.select(2, 3)
+        self.tree.set_cell_range((2, 3), (COLUMN_SAMPLE,))
+        before = undo_manager.undo_label
+        self.panel._paste_cells()
+        self.assertIn("No matching column: copied d_r, selected D_s", self.footer())
+        self.assertIn("No matching column", self.tip())
+        self.assertEqual(self.diameters(2, 3), [6.0, 6.0])
+        self.assertEqual(undo_manager.undo_label, before, "nothing was done")
+
+    def test_a_value_that_breaks_a_rule_stops_the_whole_paste_and_names_the_roi(self) -> None:
+        mime = QMimeData()
+        from lspr_imaging_app.panels.roi_table import cell_clipboard as cc
+
+        block = cc.CellBlock((COLUMN_RING_IN,), ((50.0,),))  # an inner diameter of 50 is beyond every outer diameter (22)
+        mime.setData(cc.MIME_TYPE, cc.block_to_payload(block))
+        QtWidgets.QApplication.clipboard().setMimeData(mime)
+        self.select(1, 2)
+        self.panel._paste_cells()
+        self.assertIn("ROI 1: the reference ring needs", self.tip())
+        self.assertIsNone(self.toolbox.roi_by_id(1).border)
+        self.assertIsNone(self.toolbox.roi_by_id(2).border)
+
+    def test_a_pixel_mask_is_not_moved_by_a_pasted_position(self) -> None:
+        self.toolbox.roi_by_id(2).shape = MaskShape(RoiMask(0, 0, np.ones((2, 2), dtype=bool)))
+        self.refresh()
+        self.copy_cells((4,), (COLUMN_X,))
+        self.select(1, 2)
+        self.panel._paste_cells()
+        self.assertIn("pixel mask", self.tip())
+        self.assertEqual(self.toolbox.roi_by_id(1).center_x, 10.0, "nothing half moved")
+
+    def test_text_from_another_program_still_pastes_its_first_value(self) -> None:
+        QtWidgets.QApplication.clipboard().setText("7,5\t99\n1\t2")
+        self.select(1, 2)
+        self.tree.selectionModel().setCurrentIndex(self.cell(1, COLUMN_SAMPLE), QItemSelectionModel.SelectionFlag.NoUpdate)
+        self.panel._paste_cells()
+        self.assertEqual(self.diameters(1, 2, 3), [7.5, 7.5, 6.0])
+
+    def test_the_pasted_cells_are_picked_so_they_can_be_copied_again(self) -> None:
+        self.set_diameters(r1=7.0)
+        self.copy_cells((1,), (COLUMN_SAMPLE,))
+        self.select(2, 3)
+        self.panel._paste_cells()
+        self.assertEqual(self.picked(), ((2, 3), (COLUMN_SAMPLE,)))
+
+    # -- the menu and the painting --------------------------------------------------------------
+    def test_the_menu_has_copy_paste_and_cancel_with_their_keys_and_states(self) -> None:
+        menu = QMenu()
+        self.panel._fill_cell_menu(menu)
+        copy, paste, cancel = [a for a in menu.actions() if not a.isSeparator()]
+        self.assertEqual((copy.text(), paste.text(), cancel.text()), ("Copy cells\tCtrl+C", "Paste cells\tCtrl+V", "Cancel cell selection\tEsc"))
+        self.assertFalse(copy.isEnabled() or paste.isEnabled() or cancel.isEnabled(), "nothing picked, nothing copied")
+        self.select(1, 2)
+        self.drag((1, COLUMN_SAMPLE), (2, COLUMN_SAMPLE))
+        menu = QMenu()
+        self.panel._fill_cell_menu(menu)
+        copy, paste, cancel = [a for a in menu.actions() if not a.isSeparator()]
+        self.assertTrue(copy.isEnabled() and cancel.isEnabled())
+        self.assertFalse(paste.isEnabled(), "nothing copied yet")
+        copy.trigger()
+        menu = QMenu()
+        self.panel._fill_cell_menu(menu)
+        self.assertTrue([a for a in menu.actions() if a.text().startswith("Paste")][0].isEnabled())
+        [a for a in menu.actions() if a.text().startswith("Cancel")][0].trigger()
+        self.assertEqual(self.picked(), ((), ()))
+        self.assertIsNone(self.tree.copied_edges(self.cell(1, COLUMN_SAMPLE)))
+
+    def test_painting_the_picked_and_copied_cells_does_not_raise(self) -> None:
+        self.select(1, 2, 3)
+        self.drag((1, COLUMN_SAMPLE), (3, COLUMN_RING_OUT))
+        self.panel._copy_cell()
+        self.tree.set_cell_range((1, 2), (COLUMN_X, COLUMN_Y))
+        self.assertFalse(self.tree.viewport().grab().isNull())
+        self.assertEqual(self.tree.range_edges(self.cell(1, COLUMN_X)), (True, False, False, True), "top left corner of the picked block")
+        self.assertEqual(self.tree.range_edges(self.cell(2, COLUMN_Y)), (False, True, True, False), "bottom right corner")
