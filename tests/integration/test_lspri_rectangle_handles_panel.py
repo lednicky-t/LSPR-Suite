@@ -38,6 +38,7 @@ try:
     )
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image.roi_gestures import KNOB_PX
+    from lspr_imaging_app.panels.image.resize_cursor import resize_cursor
     from lspr_imaging_app.panels.image.rotate_cursor import rotate_cursor
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.roi.overlay_geometry import CELL_OFFSET
@@ -206,7 +207,7 @@ class RectangleHandlesPanelTest(unittest.TestCase):
         interaction._update_roi_hover_cursor(self.scene(*self.handle(self.rect_a, "knob")))
         self.assertIs(interaction._roi_cursor, rotate_cursor())  # the knob turns the rectangle: the rotate cursor, not the open hand
         interaction._update_roi_hover_cursor(self.scene(*self.handle(self.rect_a, "e")))
-        self.assertEqual(interaction._roi_cursor, Qt.CursorShape.SizeHorCursor)
+        self.assertIs(interaction._roi_cursor, resize_cursor(0.0))  # the east handle: a horizontal arrow
         interaction._update_roi_hover_cursor(self.scene(*self.at(30.0, 34.0)))
         self.assertEqual(interaction._roi_cursor, Qt.CursorShape.SizeAllCursor)
 

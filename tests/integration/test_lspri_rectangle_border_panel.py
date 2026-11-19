@@ -46,6 +46,7 @@ try:
     from lspr_imaging_app.panels.image import ImagePanel
     from lspr_imaging_app.panels.image import rectangle_handles_item as handles_module
     from lspr_imaging_app.panels.image.roi_gestures import KNOB_PX, MIN_RING_GAP_PX
+    from lspr_imaging_app.panels.image.resize_cursor import resize_cursor
     from lspr_imaging_app.panels.image.rotate_cursor import rotate_cursor
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.roi.shape_hits import ZONE_BORDER_INNER, ZONE_BORDER_OUTER, rectangle_handle_points
@@ -284,17 +285,44 @@ class RectangleBorderPanelTest(unittest.TestCase):
         self.selection.set_roi_selection({self.rect_a})
         x, y = self.view_centre(self.rect_a)
         self.hover((x + 10.0, y + 3.0))  # on the right edge, well below its middle: the radius there is diagonal
-        self.assertEqual(self.cursor_shape(), Qt.CursorShape.SizeHorCursor)
+        self.assertEqual(self.cursor_shape(), Qt.CursorShape.BitmapCursor, "the arrow is drawn by `resize_cursor.py`")
+        self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(0.0))  # horizontal
         self.hover((x + 4.0, y - 5.0))  # on the top edge, off to the side of its middle
-        self.assertEqual(self.cursor_shape(), Qt.CursorShape.SizeVerCursor)
+        self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(90.0))  # vertical
 
     def test_the_border_band_shows_an_arrow_across_it(self) -> None:
         self.selection.set_roi_selection({self.rect_a})
         self.hover(self.above_top_edge(self.rect_a, GAP))
-        self.assertEqual(self.cursor_shape(), Qt.CursorShape.SizeVerCursor)
+        self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(90.0))
         x, y = self.view_centre(self.rect_a)
         self.hover((x + 10.0 + GAP, y + 1.0))  # beside the right edge
-        self.assertEqual(self.cursor_shape(), Qt.CursorShape.SizeHorCursor)
+        self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(0.0))
+
+    def test_a_turned_rectangles_arrows_are_exactly_across_its_edges_not_snapped_to_45_degrees(self) -> None:
+        """2026-11-19: Qt's own resize cursors have four directions; a rectangle turned 30 degrees got the arrow of 45 or 0, off by 15 or 30."""
+        self.toolbox.resize_rectangles([self.rect_a], angle_deg=30.0)
+        self.selection.set_roi_selection({self.rect_a})
+        x, y = self.view_centre(self.rect_a)
+        along_width = (np.cos(np.radians(30.0)), np.sin(np.radians(30.0)))  # the rectangle's own x axis on the screen (clockwise, y down)
+        along_height = (-along_width[1], along_width[0])
+        interaction = self.panel._interaction
+        east = (x + 10.0 * along_width[0], y + 10.0 * along_width[1])  # the middle of its right edge
+        self.hover(east)
+        self.assertIs(interaction._roi_cursor, resize_cursor(30.0))
+        south = (x + 5.0 * along_height[0], y + 5.0 * along_height[1])  # the middle of its bottom edge
+        self.hover(south)
+        self.assertIs(interaction._roi_cursor, resize_cursor(120.0))
+        for wrong in (0.0, 45.0, 90.0, 135.0):
+            self.assertIsNot(resize_cursor(30.0), resize_cursor(wrong))
+
+    def test_a_circles_arrow_is_along_its_radius_at_any_angle(self) -> None:
+        """Perpendicular to the edge all the way round (to the 3-degree step), not the nearest of four directions."""
+        self.selection.set_roi_selection({self.circle})
+        x, y = self.view_centre(self.circle)
+        radius = self.toolbox.roi_by_id(self.circle).shape.diameter_px / 2.0
+        for degrees in (0.0, 20.0, 37.0, 70.0, 100.0, 160.0, 200.0, 290.0, 345.0):
+            self.hover((x + radius * np.cos(np.radians(degrees)), y + radius * np.sin(np.radians(degrees))))
+            self.assertIs(self.panel._interaction._roi_cursor, resize_cursor(degrees % 180.0), f"at {degrees} degrees round the edge")
 
     # -- speed -----------------------------------------------------------------------------------
 
