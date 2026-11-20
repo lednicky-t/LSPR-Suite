@@ -35,14 +35,25 @@ _NONE = Qt.KeyboardModifier.NoModifier
 _CTRL = Qt.KeyboardModifier.ControlModifier
 
 
-def _source_literals() -> set[str]:
-    """Every string literal in the app's source (outside the table itself) that looks like a binding id."""
+_LOG_EVENT = re.compile(r'\blogger,\s*["\'][a-z_]+\.[a-z_]+["\']')
+"""A log event name (`log_event(logger, "roi_table.rebuild", ...)`, `timed(logger, ...)`, `stages.emit(logger, ...)`: the app's logging convention is ``domain.action``). It shares its
+namespace with the binding ids (the ROI table has both `roi_table.fill_down` the key and `roi_table.rebuild` the log record) but is never one: it always directly follows the logger
+argument. Without this the test took every ROI-table log event for a typo'd binding id (red since 2026-11-19)."""
+
+
+def _literals_in(text: str) -> set[str]:
+    """The binding ids (strings that look like one) in one source text, log event names left out."""
     prefixes = "|".join(sorted({item.id.split(".")[0] for item in shortcuts.BINDINGS}))
     pattern = re.compile(rf'["\']((?:{prefixes})\.[a-z_]+)["\']')
+    return set(pattern.findall(_LOG_EVENT.sub("", text)))
+
+
+def _source_literals() -> set[str]:
+    """Every string literal in the app's source (outside the table itself) that looks like a binding id."""
     found: set[str] = set()
     for path in SOURCE.rglob("*.py"):
         if path.name != "shortcuts.py":
-            found.update(pattern.findall(path.read_text(encoding="utf-8")))
+            found.update(_literals_in(path.read_text(encoding="utf-8")))
     return found
 
 
@@ -87,6 +98,14 @@ class TestTheSourceAgreesWithTheTable(unittest.TestCase):
         generated = set(shortcuts.PANEL_TOGGLE_IDS.values()) | set(shortcuts.PRESET_IDS.values())  # bound through their dicts
         unused = {item.id for item in shortcuts.BINDINGS if item.keys} - generated - _source_literals()
         self.assertEqual(unused, set(), "a key listed in shortcuts.py that nothing binds or reacts to")
+
+    def test_a_log_event_name_is_not_taken_for_a_binding_id_but_a_binding_id_still_is(self) -> None:
+        self.assertEqual(_literals_in('log_event(logger, "roi_table.rebuild", rows=1)'), set())
+        self.assertEqual(_literals_in('with timed(logger, "roi_table.step_state") as t:'), set())
+        self.assertEqual(_literals_in('stages.emit(\n    logger,\n    "roi_table.fit_step_columns", columns=3)'), set())  # also across lines
+        self.assertEqual(_literals_in('bind_action(action, "roi_table.fill_down")'), {"roi_table.fill_down"})
+        self.assertEqual(_literals_in('matches(event, "roi_table.not_a_binding")'), {"roi_table.not_a_binding"})  # a real typo is still found
+        self.assertEqual(_literals_in('log_event(logger, "edit.something_logged")  # a log event of any domain'), set())
 
     def test_an_unknown_id_names_the_file_to_edit(self) -> None:
         with self.assertRaises(KeyError) as caught:
