@@ -57,6 +57,7 @@ try:
         MAKE_REFERENCE,
         MAKE_SAMPLE,
         RIM_TO_REFERENCE,
+        TURN_RIM_OFF,
         UNLINK,
         RoiMenuChoice,
     )
@@ -299,6 +300,47 @@ class Phase3UiTest(unittest.TestCase):
         undo_manager.undo()
         self.assertFalse(undo_manager.can_undo, "one undo step")
         self.assertEqual((len(self.roi_toolbox.rois()), self.roi_toolbox.references_of(1)), (3, ()))
+
+    def test_turn_rim_into_linked_reference_takes_the_rim_where_the_sample_is_on_the_cube_on_screen(self) -> None:
+        """2026-11-19: a sample dragged on a cube after the first is a timeline change, and the reference used to be made where the sample was before. Cube 1 here is that cube."""
+        self.roi_toolbox.move_roi(1, 30.0, 50.0, cube=1)  # persistent from cube 1 on; the base position stays (20, 20)
+        self.assertEqual((self.roi(1).center_x, self.roi(1).center_y), (20.0, 20.0))
+        self.selection.set_cube(1)
+        _pump(0.1)
+        self.selection.set_roi_selection({1})
+        undo_manager.clear()
+        self.right_click(30.0, 50.0, RoiMenuChoice(RIM_TO_REFERENCE))
+        self.assertEqual(self.roi_toolbox.references_of(1), (4,))
+        mask = self.roi(4).shape.mask
+        rows, columns = np.nonzero(mask.mask)
+        self.assertAlmostEqual(float(columns.mean()) + mask.x0, 30.0, delta=1.0)
+        self.assertAlmostEqual(float(rows.mean()) + mask.y0, 50.0, delta=1.0)
+        self.assertIn("no rim of its own", self.messages[-1])
+        for cube in (None, 0, 1):  # the sample is rim-less on every cube, and one undo step takes everything back
+            self.assertFalse(self.roi_toolbox.rois_at(cube)[0].border.enabled, f"cube {cube}")
+        undo_manager.undo()
+        self.assertFalse(undo_manager.can_undo)
+        self.assertEqual((len(self.roi_toolbox.rois()), self.roi_toolbox.references_of(1)), (3, ()))
+        self.assertIsNone(self.roi(1).border)
+
+    def test_turn_rim_off_is_offered_to_a_sample_with_a_rim_only_and_turns_it_off_in_one_undo_step(self) -> None:
+        self.selection.set_roi_selection({1})
+        self.assertTrue(self.right_click(20.0, 20.0, None).call_args.kwargs["can_turn_rim_off"])
+        undo_manager.clear()
+        self.right_click(20.0, 20.0, RoiMenuChoice(TURN_RIM_OFF))
+        self.assertFalse(self.roi(1).border.enabled)
+        self.assertEqual(self.roi_toolbox.reference_source(1), "none")
+        self.assertIn("Turned the rim off on 1 ROI", self.messages[-1])
+        kwargs = self.right_click(20.0, 20.0, None).call_args.kwargs
+        self.assertFalse(kwargs["can_turn_rim_off"], "it is off now")
+        self.assertTrue(kwargs["can_add_rim"], "Add rim brings it back")
+        self.assertFalse(kwargs["can_rim_to_reference"], "no rim, nothing to turn into a reference")
+        undo_manager.undo()
+        self.assertFalse(undo_manager.can_undo)
+        self.assertIsNone(self.roi(1).border)
+        self.roi_toolbox.set_roi_role([2], "reference")  # a reference has no rim to turn off
+        self.selection.set_roi_selection({2})
+        self.assertFalse(self.right_click(40.0, 30.0, None).call_args.kwargs["can_turn_rim_off"])
 
     def test_turn_rim_into_linked_reference_leaves_out_what_cannot_and_says_so(self) -> None:
         self.roi_toolbox.set_roi_role([3], "reference")
@@ -646,12 +688,14 @@ class ContextMenuTest(unittest.TestCase):
     def test_the_rim_entries_are_in_the_menu_only_when_they_can_be_used_and_wear_icons(self) -> None:
         menu, _parent = self._build(selected_count=1, selected_roles=(1, 0))
         self.assertNotIn("Add rim", self._texts(menu))
+        self.assertNotIn("Turn rim off", self._texts(menu))
         self.assertNotIn("Turn rim into linked reference", self._texts(menu))
-        menu, _parent = self._build(selected_count=1, selected_roles=(1, 0), can_add_rim=True, can_rim_to_reference=True)
+        menu, _parent = self._build(selected_count=1, selected_roles=(1, 0), can_add_rim=True, can_turn_rim_off=True, can_rim_to_reference=True)
         texts = self._texts(menu)
         self.assertIn("Add rim", texts)
+        self.assertIn("Turn rim off", texts)
         self.assertIn("Turn rim into linked reference", texts)
-        for text in ("Add rim", "Turn rim into linked reference"):
+        for text in ("Add rim", "Turn rim off", "Turn rim into linked reference"):
             entry = self._entry(menu, text)
             self.assertFalse(entry.icon().isNull(), text)
             self.assertTrue(entry.toolTip(), text)
