@@ -13,6 +13,7 @@ import tempfile
 import time
 import unittest
 from dataclasses import replace
+from unittest import mock
 from pathlib import Path
 
 import numpy as np
@@ -37,7 +38,7 @@ try:
     from lspr_imaging_app.panels.spectra.correction_group import fit_effect, info_html
     from lspr_imaging_app.panels.spectra.panel import SpectraPanel
     from lspr_imaging_app.panels.ui_state import UiStateStore
-    from lspr_imaging_app.selection.spectral_correction_module import SpectralCorrectionModule, import_report
+    from lspr_imaging_app.selection.spectral_correction_module import SpectralCorrectionModule, camera_report, import_report
     from lspr_imaging_app.storage.session import session_path
     from tests.unit.test_lspri_spectral_passband import DARK, PIXEL, make_stored, sweep_csv
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -80,6 +81,8 @@ class SpectralCorrectionAppTests(unittest.TestCase):
         self.spectral.notice.connect(self.notices.append)
         self.finished: list[tuple[object, str]] = []
         self.spectral.import_finished.connect(lambda table, error: self.finished.append((table, error)))
+        self.responses: list[tuple[object, str]] = []
+        self.spectral.response_finished.connect(lambda response, error: self.responses.append((response, error)))
         self.sweep = self.root / "spectral_sweep_test.csv"
         self.sweep.write_bytes(sweep_csv())
         self.panels: list[SpectraPanel] = []
@@ -132,7 +135,7 @@ class SpectralCorrectionAppTests(unittest.TestCase):
         self.assertTrue(self.spectral.set_mode("centroid"))
         payload = self._saved_payload()
         block = payload["spectral_correction"]
-        self.assertEqual(payload["schema_version"], "1.13")
+        self.assertEqual(payload["schema_version"], "1.14")
         self.assertEqual((block["mode"], block["sha256"], block["source_name"], block["illumination"]), ("centroid", table.sha256, "spectral_sweep_test.csv", "test LED"))
         self.assertEqual(block["file"], "spectral_correction/spectral_correction.h5")
         centres = self.spectral.passbands().centroid_nm.copy()
@@ -310,7 +313,9 @@ class SpectralCorrectionAppTests(unittest.TestCase):
         self.assertIn("61 of 61 bands", text)
         self.assertIn("Polynomial fit: the full profile is applied", text)
         self.m.analysis_settings.set_metric_settings(replace(self.m.analysis_settings.metric_settings(), fit_method="gaussian"))
-        self.assertIn("Gaussian fit: read as Centroid", info.toolTip())  # follows the fit method
+        self.assertIn("Gaussian fit: the full profile is applied", info.toolTip())  # follows the fit method
+        self.m.analysis_settings.set_metric_settings(replace(self.m.analysis_settings.metric_settings(), fit_method="template"))
+        self.assertIn("Template shift: read as Centroid", info.toolTip())
 
     def test_the_i_text_says_why_a_table_is_not_used(self) -> None:
         text = info_html(None, "", "", "none", "polynomial", None, "The spectral-correction file is missing.")
@@ -323,8 +328,181 @@ class SpectralCorrectionAppTests(unittest.TestCase):
             sentences = {mode: fit_effect(mode, fit) for mode in sp.MODES}
             self.assertEqual(len(set(sentences.values())), 3, fit)  # three modes, three different sentences, for every fit
         self.assertIn("applied", fit_effect("profile", "polynomial"))
-        for fit in ("gaussian", "voigt", "template", "response", "none"):
+        for fit in ("template", "response", "none"):
             self.assertIn("read as Centroid", fit_effect("profile", fit), fit)  # never a silent fall-back: the sentence says it
+        for fit in ("polynomial", "gaussian", "voigt"):
+            self.assertIn("full profile is applied", fit_effect("profile", fit), fit)
+
+    # -- the camera response ----------------------------------------------------------------------------------------------------
+
+    def _camera_file(self, slope: float = -0.003, name: str = "camera_linear.csv") -> Path:
+        path = self.root / name
+        rows = "".join(f"{wl:.0f},{1.0 + slope * (wl - 600.0):.5f}\n" for wl in range(380, 821, 10))
+        path.write_text("# a linear response for the tests\nwavelength_nm,relative_response\n" + rows, encoding="utf-8")
+        return path
+
+    def _import_camera(self, path: Path) -> None:
+        before = len(self.responses)
+        self.spectral.import_camera_response(path)
+        self.assertTrue(_pump_until(lambda: len(self.responses) > before), "the camera import did not finish")
+
+    def test_a_camera_response_is_kept_with_the_session_and_weights_the_bands(self) -> None:
+        self._open()
+        self._import()
+        flat = self.spectral.passbands().centroid_nm.copy()
+        self._import_camera(self._camera_file())
+        response, error = self.responses[-1]
+        self.assertEqual(error, "")
+        self.assertEqual((self.spectral.has_response(), self.spectral.camera_response().source_name), (True, "camera_linear.csv"))
+        pb = self.spectral.passbands()
+        self.assertEqual(pb.camera, "camera_linear.csv")
+        self.assertLess(pb.centroid_nm[60] - flat[60], -0.05)  # 720 nm moves blue
+        np.testing.assert_allclose(pb.centroid_flat_nm, flat, atol=1e-12)
+        self.assertEqual(self.spectral.mode(), "none", "the camera never changes what the numbers show by itself")
+        block = self._saved_payload()["spectral_correction"]
+        self.assertEqual(block["camera_response"]["source_name"], "camera_linear.csv")
+        self.assertEqual(len(block["camera_response"]["wavelength_nm"]), 45)
+        self.spectral.set_mode("centroid")
+        centres = self.spectral.passbands().centroid_nm.copy()
+        self.m.dataset.clear_dataset()
+        self._open()
+        self.assertTrue(_pump_until(self.spectral.has_table), "the table was not read back")
+        self.assertEqual((self.spectral.mode(), self.spectral.camera_response().source_name), ("centroid", "camera_linear.csv"))
+        np.testing.assert_array_equal(self.spectral.passbands().centroid_nm, centres)  # derived with the camera again, not flat
+        self.assertEqual(self.spectral.problem(), "")
+
+    def test_the_camera_can_come_before_the_table_and_the_order_makes_no_difference(self) -> None:
+        self._open()
+        self._import_camera(self._camera_file())
+        self.assertFalse(self.spectral.has_table())
+        block = self._saved_payload()["spectral_correction"]
+        self.assertNotIn("file", block)  # a block with only the camera
+        self.assertEqual(block["camera_response"]["source_name"], "camera_linear.csv")
+        self._import()  # the table, afterwards, is derived with the camera
+        first = self.spectral.passbands().centroid_nm.copy()
+        self.assertEqual(self.spectral.passbands().camera, "camera_linear.csv")
+        self.spectral.remove_camera_response()
+        self.assertTrue(_pump_until(lambda: not self.spectral.has_response() and self.spectral.passbands().camera == ""))
+        self._import_camera(self._camera_file())
+        np.testing.assert_allclose(self.spectral.passbands().centroid_nm, first, atol=1e-12)  # table-then-camera == camera-then-table
+
+    def test_removing_the_camera_goes_back_to_a_flat_camera_and_leaves_no_trace(self) -> None:
+        self._open()
+        self._import()
+        flat = self.spectral.passbands().centroid_nm.copy()
+        self._import_camera(self._camera_file())
+        before = len(self.responses)
+        self.spectral.remove_camera_response()
+        self.assertTrue(_pump_until(lambda: len(self.responses) > before))
+        self.assertEqual(self.responses[-1], (None, ""))
+        self.assertFalse(self.spectral.has_response())
+        np.testing.assert_allclose(self.spectral.passbands().centroid_nm, flat, atol=1e-12)
+        self.assertNotIn("camera_response", self._saved_payload()["spectral_correction"])
+
+    def test_a_bad_camera_file_or_no_session_changes_nothing(self) -> None:
+        self._import_camera(self._camera_file())  # no dataset yet: no session to keep it in
+        self.assertEqual(self.responses[-1][0], None)
+        self.assertIn("No session is open", self.responses[-1][1])
+        self._open()
+        self._import()
+        bad = self.root / "bad.csv"
+        bad.write_text("400,1\n500,2\n", encoding="utf-8")
+        self._import_camera(bad)
+        self.assertIn("at least 5 points", self.responses[-1][1])
+        short = self._camera_file(name="short.csv")
+        short.write_text("wavelength_nm,r\n" + "".join(f"{wl},1\n" for wl in range(450, 701, 10)), encoding="utf-8")  # does not reach 420 and 720
+        self._import_camera(short)
+        self.assertIn("the sweep goes from 420 to 720", self.responses[-1][1])
+        self.assertFalse(self.spectral.has_response())
+        self.assertEqual(self.spectral.passbands().camera, "")
+
+    def test_a_camera_that_does_not_cover_the_table_is_said_when_the_session_opens(self) -> None:
+        self._open()
+        self._import()
+        self.m.dataset.clear_dataset()
+        self._open()  # reload the table, then put a response that does not cover it into the saved block
+        self.assertTrue(_pump_until(self.spectral.has_table))
+        block = dict(self.spectral.state())
+        block["camera_response"] = sp.CameraResponse(np.arange(450.0, 701.0, 10.0), np.ones(26), "short.csv").to_payload()
+        self.m.dataset.clear_dataset()
+        self._open()
+        self.assertTrue(_pump_until(self.spectral.has_table))  # the session's own load has been applied: only then is the forced block the last word
+        self.spectral.restore_state(block)
+        self.assertTrue(_pump_until(lambda: bool(self.spectral.problem())))
+        self.assertIn("the sweep goes from 420 to 720", self.spectral.problem())
+        self.assertFalse(self.spectral.has_table())
+
+    def test_a_damaged_camera_block_is_said_and_written_back_as_it_was(self) -> None:
+        self._open()
+        raw = {"wavelength_nm": [1, 2, 3], "response": [1, 2, 3]}
+        self.spectral.restore_state({"mode": "none", "camera_response": raw})
+        self.assertIn("camera response could not be used", self.spectral.problem())
+        self.assertFalse(self.spectral.has_response())
+        self.assertEqual(self.spectral.state()["camera_response"], raw)
+
+    def test_a_new_camera_is_a_different_correction_for_the_display_only_when_one_is_on(self) -> None:
+        self._open()
+        stored = make_stored()
+        results = self.m.scan_results
+        results._paired = PairedScan(stored, {})
+        self._import()
+        changes: list[int] = []
+        results.results_changed.connect(lambda: changes.append(1))
+        self._import_camera(self._camera_file())
+        self.assertEqual(changes, [], "mode None: a camera changes nothing the display shows")
+        self.spectral.set_mode("centroid")
+        shown = results.stored()
+        self.assertIn("camera_linear.csv", shown.spectral_info()["camera_response"])
+        n = len(changes)
+        self._import_camera(self._camera_file(slope=-0.002, name="camera_two.csv"))
+        self.assertEqual(len(changes), n + 1, "a different camera with a correction on: the display's scan is a new object")
+        self.assertIsNot(results.stored(), shown)
+        self.assertEqual(results.stored().spectral_info()["camera_response"], "camera_two.csv")
+
+    def test_the_i_text_says_what_the_camera_is(self) -> None:
+        self._open()
+        panel = self._panel()
+        info = panel._correction.info
+        self._import_camera(self._camera_file())
+        self.assertIn("Camera response: camera_linear.csv (kept", info.toolTip())  # a response with no table yet
+        self._import()
+        text = info.toolTip()
+        self.assertIn("Camera response: camera_linear.csv: the bands are weighted by it", text)
+        self.assertIn("nm on average", text)
+        self.spectral.remove_camera_response()
+        self.assertTrue(_pump_until(lambda: "Camera: taken as flat" in info.toolTip()))
+
+    def test_the_camera_report_says_what_it_does(self) -> None:
+        table = ps.parse_sweep(sweep_csv(), "s.csv")
+        response = sp.CameraResponse(np.arange(380.0, 821.0, 10.0), 1.0 - 0.003 * (np.arange(380.0, 821.0, 10.0) - 600.0), "cam.csv", "ab" * 32)
+        none = camera_report(response, None, "none")
+        self.assertIn("Camera response read from cam.csv: 45 points, 380-820 nm", none)
+        self.assertIn("no spectral-correction table yet", none)
+        with_table = camera_report(response, sp.derive(table, response), "none")
+        self.assertIn("the band centres move by", with_table)
+        self.assertIn("do not change until you pick Centroid or Full profile", with_table)
+        self.assertIn("the shown numbers change now", camera_report(response, sp.derive(table, response), "centroid"))
+        self.assertIn("Remove Camera Response", with_table)
+
+    def test_the_file_menu_has_the_camera_entries(self) -> None:
+        window = QtWidgets.QMainWindow()
+        menu, _edit, _view = app_rewrite._build_menu_bar(window)
+        actions = app_rewrite._wire_file_menu(menu, window, self.m, UiStateStore({}))
+        try:
+            self.assertEqual((actions.import_camera_action.text(), actions.remove_camera_action.text()), ("Camera Response...", "Remove Camera Response"))
+            self.assertFalse(actions.import_camera_action.isEnabled())
+            self._open()
+            self.assertTrue(actions.import_camera_action.isEnabled())
+            self.assertFalse(actions.remove_camera_action.isEnabled(), "nothing to remove yet")
+            with mock.patch("lspr_imaging_app.panels.file_menu.QMessageBox.information") as report:  # the report is a modal dialog: nobody is here to close it
+                self._import_camera(self._camera_file())
+            self.assertEqual(report.call_count, 1)
+            self.assertIn("Camera response read from camera_linear.csv", report.call_args.args[2])
+            self.assertTrue(actions.remove_camera_action.isEnabled())
+        finally:
+            actions.manager.hide()
+            window.deleteLater()
+            _APP.processEvents()
 
     # -- the import entry's pieces ----------------------------------------------------------------------------------------------
 
