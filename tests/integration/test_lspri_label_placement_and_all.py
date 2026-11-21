@@ -130,7 +130,7 @@ class RoiLabelPlacementTest(_PanelCase):
         picker = self.roi_tab.label_placement_picker
         self.assertTrue(popup.isAncestorOf(picker))
         self.assertIs(picker.parentWidget(), self.roi_tab.labels_button.parentWidget(), "the same row as the toggle")
-        view_popup = self.view_tab._roi_display_menu.menu().actions()[0].defaultWidget()
+        view_popup = self.view_tab.menu_for(self.view_tab.roi_labels_button).actions()[0].defaultWidget()
         self.assertTrue(view_popup.isAncestorOf(self.view_tab._roi_placement_copy), "and on the View tab's copy of the menu")
 
     def test_the_default_place_is_right_where_the_labels_always_were(self) -> None:
@@ -175,7 +175,7 @@ class RoiLabelSizeTest(_PanelCase):
     def test_the_size_box_sits_in_the_labels_row_of_both_menus_and_starts_at_the_old_size(self) -> None:
         box = self.roi_tab.label_size_box
         self.assertIs(box.parentWidget(), self.roi_tab.labels_button.parentWidget())
-        view_popup = self.view_tab._roi_display_menu.menu().actions()[0].defaultWidget()
+        view_popup = self.view_tab.menu_for(self.view_tab.roi_labels_button).actions()[0].defaultWidget()
         self.assertTrue(view_popup.isAncestorOf(self.view_tab._roi_size_copy))
         self.assertEqual(box.value(), 9)
         self.assertEqual(self.panel._roi_overlay.label_item.point_size(), 9.0)

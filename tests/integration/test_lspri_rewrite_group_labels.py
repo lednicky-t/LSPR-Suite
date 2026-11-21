@@ -20,7 +20,9 @@ try:
     from PyQt6.QtWidgets import QApplication, QComboBox, QFrame, QLabel
 
     from lspr_imaging_app.gui.app_theme import LSPRI_BRIGHT_THEME
-    from lspr_imaging_app.panels.image.group_label_menu import GroupLabelMenu
+    from lspr_ui import load_tabler_icon
+
+    from lspr_imaging_app.panels.image.group_label_menu import GroupLabelMenu, label_menu_icon
     from lspr_imaging_app.panels.image.group_label_overlay import (
         GroupLabelItem,
         group_label_entries,
@@ -177,6 +179,15 @@ class LabelRectTest(unittest.TestCase):
 
 
 class LabelMenuTest(unittest.TestCase):
+    def test_the_icon_tag_is_flipped_top_to_bottom_so_it_comes_out_of_the_dots(self) -> None:
+        def left_third(image, y0: int, y1: int) -> int:  # opaque mass in the left third of the rows y0..y1
+            return sum(image.pixelColor(x, y).alpha() for y in range(y0, y1) for x in range(image.width() // 3))
+
+        plain = load_tabler_icon("label-important", color="#ffffff", size=26, stroke_width=2.1).pixmap(26, 26).toImage()
+        self.assertGreater(left_third(plain, 0, 13), left_third(plain, 13, 26), "the plain tag has its tie-on hole at the upper left")
+        icon = label_menu_icon("#ffffff").pixmap(36, 36).toImage()  # the tag fills rows 1..27, the dots are below it
+        self.assertGreater(left_third(icon, 14, 27), left_third(icon, 0, 14), "in the group icon the hole is at the lower left, by the dots")
+
     def test_settings_follow_the_controls_and_changes_are_reported(self) -> None:
         menu = GroupLabelMenu()
         seen: list[int] = []

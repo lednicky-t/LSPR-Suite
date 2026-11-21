@@ -696,7 +696,7 @@ class RewriteImagePanelTest(unittest.TestCase):
         first, all_group, histogram = (layout.itemAt(index).widget() for index in (0, 2, 4))  # odd items are separators
         self.assertTrue(first.isAncestorOf(self.panel._view_tab.display_range_controls))
         self.assertTrue(all_group.isAncestorOf(self.panel._view_tab._all_controls))
-        self.assertTrue(histogram.isAncestorOf(self.panel._view_tab._masks_menu))  # the Masks menu holds the highlight tint
+        self.assertTrue(histogram.isAncestorOf(self.panel._view_tab.histogram_toggle))  # the Masks group holds the highlight's icon
 
     def test_restoring_the_display_range_does_not_report_it_as_a_user_change(self) -> None:
         self._load()
@@ -1467,11 +1467,14 @@ class RewriteImagePanelTest(unittest.TestCase):
         controls = self.panel._view_tab.highlight_controls
         self.assertIsInstance(controls, HistogramHighlightOverlayControls)
         view_tab = self.panel._view_tab
-        popup = view_tab._masks_menu.menu().actions()[0].defaultWidget()
-        self.assertTrue(popup.isAncestorOf(controls), "in the Masks pick-up menu")
-        self.assertTrue(popup.isAncestorOf(view_tab._mask_controls))
+        # 2026-11-21: the icon is the switch (a left click); the colour and transparency are in the menu of its right-click.
+        popup = view_tab.menu_for(view_tab.histogram_toggle).actions()[0].defaultWidget()
+        self.assertTrue(popup.isAncestorOf(controls), "in the highlight's right-click menu")
+        self.assertFalse(popup.isAncestorOf(view_tab.histogram_toggle), "the switch is the icon itself")
+        mask_popup = view_tab.menu_for(view_tab.mask_toggle).actions()[0].defaultWidget()
+        self.assertTrue(mask_popup.isAncestorOf(view_tab._mask_controls))
         self.assertEqual(view_tab._masks_label.text(), "Masks")
-        self.assertIs(view_tab._masks_label.parentWidget(), view_tab._masks_menu.parentWidget())
+        self.assertTrue(view_tab._masks_label.parentWidget().isAncestorOf(view_tab.mask_toggle), "under the Masks caption")
 
     def test_view_tab_mask_icons_mirror_the_mask_tab(self) -> None:
         view_controls = self.panel._view_tab._mask_controls
