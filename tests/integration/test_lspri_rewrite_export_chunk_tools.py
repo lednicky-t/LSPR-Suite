@@ -165,6 +165,79 @@ class ExportChunkToolsTests(unittest.TestCase):
         self.assertEqual((self.section._chunk_spin.value(), self.section._chunk_h_spin.value()), (64, 64))
         self.assertTrue(any("place ROIs first" in r for r in reports))
 
+    # -- the layout check before an export (2026-11-20, `export_preflight.py`); the drive is made up, never this machine's ----------
+
+    def _export_with_drive(self, info, answer=None):
+        """Click Export with ``info`` as the destination drive; ``answer`` is what the layout dialog returns (None = it must not appear)."""
+        from lspr_imaging_app.dataset import export_disk_estimate as de
+        from lspr_imaging_app.panels.image import export_preflight as ep
+
+        calls, asked = [], []
+        with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=self._tmp.name), \
+                mock.patch.object(de, "drive_info", return_value=info), \
+                mock.patch.object(ep, "ask", side_effect=lambda parent, pre: asked.append(pre) or answer), \
+                mock.patch.object(self.dataset, "export_to_ome_zarr", side_effect=lambda d, **kw: calls.append((d, kw))):
+            self.section._export_button.click()
+        return calls, asked
+
+    @staticmethod
+    def _drive(file_system, unit, free):
+        from lspr_imaging_app.dataset import export_disk_estimate as de
+
+        return de.DriveInfo(cluster_bytes=unit, folder_bytes=1024 if file_system == "NTFS" else unit, free_bytes=free, file_system=file_system)
+
+    def test_a_slow_layout_on_a_big_unit_drive_asks_and_cube_changes_the_shard_control_and_the_name(self) -> None:
+        reports = []
+        self.section._status = reports.append
+        calls, asked = self._export_with_drive(self._drive("exFAT", 2 * 2**20, 10 * 2**30), answer="per_spectral_cube")
+        self.assertEqual(len(asked), 1)
+        self.assertTrue(asked[0].slow and asked[0].recommend_cube)
+        self.assertEqual(len(calls), 1)
+        destination, kwargs = calls[0]
+        self.assertEqual(kwargs["shard_mode"], "per_spectral_cube")
+        self.assertEqual(self.section._shard_button.mode(), "per_spectral_cube")  # the control says what was exported
+        self.assertRegex(destination.name, r"_c\d+(x\d+)?F[NZ]_")  # the folder name carries the layout that was used
+        self.assertTrue(any("Shard set to Cube" in r for r in reports), reports)
+
+    def test_cancelling_the_layout_check_exports_nothing(self) -> None:
+        reports = []
+        self.section._status = reports.append
+        calls, asked = self._export_with_drive(self._drive("exFAT", 2 * 2**20, 10 * 2**30), answer=None)
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.section._shard_button.mode(), "per_image")
+        self.assertTrue(any("cancelled at the layout check" in r for r in reports), reports)
+
+    def test_export_as_set_keeps_the_layout_and_exports(self) -> None:
+        calls, asked = self._export_with_drive(self._drive("exFAT", 2 * 2**20, 10 * 2**30), answer="per_image")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]["shard_mode"], "per_image")
+        self.assertEqual(self.section._shard_button.mode(), "per_image")
+
+    def test_a_drive_with_nothing_to_warn_about_shows_no_dialog(self) -> None:
+        calls, asked = self._export_with_drive(self._drive("NTFS", 4096, 2**40))
+        self.assertEqual(asked, [])
+        self.assertEqual(len(calls), 1)
+
+    def test_a_drive_that_cannot_be_asked_does_not_stop_the_export(self) -> None:
+        calls, asked = self._export_with_drive(None)
+        self.assertEqual(asked, [])
+        self.assertEqual(len(calls), 1)
+
+    def test_real_export_logs_where_the_workers_time_went(self) -> None:
+        finished = []
+        self.dataset.task_finished.connect(lambda *args: finished.append(args))
+        with self.assertLogs("lspr_imaging_app.dataset.module", level="INFO") as logs:
+            self.dataset.export_to_ome_zarr(Path(self._tmp.name) / "stages.zarr", chunk_size_px=64)
+            self.assertTrue(_pump(lambda: bool(finished)))
+        events = [r for r in logs.records if getattr(r, "lspr_event", None) == "dataset.export_stages"]
+        self.assertEqual(len(events), 1, [r.getMessage() for r in logs.records])
+        fields = events[0].lspr_fields
+        self.assertEqual((fields["outcome"], fields["planes"]), ("completed", 4))
+        for key in ("read_ms", "encode_ms", "folders_ms", "write_ms"):
+            self.assertGreaterEqual(fields[key], 0.0, key)
+        self.assertGreater(fields["read_ms"], 0.0)
+
     def test_export_passes_chunk_shape_and_frame(self) -> None:
         self.set_size(40, 48)
         calls = []

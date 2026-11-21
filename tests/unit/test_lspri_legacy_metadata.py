@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests._paths import REPO_ROOT, ensure_repo_paths
 
@@ -206,6 +207,27 @@ class FindLegacyMetadataFilesTests(unittest.TestCase):
     def test_find_and_import_returns_none_when_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(find_and_import_legacy_metadata(Path(tmp)))
+
+    def test_a_folder_of_many_files_is_searched_by_name_without_asking_the_disk_about_each_file(self) -> None:
+        # Regression 2026-11-20: the search called `is_file()` on every entry before comparing names. In the 71,685-image TIFF
+        # stack folder of a real dataset on a slow drive that was ~26 ms per call, two names, about an hour with no sign of
+        # life. Only an entry whose name matches needs the question.
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            for index in range(40):
+                (folder / f"imLCTFatWL470Frame{index}.tiff").write_bytes(b"")
+            asked: list[str] = []
+            real_is_file = Path.is_file
+
+            def counting_is_file(path: Path, *args, **kwargs) -> bool:
+                asked.append(path.name)
+                return real_is_file(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "is_file", counting_is_file):
+                found = find_legacy_metadata_files(folder)
+
+        self.assertIsNone(found)
+        self.assertEqual(asked, [])
 
 
 if __name__ == "__main__":
