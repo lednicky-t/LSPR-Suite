@@ -384,8 +384,13 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         toolbar = panel._selection_tools.toolbar
         self.assertFalse(hasattr(panel, "_area_pickers"), "the per-tab pickers are gone (2026-11-14)")
         self.assertTrue(toolbar.isVisible())
-        self.assertIs(toolbar.parentWidget(), panel._view.parentWidget(), "beside the image canvas")
-        self.assertLess(toolbar.geometry().right(), panel._view.geometry().left() + 1, "left of the image")
+        # Since 2026-11-22 the toolbar is the content of a side rail (a grip over it), and the rail sits beside the canvas.
+        rail = panel.side_rails.rail("selection")
+        self.assertIs(toolbar.parentWidget(), rail)
+        self.assertIs(rail.parentWidget(), panel._view.parentWidget(), "beside the image canvas")
+        self.assertLess(
+            toolbar.mapTo(panel, toolbar.rect().topRight()).x(), panel._view.mapTo(panel, panel._view.rect().topLeft()).x() + 1, "left of the image"
+        )
         for tab in (panel._mask_tab, panel._roi_tab, panel._view_tab):
             self.assertFalse(tab.isAncestorOf(toolbar))
         self.assertIs(panel._cursor_overlay.icon_label.parent(), panel._view_tab._display_range_controls)
@@ -422,18 +427,24 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         _, y = self.histogram._plot._all_pixels_curve.getData()
         return float(np.sum(y))
 
-    def test_histogram_ignores_the_selection_unless_its_ribbon_tab_is_open(self) -> None:
+    def test_histogram_ignores_the_selection_while_the_view_ribbon_is_rolled_up(self) -> None:
+        """2026-11-22: the View controls are the View ribbon beside the image (the top ribbon's View tab is gone); "in front of the person" =
+        the ribbon is rolled down, whichever tab of the top ribbon is open."""
         self._counts_mode()
         self._open_tab("Mask")
+        self.image_panel.side_rails.rail("view").set_expanded(False)
         self.area.set_rectangle(0, 0, 40, 64)
         _pump()
         self.assertEqual(self.image_panel.active_ribbon_category(), "Mask")
         self.assertAlmostEqual(self._all_total(), float(_SHAPE[0] * _SHAPE[1]))
+        self.image_panel.side_rails.rail("view").set_expanded(True)  # rolled down again: the Histogram catches up
+        _pump()
+        self.assertAlmostEqual(self._all_total(), 40.0 * 64.0)
 
-    def test_histogram_narrows_to_the_selection_when_its_tab_is_open(self) -> None:
+    def test_histogram_narrows_to_the_selection_while_the_view_ribbon_is_rolled_down(self) -> None:
         self._counts_mode()
-        self._open_tab("View")
-        self.assertEqual(self.image_panel.active_ribbon_category(), "View")
+        self._open_tab("Mask")  # any tab: the View controls are not a tab any more
+        self.assertTrue(self.image_panel.view_controls_open())
         self.area.set_rectangle(0, 0, 40, 64)
         _pump()
         self.assertAlmostEqual(self._all_total(), 40.0 * 64.0)
@@ -446,7 +457,6 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     def test_selection_does_not_move_the_highlight_range(self) -> None:
         before = self.highlight_range.current_range()
-        self._open_tab("View")
         self.area.set_rectangle(0, 0, 8, 8)  # only flat 150 px inside
         _pump()
         self.assertEqual(self.highlight_range.current_range(), before)

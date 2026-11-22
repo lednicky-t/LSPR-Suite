@@ -689,13 +689,13 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertIsNone(self.panel._fixed_levels())
         self.assertNotEqual(float(self._levels_on_screen()[1]), float(controls._high_edit.text()), "shown at its own range meanwhile")
 
-    def test_the_display_range_group_is_the_leftmost_one_on_the_view_tab(self) -> None:
-        """Maintainer's request (2026-10-14): the Display range group sits to the left of the Histogram (now Masks) group;
-        the All group (Show all / Hide all) sits between them, next to Display range."""
+    def test_the_all_group_is_the_first_and_the_display_range_the_second_on_the_view_tab(self) -> None:
+        """Maintainer's requests: the Display range group sits to the left of the Histogram (now Masks) group (2026-10-14); the All group
+        (Show all / Hide all) is the very first one, in front of the Image group (2026-11-22)."""
         layout = self.panel._view_tab.layout()
-        first, all_group, histogram = (layout.itemAt(index).widget() for index in (0, 2, 4))  # odd items are separators
-        self.assertTrue(first.isAncestorOf(self.panel._view_tab.display_range_controls))
+        all_group, image_group, histogram = (layout.itemAt(index).widget() for index in (0, 2, 4))  # odd items are separators
         self.assertTrue(all_group.isAncestorOf(self.panel._view_tab._all_controls))
+        self.assertTrue(image_group.isAncestorOf(self.panel._view_tab.display_range_controls))
         self.assertTrue(histogram.isAncestorOf(self.panel._view_tab.histogram_toggle))  # the Masks group holds the highlight's icon
 
     def test_restoring_the_display_range_does_not_report_it_as_a_user_change(self) -> None:
@@ -1473,8 +1473,8 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertFalse(popup.isAncestorOf(view_tab.histogram_toggle), "the switch is the icon itself")
         mask_popup = view_tab.menu_for(view_tab.mask_toggle).actions()[0].defaultWidget()
         self.assertTrue(mask_popup.isAncestorOf(view_tab._mask_controls))
-        self.assertEqual(view_tab._masks_label.text(), "Masks")
-        self.assertTrue(view_tab._masks_label.parentWidget().isAncestorOf(view_tab.mask_toggle), "under the Masks caption")
+        masks_section = view_tab.layout().itemAt(4).widget()  # all, divider, image, divider, masks
+        self.assertTrue(masks_section.isAncestorOf(view_tab.mask_toggle), "in the Masks section")
 
     def test_view_tab_mask_icons_mirror_the_mask_tab(self) -> None:
         view_controls = self.panel._view_tab._mask_controls
@@ -1695,12 +1695,9 @@ class RewriteImagePanelTest(unittest.TestCase):
                 canvas_column = sub_layout
                 break
         self.assertIsNotNone(canvas_column)
-        # Since 2026-11-14 the view sits in a row with the selection toolbar, below the top bar.
-        canvas_row_index = next(
-            i for i in range(canvas_column.count())
-            if canvas_column.itemAt(i).layout() is not None and canvas_column.itemAt(i).layout().indexOf(self.panel._view) != -1
-        )
-        self.assertLess(canvas_column.indexOf(self.panel._top_bar), canvas_row_index)
+        # Since 2026-11-14 the view sits in a row with the selection toolbar, below the top bar (the row is the side rails' widget since 2026-11-22).
+        self.assertTrue(self.panel.side_rails.isAncestorOf(self.panel._view))
+        self.assertLess(canvas_column.indexOf(self.panel._top_bar), canvas_column.indexOf(self.panel.side_rails))
         style = self.panel._top_bar.styleSheet()
         self.assertIn("border: none", style)
         self.assertNotIn("border-bottom", style)  # the edge line under the top ribbon was removed, 2026-10-18

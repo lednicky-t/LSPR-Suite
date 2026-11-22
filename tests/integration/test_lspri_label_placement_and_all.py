@@ -279,13 +279,13 @@ class AllSectionTest(_PanelCase):
             "group labels": panel._roi_overlay.group_labels.visible,
         }
 
-    def test_the_section_sits_right_after_display_range_with_show_all_and_hide_all(self) -> None:
+    def test_the_section_is_the_first_one_with_show_all_and_hide_all(self) -> None:
+        """2026-11-22 (maintainer request): All is on top of the View controls, in front of the Image group (it sat after it before)."""
         layout = self.view_tab.layout()
-        self.assertTrue(layout.itemAt(0).widget().isAncestorOf(self.view_tab.display_range_controls))
-        all_group = layout.itemAt(2).widget()  # itemAt(1) is the separator
+        all_group = layout.itemAt(0).widget()
+        self.assertTrue(layout.itemAt(2).widget().isAncestorOf(self.view_tab.display_range_controls))  # itemAt(1) is the separator
         controls = self.view_tab._all_controls
         self.assertTrue(all_group.isAncestorOf(controls))
-        self.assertEqual(self.view_tab._all_label.text(), "All")
         self.assertFalse(controls.show_button.icon().isNull())
         self.assertFalse(controls.hide_button.icon().isNull())
         self.assertIn("Show all", controls.show_button.toolTip())

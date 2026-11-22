@@ -156,13 +156,16 @@ class VisualSettingsRestoreTests(unittest.TestCase):
         _flushed(saved)
         self.assertEqual(saved[-1].ui_state["image/ribbon_category"], "Mask")
 
-    def test_the_old_histogram_tab_name_restores_as_view(self) -> None:
-        panel = _panel(
-            self._build(initial_settings=AppSettings(ui_state={"image/ribbon_category": "Histogram"})),
-            "Image",
-            ImagePanel,
-        )
-        self.assertEqual(panel.active_ribbon_category(), "View")
+    def test_a_saved_view_or_histogram_tab_leaves_the_first_tab_open(self) -> None:
+        """2026-11-22: the top ribbon has no View tab any more (the View controls are the ribbon beside the image), so the names a settings file
+        saved for it ("View", and "Histogram" before 2026-10-06) open the first tab, as any unknown name does."""
+        for saved in ("Histogram", "View"):
+            panel = _panel(
+                self._build(initial_settings=AppSettings(ui_state={"image/ribbon_category": saved})),
+                "Image",
+                ImagePanel,
+            )
+            self.assertEqual(panel.active_ribbon_category(), "Image tools", saved)
 
     def test_an_unknown_saved_ribbon_tab_leaves_the_first_tab_open(self) -> None:
         panel = _panel(
