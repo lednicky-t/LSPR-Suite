@@ -236,7 +236,7 @@ class LblPlotTest(unittest.TestCase):
         table = data.tables["lbl_points"]
         self.assertEqual(len(table.rows), 3)
         self.assertAlmostEqual(table.rows[2][7], 25.0)  # accumulated shift of cycle 2
-        plot.shift_pick.setCurrentIndex(plot.shift_pick.findData(SHIFT_CYCLE))
+        plot.set_shift_mode(SHIFT_CYCLE)
         plot.redraw()
         self.assertEqual(data.info["shift_shown"], "accumulated")
         self.assertEqual(plot.export_data().info["shift_shown"], "cycle")

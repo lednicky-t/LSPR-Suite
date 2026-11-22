@@ -24,7 +24,8 @@ try:
     import pyqtgraph as pg
 
     from lspr_imaging_app.analysis.step_table import RowNumbers
-    from lspr_imaging_app.panels.sensorgram.bulk_plot import LINES_GROUPS, BulkLine, BulkPlotWindow, PlotStep, lines_from_series
+    from lspr_imaging_app.panels.sensorgram.bulk_plot import BulkLine, BulkPlotWindow, PlotStep, lines_from_series
+    from lspr_imaging_app.panels.sensorgram.plot_look import LINES_GROUPS
     from lspr_imaging_app.panels.ui_state import UiStateStore
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
     skip_if_lspri_rewrite_absent(exc)
@@ -63,10 +64,12 @@ class BulkPlotWindowTest(unittest.TestCase):
         w.show()
         scatters = self._items(pg.ScatterPlotItem)
         self.assertEqual(sorted(len(s.data) for s in scatters), [1, 3])  # 3 filled (in the set), 1 hollow (the protein)
-        lines = [i for i in self._items(pg.PlotDataItem) if i.name()]
-        self.assertEqual(len(lines), 1)
-        self.assertIn("S_bulk = 200.0", lines[0].name())
-        self.assertIn("nm/RIU", lines[0].name())
+        names = [label.text for _sample, label in w._legend.items]  # the legend's entries (their samples are not items of the plot)
+        self.assertEqual(len(names), 1)
+        self.assertIn("S_bulk = 200.0", names[0])
+        self.assertIn("nm/RIU", names[0])
+        self.assertEqual(len(self._items(pg.PlotCurveItem)), 1)  # the fitted line
+
         bands = self._items(pg.FillBetweenItem)
         self.assertEqual(len(bands), 1)  # the line's uncertainty band ...
         band = bands[0].path().boundingRect()
@@ -89,8 +92,6 @@ class BulkPlotWindowTest(unittest.TestCase):
         self.assertLess(vb.viewRange()[0][1], 1.5)
 
     def test_point_size_control_redraws_and_is_remembered(self) -> None:
-        from lspr_imaging_app.panels.sensorgram.bulk_plot import POINT_SIZE_KEY
-
         store = UiStateStore({})
         w = self.window
         w.restore_ui_state(store)
@@ -101,14 +102,14 @@ class BulkPlotWindowTest(unittest.TestCase):
         def sizes() -> set[float]:
             return {float(s.opts["size"]) for s in self._items(pg.ScatterPlotItem)}  # (per point it is -1 = "the item's size")
 
-        self.assertEqual(sizes(), {9.0, 10.0})  # the default; the steps outside the set one larger
-        w.point_size.setValue(15)
-        self.assertEqual(sizes(), {15.0, 16.0})
-        self.assertEqual(store.get(POINT_SIZE_KEY), 15)
+        self.assertEqual(sizes(), {9.0, 10.0})  # the window's own default; the steps outside the set one larger
+        w.look.point_size.setValue(12)  # the Points & lines menu (the one definition every plot uses)
+        self.assertEqual(sizes(), {12.0, 13.0})
+        self.assertEqual(store.get("sensorgram/bulk_plot_look_point_size"), 12)
         other = BulkPlotWindow()  # a later start-up: the saved size comes back
         try:
             other.restore_ui_state(store)
-            self.assertEqual(other.point_size.value(), 15)
+            self.assertEqual(other.look.point_size.value(), 12)
         finally:
             other.close()
             other.deleteLater()
@@ -153,7 +154,7 @@ class BulkPlotWindowTest(unittest.TestCase):
         w.restore_ui_state(store)
         asked = []
         w.calculate_requested.connect(lambda: asked.append(1))
-        w.lines_pick.setCurrentIndex(w.lines_pick.findData(LINES_GROUPS))
+        w.set_lines_mode(LINES_GROUPS)
         self.assertEqual(store.get("sensorgram/bulk_plot_lines"), LINES_GROUPS)
         w.set_steps(_steps(), None)
         w.set_lines([], y_label="Shift (nm)", note="2 groups not calculated yet.", need_calculation=True)

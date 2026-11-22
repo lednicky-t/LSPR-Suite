@@ -352,7 +352,7 @@ class StepTableModuleTest(StepTableBase):
         plot is off), the plot fits them; the All groups choice reads the table module's group rows and offers to calculate them."""
         from PyQt6.QtWidgets import QMainWindow
 
-        from lspr_imaging_app.panels.sensorgram.bulk_plot import LINES_GROUPS
+        from lspr_imaging_app.panels.sensorgram.plot_look import LINES_GROUPS
 
         self._bulk_ready()
         main = QMainWindow()
@@ -366,7 +366,7 @@ class StepTableModuleTest(StepTableBase):
         self.assertTrue(all(values is not None and values.fit_sem.ok for _line, values in plot._fits))
         group_id = self.m.roi_toolbox.create_group("Pair")
         self.m.roi_toolbox.add_rois_to_group([1, 2], group_id)
-        plot.lines_pick.setCurrentIndex(plot.lines_pick.findData(LINES_GROUPS))
+        plot.set_lines_mode(LINES_GROUPS)
         self.assertFalse(plot.calculate_button.isHidden())
         plot.calculate_button.click()
         self.assertTrue(_pump(lambda: len(plot._lines) == 1 and plot.calculate_button.isHidden()), plot.status.text())
