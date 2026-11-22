@@ -456,7 +456,7 @@ class SessionBlockTests(unittest.TestCase):
     def test_the_block_goes_into_the_file_and_comes_back(self) -> None:
         self.save(self.root, self.SessionState(spectral_correction=dict(self.BLOCK)), self.naming)
         payload = self.json.loads(self.path(self.root).read_text(encoding="utf-8"))
-        self.assertEqual(payload["schema_version"], "1.14")
+        self.assertEqual(payload["schema_version"], "1.15")
         self.assertEqual(payload["spectral_correction"], self.BLOCK)
         self.assertEqual(self.load(self.root).spectral_correction, self.BLOCK)
 
@@ -867,7 +867,7 @@ class SessionBlockCameraTests(unittest.TestCase):
         block = {"mode": "none", "camera_response": linear_response(-0.002).to_payload()}
         self.save(self.root, self.SessionState(spectral_correction=block), self.naming)
         payload = self.json.loads(self.path(self.root).read_text(encoding="utf-8"))
-        self.assertEqual(payload["schema_version"], "1.14")
+        self.assertEqual(payload["schema_version"], "1.15")
         self.assertNotIn("file", payload["spectral_correction"])
         self.assertEqual(self.load(self.root).spectral_correction, block)
 
