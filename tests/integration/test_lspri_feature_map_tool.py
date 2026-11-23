@@ -1,4 +1,4 @@
-"""The Mask tab's "Feature map" tool on a real `ImagePanel` (2026-11-04): Process, kinds, preview, Apply, and when a result is dropped.
+"""The Mask tab's "Feature map" tool on a real `ImagePanel` (2026-11-04): Process, kinds, the selection it makes, and when a result is dropped.
 
 **Only runs on the `apps/LSPRi/eva` submodule's `rewrite` branch** - see `test_lspri_rewrite_analysis_core.py`'s docstring.
 
@@ -9,13 +9,14 @@ share the slow part (`prepare`): every test writes the same files, the task's ow
 matrices, so reusing it is exact. A full run per test (~14 s) timed out next to other files. The tests that need a full run (the
 reuse test itself, Cancel, a change while running) do one. Worker counts are pinned by `tests/unit/test_lspri_feature_map_run.py`.
 
-What is pinned: Process maps the injected kinds and the preview shows exactly the enabled kinds' pixels; a kind's check box acts at
-once, without a new run; moving ROIs keeps the result (the map has no ROIs), a new rotation or chromatic model drops it, and one while
-it runs refuses it; Apply adds the enabled kinds at the scope the toggle says, merged, in one mask change, inside the area selection;
-a second run with other limits reuses the slow part and the same limits give the same pixels back; the settings are remembered; the
+What is pinned: Process maps the injected kinds and **the area selection becomes exactly the enabled kinds' pixels** (2026-11-23: the
+map makes a selection, not a mask; there is no eye and no Apply button, Selection > Add puts it in the mask; one undo step, cut to the
+lock; nothing found leaves the selection alone); a kind's check box and the margin act at once, without a new run, and re-make the
+selection only while it is still the tool's (a tool, an undo, a lock or a rotation ends that); moving ROIs keeps the result (the map has
+no ROIs), a new rotation or chromatic model drops it, and one while it runs refuses it; a second run with other limits reuses the slow part and the same limits give the same pixels back; the settings are remembered; the
 tool is in the picker and a remembered "roi_features" choice still opens it. The margin (2026-11-05) acts on the finished map: no new
 run, regrown on a thread of its own (the old pixels stay and Apply waits until the new ones are in), the newest wins, a change while a
-run goes on lands when it ends, and the pixels are exactly those of a run made with that margin; the margin and the kinds are on the
+run goes on lands when it ends, and the pixels are exactly those of a run made with that margin (the selection follows it); the margin and the kinds are on the
 ribbon row in the ribbon look and do not widen the Mask tab. A real `QApplication` in-process, never `.exec()`.
 """
 
@@ -59,6 +60,7 @@ try:
     from lspr_imaging_app.panels.ribbon_icon_size import BUTTON_SIZE
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
+    from lspr_imaging_app.undo import undo_manager
     from lspr_imaging_app.selection import HighlightRangeModule, ReferenceFrameModule, SelectionModule
     from tests.unit import test_lspri_feature_map as synth
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -125,14 +127,15 @@ class FeatureMapToolTest(unittest.TestCase):
         self.tool = self.tab.features_panel
         self.task: FeatureMapTask = self.panel.feature_map
         self.task.set_worker_processes(2)  # a small pool: the default (every core but one) per run timed out next to other files
-        self.preview = self.tab.edit_preview
-        self.layer = self.panel._edit_preview_layer
+        self.area = self.panel.area_selection()
+        undo_manager.clear()
         self.messages: list[str] = []
         self.summaries: list = []
         self.task.completed.connect(lambda summary: (self.messages.append("completed"), self.summaries.append(summary)))
         self.task.failed.connect(lambda message: self.messages.append(message))
 
     def tearDown(self) -> None:
+        undo_manager.clear()
         self.task.shutdown()
         self.panel._renderer.stop()
         self._tmp.cleanup()
@@ -167,12 +170,24 @@ class FeatureMapToolTest(unittest.TestCase):
     def _kind_at(self, kind: str, region: np.ndarray) -> bool:
         return bool(self.task.result().kind_pixels[kind][region].any())
 
-    # -- Process, kinds and the preview -------------------------------------------------------------------------------
+    def _selected(self) -> np.ndarray:
+        """The area selection on the (unrotated) displayed grid, which is the raw grid here."""
+        mask = self.area.selected_mask(SHAPE)
+        return np.zeros(SHAPE, dtype=bool) if mask is None else np.array(mask)
 
-    def test_process_maps_the_injected_kinds_and_previews_the_enabled_ones(self) -> None:
+    def _undo_steps(self) -> int:
+        count = 0
+        while undo_manager.can_undo:
+            undo_manager.undo()
+            count += 1
+        return count
+
+    # -- Process, kinds and the selection ---------------------------------------------------------------------------
+
+    def test_process_maps_the_injected_kinds_and_selects_the_enabled_ones(self) -> None:
         self._load()
         self._open_tool()
-        self.assertIsNone(self.preview.current())  # nothing found yet
+        self.assertFalse(self.area.has_selection())  # nothing found yet
         self._process()
         result = self.task.result()
         self.assertEqual(result.frame, FRAME)
@@ -190,10 +205,48 @@ class FeatureMapToolTest(unittest.TestCase):
         for kind in fm.FeatureMapSettings().kinds:  # every kind but faint dirt, by default
             expected |= result.kind_pixels[kind]
         np.testing.assert_array_equal(enabled, expected)
-        self.assertFalse(enabled[synth._spot(synth.FAINT, 2.0)].any())  # faint dirt is not added by default
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None, 5.0))
-        np.testing.assert_array_equal(self.preview.current().pixels, enabled)
-        self.assertTrue(self.layer.item.isVisible())
+        self.assertFalse(enabled[synth._spot(synth.FAINT, 2.0)].any())  # faint dirt is not selected by default
+        np.testing.assert_array_equal(self._selected(), enabled)  # the selection IS the enabled kinds' pixels
+        self.assertIsNone(self.mask.resolve_mask_source(FRAME))  # no mask was touched
+        self.assertEqual(undo_manager.undo_label, "Select feature map")
+
+    def test_the_tool_has_no_eye_and_no_apply_button(self) -> None:
+        self.assertFalse(hasattr(self.tool, "_toggle"))
+        self.assertFalse(hasattr(self.tool, "_apply_button"))
+        self.assertFalse(hasattr(self.tab.edit_preview, "set_shown"))
+
+    def test_a_run_makes_one_undo_step_and_replaces_the_selection(self) -> None:
+        self._load()
+        self._open_tool()
+        self.area.set_rectangle(10.0, 10.0, 50.0, 50.0, shape=SHAPE)  # something else was selected
+        undo_manager.clear()
+        self._process()
+        np.testing.assert_array_equal(self._selected(), self.task.pixels_for(FRAME))  # replaced, not added to
+        self.assertEqual(self._undo_steps(), 1)
+        self.assertTrue(self.area.has_selection())  # undone back to the rectangle
+        self.assertIsNotNone(self.area.vertices())
+
+    def test_the_selection_is_cut_to_the_lock(self) -> None:
+        self._load()
+        self._open_tool()
+        lock = np.zeros(SHAPE, dtype=bool)
+        lock[:, : SHAPE[1] // 2] = True
+        self.area.combine_region(lock)
+        self.assertTrue(self.area.lock_selection(SHAPE))
+        self._process()
+        np.testing.assert_array_equal(self._selected(), self.task.pixels_for(FRAME) & lock)
+
+    def test_a_run_that_finds_nothing_leaves_the_selection_alone(self) -> None:
+        self._load()
+        self._open_tool()
+        self._process()
+        for check in self.tool.kinds_popover().kind_checks.values():
+            check.setChecked(False)
+        self.assertFalse(self.area.has_selection())  # the tool's own selection follows the kinds: none enabled = nothing selected
+        self.area.set_rectangle(10.0, 10.0, 50.0, 50.0, shape=SHAPE)  # now the user's
+        before = self._selected()
+        self._process()  # no kind enabled: no pixel
+        np.testing.assert_array_equal(self._selected(), before)
 
     def test_a_kind_check_box_acts_at_once_without_a_new_run(self) -> None:
         self._load()
@@ -201,26 +254,57 @@ class FeatureMapToolTest(unittest.TestCase):
         self._process()
         runs = len(self.summaries)
         notch = synth._spot(synth.NOTCH, 2.0)
-        self.assertTrue(self.task.pixels_for(FRAME)[notch].any())
+        self.assertTrue(self._selected()[notch].any())
         self.tool.kinds_popover().kind_checks[fm.STRUCTURE_MISSING].setChecked(False)
         self.assertFalse(self.task.pixels_for(FRAME)[notch].any())
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None and not self.preview.current().pixels[notch].any(), 5.0))
+        self.assertFalse(self._selected()[notch].any())  # the selection followed
         self.tool.kinds_popover().kind_checks[fm.DIRT_FAINT].setChecked(True)
-        self.assertTrue(self.task.pixels_for(FRAME)[synth._spot(synth.FAINT, 2.0)].any())
+        self.assertTrue(self._selected()[synth._spot(synth.FAINT, 2.0)].any())
+        np.testing.assert_array_equal(self._selected(), self.task.pixels_for(FRAME))
         self.assertEqual(len(self.summaries), runs)  # no run was needed
 
-    def test_the_preview_follows_the_frame_it_was_made_for(self) -> None:
+    def test_a_kind_does_not_overwrite_a_selection_the_user_changed(self) -> None:
         self._load()
         self._open_tool()
         self._process()
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None, 5.0))
+        self.area.set_rectangle(10.0, 10.0, 50.0, 50.0, shape=SHAPE)  # the user took over
+        mine = self._selected()
+        self.tool.kinds_popover().kind_checks[fm.STRUCTURE_MISSING].setChecked(False)
+        np.testing.assert_array_equal(self._selected(), mine)
+
+    def test_an_undo_ends_the_following_too(self) -> None:
+        self._load()
+        self._open_tool()
+        self._process()
+        self.tool.kinds_popover().kind_checks[fm.STRUCTURE_MISSING].setChecked(False)  # a second step, made by the tool
+        undo_manager.undo()  # the user steps back: from now on the selection is theirs
+        kept = self._selected()
+        self.tool.kinds_popover().kind_checks[fm.DIRT_FAINT].setChecked(True)
+        np.testing.assert_array_equal(self._selected(), kept)
+
+    def test_the_selection_adds_to_the_mask_through_the_selection_groups_add(self) -> None:
+        self._load()
+        self._open_tool()
+        self.scope.set_scope(MaskScope.PERSISTENT)
+        self._process()
+        found = np.array(self.task.pixels_for(FRAME))
+        self.assertIsNone(self.mask.resolve_mask_source(FRAME))
+        self.tab.selection_actions.add_button.click()
+        _pump(0.2)
+        _frame, mask, scope = self.mask.resolve_mask_source(FRAME)
+        self.assertEqual(scope, "persistent")
+        np.testing.assert_array_equal(mask, found)
+
+    def test_the_selection_stays_when_the_image_on_screen_changes(self) -> None:
+        self._load()
+        self._open_tool()
+        self._process()
+        first = self._selected()
         self.selection.set_wavelength(OTHER_FRAME[1])
-        self.assertTrue(_pump_until(lambda: self.preview.frame() == OTHER_FRAME, 10.0))
-        self.assertIsNone(self.preview.current())
-        self.assertFalse(self.tool._apply_button.isEnabled())
-        self.assertIn(f"{FRAME[1]:g}", self.tool._apply_button.toolTip())
-        self.selection.set_wavelength(FRAME[1])
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None, 10.0))
+        _pump(0.3)
+        np.testing.assert_array_equal(self._selected(), first)
+        self.tool.kinds_popover().kind_checks[fm.DIRT_DARK].setChecked(False)  # the map belongs to another image now: no re-make
+        np.testing.assert_array_equal(self._selected(), first)
 
     # -- what keeps and what drops the result ----------------------------------------------------------------------------
 
@@ -232,7 +316,7 @@ class FeatureMapToolTest(unittest.TestCase):
         self.toolbox.add_roi(100.0, 100.0, sample_diameter_px=30.0)  # the map has no ROIs: a ROI edit does not touch it
         _pump(0.2)
         self.assertIs(self.task.result(), first)
-        self.assertTrue(self.tool._apply_button.isEnabled())
+        self.assertTrue(self.area.has_selection())
 
     def test_a_new_rotation_or_chromatic_model_drops_the_result(self) -> None:
         self._load()
@@ -241,7 +325,6 @@ class FeatureMapToolTest(unittest.TestCase):
         self.geometry.set_rotation(1.0)
         _pump(0.2)
         self.assertIsNone(self.task.result())
-        self.assertFalse(self.tool._apply_button.isEnabled())
         self.geometry.set_rotation(0.0)
         _pump_until(lambda: self.panel._image_item.image is not None, 10.0)
         _pump()
@@ -336,51 +419,6 @@ class FeatureMapToolTest(unittest.TestCase):
         two.start(FRAME, fm.FeatureMapSettings())
         self.assertIn("at least 3 wavelengths", said[-1])
 
-    # -- Apply -----------------------------------------------------------------------------------------------------------
-
-    def test_apply_adds_the_enabled_kinds_at_the_persistent_scope(self) -> None:
-        self._load()
-        self._open_tool()
-        self.scope.set_scope(MaskScope.PERSISTENT)
-        self._process()
-        found = np.array(self.task.pixels_for(FRAME))
-        self.tool._apply_button.click()
-        _pump(0.2)
-        _frame, mask, scope = self.mask.resolve_mask_source(FRAME)
-        self.assertEqual(scope, "persistent")
-        np.testing.assert_array_equal(mask, found)
-
-    def test_apply_merges_with_the_mask_in_effect_at_the_individual_scope_in_one_change(self) -> None:
-        self._load()
-        self._open_tool()
-        existing = np.zeros(SHAPE, dtype=bool)
-        existing[5:15, 300:310] = True
-        self.mask.set_mask_change(FRAME, "individual", existing)
-        self.scope.set_scope(MaskScope.INDIVIDUAL)
-        self._process()
-        found = np.array(self.task.pixels_for(FRAME))
-        changes = []
-        self.mask.mask_changed.connect(changes.append)
-        self.tool._apply_button.click()
-        _pump(0.2)
-        _frame, mask, scope = self.mask.resolve_mask_source(FRAME)
-        self.assertEqual(scope, "individual")
-        np.testing.assert_array_equal(mask, existing | found)  # merged with what was there, nothing taken away
-        self.assertEqual(len(changes), 1)
-
-    def test_apply_stays_inside_the_area_selection(self) -> None:
-        self._load()
-        self._open_tool()
-        self._process()
-        found = np.array(self.task.pixels_for(FRAME))
-        region = np.zeros(SHAPE, dtype=bool)
-        region[:, : SHAPE[1] // 2] = True
-        self.panel.selection_regions.selection_raw_mask = lambda shape: region  # the area selection, as the editors ask for it
-        self.tool._apply_button.click()
-        _pump(0.2)
-        _frame, mask, _scope = self.mask.resolve_mask_source(FRAME)
-        np.testing.assert_array_equal(mask, found & region)
-
     # -- the settings ------------------------------------------------------------------------------------------------------
 
     def test_other_limits_reuse_the_slow_part_and_the_same_limits_give_the_same_pixels(self) -> None:
@@ -418,7 +456,7 @@ class FeatureMapToolTest(unittest.TestCase):
         self.assertEqual(self.task.result().margin_px, 3)
         self.assertTrue(np.array_equal(wider | first, wider))  # everything of the narrower mask is still in
         self.assertGreater(int(wider.sum()), int(first.sum()))
-        self.assertTrue(_pump_until(lambda: self.preview.current() is not None and np.array_equal(self.preview.current().pixels, wider), 5.0))
+        np.testing.assert_array_equal(self._selected(), wider)  # the selection followed the new margin
         self.tool.margin_spin().setValue(0)
         self._settle_margin()
         bare = np.array(self.task.pixels_for(FRAME))
@@ -479,25 +517,19 @@ class FeatureMapToolTest(unittest.TestCase):
         self._settle_margin()
         self.assertEqual(self.task.result().margin_px, 5)
 
-    def test_apply_waits_for_a_margin_that_is_being_made(self) -> None:
+    def test_the_selection_waits_for_a_margin_that_is_being_made_and_then_follows_it(self) -> None:
         self._load()
         self._open_tool()
-        self.scope.set_scope(MaskScope.PERSISTENT)
         self._process()
+        before = self._selected()
         self.tool.margin_spin().setValue(4)
         self.assertTrue(self.task.is_regrowing())
-        self.assertFalse(self.tool._apply_button.isEnabled())
-        self.assertIn("margin", self.tool._apply_button.toolTip())
-        self.tool.apply()  # refused: the pixels held are still the earlier margin's
-        self.assertIsNone(self.mask.resolve_mask_source(FRAME))
+        np.testing.assert_array_equal(self._selected(), before)  # the pixels held are still the earlier margin's: no half step
         self._settle_margin()
-        self.assertTrue(self.tool._apply_button.isEnabled())
         found = np.array(self.task.pixels_for(FRAME))
-        self.tool._apply_button.click()
-        _pump(0.2)
-        _frame, mask, _scope = self.mask.resolve_mask_source(FRAME)
-        np.testing.assert_array_equal(mask, found)
+        np.testing.assert_array_equal(self._selected(), found)
         self.assertEqual(self.task.result().margin_px, 4)
+        self.assertGreater(int(found.sum()), int(before.sum()))
 
     def test_the_margin_and_the_kinds_are_on_the_ribbon_row_in_the_ribbon_look(self) -> None:
         pop = self.tool.popover()
@@ -510,6 +542,7 @@ class FeatureMapToolTest(unittest.TestCase):
         self.assertIn("Margin", spin.toolTip())
         self.assertEqual(set(self.tool.kinds_popover().kind_checks), set(fm.KINDS))
         self.assertIn("Kinds", self.tool._kinds_button.toolTip())
+        self.assertIn("selected", self.tool._kinds_button.toolTip())
 
     def test_the_settings_are_remembered_and_have_working_defaults(self) -> None:
         pop = self.tool.popover()

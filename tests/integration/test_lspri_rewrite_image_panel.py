@@ -1445,10 +1445,11 @@ class RewriteImagePanelTest(unittest.TestCase):
         """"Not all +/- icons are same, you change only those in histogram selection. All other should be changed as well"
         (2026-10-02 maintainer request) - Qt grays a disabled QToolButton's icon by default; `action_button`
         (`mask_edit_common.py`) registers the identical full-color pixmap for both the Normal and Disabled icon modes, so this must hold
-        for every button regardless of its current enabled state. Checked on the Feature map's Apply (disabled until a map exists)."""
+        for every button regardless of its current enabled state. Checked on the Selection group's Add (disabled until something is
+        selected; the Feature map's own Apply button, used until 2026-11-23, is gone)."""
         from PyQt6.QtGui import QIcon
 
-        apply_button = self.panel._mask_tab.features_panel._apply_button
+        apply_button = self.panel._mask_tab.selection_actions.add_button
         self.assertFalse(apply_button.isEnabled())
         icon = apply_button.icon()
         normal_image = icon.pixmap(44, 44, QIcon.Mode.Normal).toImage()

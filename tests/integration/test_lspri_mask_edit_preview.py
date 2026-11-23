@@ -3,8 +3,8 @@
 2026-11-15: the Threshold, Local contrast and Morphology *previews* and the Mask-tab Add / Subtract buttons of those tools went when the
 tools moved into the selection toolbar ("Select by value" and "Modify selection": `test_lspri_selection_by_value.py`,
 `test_lspri_selection_modify_brush.py`). What is pinned here: the worker that computes candidates, `MaskEditPreview.request_candidate`
-(what "Select by value" asks), and that the preview tint now belongs to the Feature map tool alone (its own tests:
-`test_lspri_feature_map_tool.py`).
+(what "Select by value" asks), and that nothing is tinted unless the toolbar's Threshold is armed (its own tests:
+`test_lspri_threshold_live_preview.py`; the Feature map's eye and tint went 2026-11-23, `test_lspri_feature_map_tool.py`).
 
 **Only runs on the `apps/LSPRi/eva` submodule's `rewrite` branch** - see `test_lspri_rewrite_analysis_core.py`'s docstring.
 
@@ -12,7 +12,7 @@ Two layers, each tested where it lives:
 
 - `MaskCandidates` (the worker): computes off the calling thread, caches, drops stale results, keeps previews bounded.
 - `MaskEditPreview` on a real `ImagePanel`: `request_candidate` gives exactly the pixels the mask tools compute; nothing is tinted for the
-  Feature map result yet; the eye is one remembered state.
+  tool is armed; the Feature map's old eye state is gone.
 
 A real `QApplication` in-process, never `.exec()`, driven by direct calls and signals (same pattern as
 `test_lspri_rewrite_image_panel.py`, whose dataset fixture this repeats on a smaller scale).
@@ -278,27 +278,21 @@ class MaskEditPreviewPanelTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.preview.request_candidate("morphology", FRAME, lambda _pixels: None)
 
-    def test_nothing_is_tinted_without_a_feature_map_result(self) -> None:
-        """The Mask tab is open but no Feature map has been processed: there is nothing to show (the Eraser, which also tinted nothing,
-        was retired 2026-11-16)."""
+    def test_nothing_is_tinted_when_no_tool_is_armed(self) -> None:
+        """The Mask tab is open and no live tool (the toolbar's Threshold) is armed: there is nothing to show. The Feature map has no tint
+        since 2026-11-23: it makes a selection, and the selection's own outline is its picture."""
         self._load()
         self.panel._tool_ribbon.set_category("Mask")
         _pump(0.3)
         self.assertIsNone(self.preview.current())
         self.assertFalse(self.layer.item.isVisible())
 
-    def test_the_eye_button_is_one_remembered_state(self) -> None:
-        eye = self.tab.features_panel._toggle
-        self.assertTrue(eye.isChecked())
-        eye.click()
-        self.assertFalse(self.preview.shown())
-
-        store = UiStateStore({"image/mask_edit_preview": True})
-        self.panel.restore_ui_state(store)  # a saved "on" comes back
-        self.assertTrue(self.preview.shown())
-        self.assertTrue(eye.isChecked())
-        eye.click()  # and a later change is written down
-        self.assertIs(store.get("image/mask_edit_preview"), False)
+    def test_the_feature_map_has_no_eye_state_any_more(self) -> None:
+        self.assertFalse(hasattr(self.preview, "shown"))
+        self.assertFalse(hasattr(self.preview, "set_tab_active"))
+        store = UiStateStore({"image/mask_edit_preview": False})  # an old saved eye choice is simply ignored
+        self.panel.restore_ui_state(store)
+        self.assertIsNone(self.preview.current())
 
 
 if __name__ == "__main__":
