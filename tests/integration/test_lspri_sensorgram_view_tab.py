@@ -104,7 +104,14 @@ def _bar_text_padding() -> float:
 
 
 def _parts(plot: SensorgramPlot, layer: str) -> list:
+    """The items of a layer of the layered export, **back to front** (the Draw order: with the default, the legend's first row is in front, so its line is the last): pick a line by name with `_part`."""
     return [p.item for p in plot._svg_parts if p.layer == layer]
+
+
+def _part(plot: SensorgramPlot, layer: str, label: str):
+    """The item of the line named `label` in a layer of the layered export, wherever the Draw order stacked it."""
+    (item,) = [p.item for p in plot._svg_parts if p.layer == layer and p.name == label]
+    return item
 
 
 # -- the settings and the legend text -------------------------------------------------------------------------------------------------
@@ -266,13 +273,13 @@ class ViewPlotTest(unittest.TestCase):
     def test_the_spline_joins_the_points_with_a_denser_curve_and_leaves_the_dots_on_the_points(self) -> None:
         series = _lines(2)
         self._draw(series)
-        self.assertEqual(len(_parts(self.plot, "Lines")[0].xData), 10)  # straight: the points themselves
+        self.assertEqual(len(_part(self.plot, "Lines", series[0].label).xData), 10)  # straight: the points themselves
         self._draw(series, line_style="spline")
-        line = _parts(self.plot, "Lines")[0]
+        line = _part(self.plot, "Lines", series[0].label)
         self.assertEqual(len(line.xData), 9 * SUBDIVISIONS + 1)
         np.testing.assert_allclose(line.yData[::SUBDIVISIONS], series[0].y, atol=1e-9)  # through every measured point
         np.testing.assert_allclose(line.xData[::SUBDIVISIONS], series[0].x)
-        self.assertEqual(len(_parts(self.plot, "Points")[0].data["x"]), 10)  # the dots stay on the measured points, not on the curve between them
+        self.assertEqual(len(_part(self.plot, "Points", series[0].label).data["x"]), 10)  # the dots stay on the measured points, not on the curve between them
         self.assertEqual(len(_parts(self.plot, "Lines")), 2)
 
     def test_a_gap_in_the_data_is_still_a_gap_with_the_spline(self) -> None:
@@ -362,7 +369,7 @@ class ViewPlotTest(unittest.TestCase):
         self._draw(_lines(2), legend_counts=False)
         self.assertEqual(names(), ["ROI 0", "ROI 1"])  # one ROI: nothing to leave out
         self._draw(_averages(2), legend_counts=False)
-        self.assertEqual([p.name for p in self.plot._svg_parts if p.layer == "Lines"], ["G0 (n=4)", "G1 (n=4)"])  # the exports keep the full label
+        self.assertEqual(sorted(p.name for p in self.plot._svg_parts if p.layer == "Lines"), ["G0 (n=4)", "G1 (n=4)"])  # the exports keep the full label (in stacking order: back to front)
 
     def test_a_hidden_legend_takes_no_room_on_the_left_and_the_table_keeps_its_rows(self) -> None:
         series = _lines(3)

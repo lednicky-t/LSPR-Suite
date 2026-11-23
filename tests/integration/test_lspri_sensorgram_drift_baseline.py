@@ -449,7 +449,9 @@ class DriftBaselinePanelTest(unittest.TestCase):
     # -- anchor marks and the plan bar during the edit mode ---------------------------------------------------------------------
 
     def _dots(self):
-        return [p.item for p in self.panel._plot._svg_parts if p.layer == "Baseline anchors"]
+        """The anchor squares, one item per line, **in the lines' own order** (the layered export lists them back to front: the Draw order stacks the legend's first row in front)."""
+        parts = [p for p in self.panel._plot._svg_parts if p.layer == "Baseline anchors"]
+        return [p.item for line in self._lines() for p in parts if p.name == line.label]
 
     def test_anchors_are_hollow_squares_at_the_trace_level_then_at_zero_after_subtracting(self) -> None:
         self._set(baseline_method=METHOD_ANCHORS, baseline_shape="linear", baseline_point_halfwidth=0)
