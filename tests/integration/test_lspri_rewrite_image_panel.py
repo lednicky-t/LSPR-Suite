@@ -1206,9 +1206,9 @@ class RewriteImagePanelTest(unittest.TestCase):
         [each group]... center of section" - a caption below each group's
         icons, not above (unlike `lspr_ui`'s `toolbarSectionTitle`
         convention used elsewhere in the suite)."""
-        state_label = self.panel._mask_tab._state_label
+        state_label = self.panel._mask_tab._scope_label
         visibility_label = self.panel._mask_tab._visibility_label
-        self.assertEqual(state_label.text(), "State")
+        self.assertEqual(state_label.text(), "Scope")
         self.assertEqual(visibility_label.text(), "Visibility")
 
         toggle = self.panel._mask_tab._scope_toggle
@@ -1314,34 +1314,29 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.assertIsInstance(tab.features_panel, FeatureMapEditPanel)
         features_group = tab.features_panel.parentWidget()
         self.assertIs(features_group.parentWidget(), page)
-        self.assertIs(tab._separators[2].parentWidget(), page)
+        self.assertIs(tab._separators[1].parentWidget(), page)
         self.assertEqual(tab._features_label.text(), "Feature map")
 
         layout = page.layout()
-        visibility_index = layout.indexOf(tab.overlay_controls.parentWidget())
-        separator_index = layout.indexOf(tab._separators[2])
+        selection_index = layout.indexOf(tab._selection_actions.parentWidget())
+        separator_index = layout.indexOf(tab._separators[1])
         features_index = layout.indexOf(features_group)
-        self.assertLess(visibility_index, separator_index)
+        self.assertLess(selection_index, separator_index)
         self.assertLess(separator_index, features_index)
 
-    def test_general_group_is_the_leftmost_group_in_the_mask_tab(self) -> None:
-        """"put this icon [Clear] in solo section 'General' and put section
-        the most left" (2026-10-02, maintainer request). Since 2026-11-14 the "Selection" group (Add / Subtract the
-        area selection; it replaced the 2026-10-23 "Select" picker) and its divider come first; General is next."""
+    def test_scope_then_selection_lead_the_mask_tab_and_there_is_no_general_group(self) -> None:
+        """2026-11-23: Scope (was "State") is the first group, Selection the second; "General" (Clear) is gone: Clear whole mask is
+        in the image's right-click menu on a mask pixel."""
         page = self._ribbon_page("Mask")
-        general_group = self.panel._mask_tab._clear_action.parentWidget()
-        self.assertIs(general_group.parentWidget(), page)
-        self.assertEqual(self.panel._mask_tab._general_label.text(), "General")
-
+        tab = self.panel._mask_tab
+        self.assertFalse(hasattr(tab, "_clear_action"))
+        self.assertEqual(tab._scope_label.text(), "Scope")
         layout = page.layout()
-        general_index = layout.indexOf(general_group)
-        separator_index = layout.indexOf(self.panel._mask_tab._separators[0])
-        state_group = self.panel._mask_tab._scope_toggle.parentWidget()
-        state_index = layout.indexOf(state_group)
-        self.assertEqual(general_index, 2, "General follows the Selection group and its divider")
-        self.assertEqual(self.panel._mask_tab._selection_label.text(), "Selection")
-        self.assertLess(general_index, separator_index)
-        self.assertLess(separator_index, state_index)
+        scope_index = layout.indexOf(tab._scope_toggle.parentWidget())
+        selection_index = layout.indexOf(tab._selection_actions.parentWidget())
+        self.assertEqual(scope_index, 0)
+        self.assertEqual(selection_index, 2, "Selection follows the Scope group and its divider")
+        self.assertEqual(len(tab._separators), 5)
 
     def test_png_group_sits_after_the_feature_map_group_behind_a_divider(self) -> None:
         """"these two icons [load/save] should be in 'PNG' section" -
@@ -1378,20 +1373,35 @@ class RewriteImagePanelTest(unittest.TestCase):
         self.mask.set_mask_change((0, 500.0), "persistent", mask)
         self.mask.set_mask_change((1, 500.0), "individual", mask)
 
+        menu = self.panel._interaction._mask_menu
         with patch(
-            "lspr_imaging_app.panels.image.mask_file_actions.QMessageBox.question",
+            "lspr_imaging_app.panels.image.mask_menu_actions.QMessageBox.question",
             return_value=QtWidgets.QMessageBox.StandardButton.No,
         ):
-            self.panel._mask_tab._clear_action._clear_button.click()
+            menu.run("Clear whole mask", 15.0, 15.0)
         self.assertIsNotNone(self.mask.resolve_mask_source((0, 500.0)), "declining the prompt must not clear anything")
 
         with patch(
-            "lspr_imaging_app.panels.image.mask_file_actions.QMessageBox.question",
+            "lspr_imaging_app.panels.image.mask_menu_actions.QMessageBox.question",
             return_value=QtWidgets.QMessageBox.StandardButton.Yes,
         ):
-            self.panel._mask_tab._clear_action._clear_button.click()
+            menu.run("Clear whole mask", 15.0, 15.0)
         self.assertIsNone(self.mask.resolve_mask_source((0, 500.0)))
         self.assertIsNone(self.mask.resolve_mask_source((1, 500.0)))
+
+    def test_right_click_menu_removes_only_the_blob_under_the_pointer(self) -> None:
+        """2026-11-23: "Remove blob" takes the 8-connected blob under the pointer out of the mask (one undo step) and leaves the others."""
+        self._load()
+        mask = np.zeros((64, 80), dtype=bool)
+        mask[10:20, 10:20] = True
+        mask[40:50, 50:60] = True
+        self.mask.set_mask_change((0, 500.0), "persistent", mask)
+        menu = self.panel._interaction._mask_menu
+        _pump_until(lambda: menu.on_mask_pixel(15.5, 15.5))  # the tint's resolved mask is ready once the frame has been redrawn
+        self.assertFalse(menu.on_mask_pixel(30.5, 30.5))
+        menu.run("Remove blob", 15.5, 15.5)
+        _pump_until(lambda: not menu.on_mask_pixel(15.5, 15.5))
+        self.assertTrue(menu.on_mask_pixel(55.5, 45.5), "the other blob stays")
 
     def test_save_then_load_round_trips_the_current_mask(self) -> None:
         """"copy icons from mask to load/save mask as file" - Save writes
