@@ -455,6 +455,47 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         _pump()
         self.assertAlmostEqual(self._all_total(), float(_SHAPE[0] * _SHAPE[1]))
 
+    def _region_total(self, curve) -> float:
+        _, y = curve.getData()
+        return 0.0 if y is None else float(np.sum(y))
+
+    def test_show_everything_keeps_the_whole_frame_and_adds_the_selection_as_a_curve(self) -> None:
+        """Icon-row toggle (2026-11-23): not narrowed, the selection is a curve of its own in the selection's colour; no selection, no curve."""
+        self._counts_mode()
+        plot = self.histogram._plot
+        plot._scope_button.click()  # Everything
+        self.assertTrue(self.histogram._show_everything)
+        self.area.set_rectangle(0, 0, 40, 64)
+        _pump()
+        self.assertAlmostEqual(self._all_total(), float(_SHAPE[0] * _SHAPE[1]))
+        self.assertAlmostEqual(self._region_total(plot._selection_curve), 40.0 * 64.0)
+        self.assertEqual(self._region_total(plot._lock_curve), 0.0)
+        self.assertTrue(plot._listed["selection"])
+        self.assertFalse(plot._listed["lock"])
+        self.assertEqual(plot._default_colors["selection"], self.image_panel.selection_style().color("past"))
+        self.area.clear()
+        _pump()
+        self.assertEqual(self._region_total(plot._selection_curve), 0.0)
+        self.assertFalse(plot._listed["selection"])
+        plot._scope_button.click()  # back to the selection only
+        self.area.set_rectangle(0, 0, 40, 64)
+        _pump()
+        self.assertAlmostEqual(self._all_total(), 40.0 * 64.0)
+        self.assertFalse(plot._listed["selection"])
+
+    def test_show_everything_draws_the_lock_and_the_selection_inside_it(self) -> None:
+        self._counts_mode()
+        plot = self.histogram._plot
+        plot._scope_button.click()
+        self.area.set_rectangle(0, 0, 60, 64)
+        self.area.lock_selection((_SHAPE[0], _SHAPE[1]))
+        self.area.set_rectangle(0, 0, 20, 64)
+        _pump()
+        self.assertAlmostEqual(self._all_total(), float(_SHAPE[0] * _SHAPE[1]))
+        self.assertAlmostEqual(self._region_total(plot._lock_curve), 60.0 * 64.0)
+        self.assertAlmostEqual(self._region_total(plot._selection_curve), 20.0 * 64.0)
+        self.assertTrue(plot._listed["lock"] and plot._listed["selection"])
+
     def test_selection_does_not_move_the_highlight_range(self) -> None:
         before = self.highlight_range.current_range()
         self.area.set_rectangle(0, 0, 8, 8)  # only flat 150 px inside

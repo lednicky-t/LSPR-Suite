@@ -755,10 +755,10 @@ class RewriteHistogramPanelTest(unittest.TestCase):
         calls = []
         original = compute.redraw_counts
 
-        def blocked(image, region, ignore_mask, edges):
+        def blocked(image, region, ignore_mask, edges, extra_regions=None):
             calls.append((threading.current_thread(), edges.size))
             release.wait(10.0)
-            return original(image, region, ignore_mask, edges)
+            return original(image, region, ignore_mask, edges, extra_regions)
 
         return release, calls, blocked
 

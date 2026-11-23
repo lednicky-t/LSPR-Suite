@@ -104,6 +104,17 @@ class RedrawCountsTest(unittest.TestCase):
         np.testing.assert_array_equal(ignore, before[2])
         np.testing.assert_array_equal(self.edges, before[3])
 
+    def test_extra_regions_are_counted_besides_the_whole_frame(self) -> None:
+        """The "Everything" view: the frame is not narrowed, and each extra map gets the counts of its own finite pixels."""
+        frame, region = _frame(), _region()
+        result = compute.redraw_counts(frame, None, None, self.edges, {"selection": region})
+        whole = compute.redraw_counts(frame, None, None, self.edges)
+        np.testing.assert_array_equal(result.all_counts, whole.all_counts)  # the frame's curve is untouched
+        inside = frame[region & np.isfinite(frame)].astype(np.float64)
+        expected, _ = np.histogram(inside, bins=self.edges)
+        np.testing.assert_array_equal(result.region_counts["selection"], expected)
+        self.assertEqual(whole.region_counts, {})
+
     def test_a_frame_without_values_gives_zero_counts(self) -> None:
         result = compute.redraw_counts(np.full((20, 30), np.nan, np.float32), None, None, self.edges)
         self.assertEqual(result.total_pixels, 0)
