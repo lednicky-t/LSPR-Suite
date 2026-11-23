@@ -141,32 +141,37 @@ class RoiOverlayControlsTest(unittest.TestCase):
     # -- sample circles ----------------------------------------------------------------------
 
     def test_the_sample_toggle_hides_the_circles_and_the_selection_highlight_but_not_the_rings(self) -> None:
+        """Since 2026-11-22 the circle item is shared with the Reference switch, so "hidden" means "holds no sample ROIs"."""
+        overlay = self.panel._roi_overlay
         self.two_rois()
         self.selection.set_roi_selection({2})
         _pump(0.2)
-        self.assertTrue(self.panel._roi_overlay.sample_circles.isVisible())
-        self.assertTrue(self.panel._roi_overlay.selection_curve.isVisible())
+        self.assertGreater(self.points(None), 0)
+        self.assertGreater(self.points(overlay.selection_curve), 0)
 
         self.sample._toggle_button.click()
-        self.assertFalse(self.panel._roi_overlay.sample_circles.isVisible())
-        self.assertFalse(self.panel._roi_overlay.selection_curve.isVisible())
-        self.assertTrue(self.panel._roi_overlay.reference_curve.isVisible())
+        _pump(0.2)
+        self.assertEqual(self.points(None), 0)
+        self.assertEqual(self.points(overlay.selection_curve), 0)
+        self.assertTrue(overlay.reference_curve.isVisible())
 
         self.sample._toggle_button.click()
-        self.assertTrue(self.panel._roi_overlay.sample_circles.isVisible())
-        self.assertTrue(self.panel._roi_overlay.selection_curve.isVisible())
+        _pump(0.2)
+        self.assertGreater(self.points(None), 0)
+        self.assertGreater(self.points(overlay.selection_curve), 0)
 
     def test_a_colour_added_while_the_circles_are_hidden_stays_hidden(self) -> None:
         self.two_rois()
         self.sample._toggle_button.click()
         self.roi_toolbox.set_roi_colors((1,), "#112233")  # a colour not drawn before
         _pump(0.3)
-        self.assertFalse(self.panel._roi_overlay.sample_circles.isVisible())
-        # (Since 2026-10-14 a hidden part is not computed at all - testing10: ~7 ms per frame for nothing - so the
-        # colour is not in the item yet; showing the circles again draws them, with the new colour.)
+        self.assertEqual(self.points(None), 0)
+        # (Hidden sample ROIs are not computed at all - testing10: ~7 ms per frame for nothing - so the colour is not
+        # in the item yet; showing the circles again draws them, with the new colour.)
+        self.assertNotIn("#112233", self.panel._roi_overlay.sample_circles.colors())
         self.sample._toggle_button.click()
         _pump(0.3)
-        self.assertTrue(self.panel._roi_overlay.sample_circles.isVisible())
+        self.assertGreater(self.points(None), 0)
         self.assertIn("#112233", self.panel._roi_overlay.sample_circles.colors())
 
     def test_the_sample_colour_is_the_colour_of_rois_with_none_of_their_own(self) -> None:
@@ -320,7 +325,7 @@ class RoiOverlayControlsTest(unittest.TestCase):
             self.assertEqual(fresh._roi_tab.sample_controls._color.name(), "#abcdef")
             self.assertEqual(fresh._roi_tab.reference_controls._alpha_slider.value(), 40)
             self.assertTrue(fresh._roi_tab.labels_button.isChecked())
-            self.assertFalse(fresh._roi_overlay.sample_circles.isVisible(), "the restored state is applied, not just shown")
+            self.assertFalse(fresh._roi_overlay.sample.visible, "the restored state is applied, not just shown")
             self.assertAlmostEqual(fresh._roi_overlay.reference_curve.opts["pen"].color().alphaF(), 0.4, delta=0.01)
         finally:
             fresh._renderer.stop()
