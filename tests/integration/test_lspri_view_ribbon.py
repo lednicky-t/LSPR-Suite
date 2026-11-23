@@ -518,7 +518,7 @@ class OrderTests(_PanelCase):
         box = tab.display_range_controls.layout()
         order = [box.itemAt(index).widget() for index in range(box.count())]
         controls = tab.display_range_controls
-        self.assertEqual(order, [cursor, tab.scale_bar_toggle, controls.toggle_button, controls.more_button])
+        self.assertEqual(order, [cursor, tab.scale_bar_toggle, controls.toggle_button])  # no "..." after AR / MR (removed 2026-11-23)
         self.assertTrue(self._groups()[1].isAncestorOf(tab.scale_bar_toggle), "in the Image section, not one of its own")
 
     def test_the_masks_section_holds_the_landmarks_and_under_them_the_background_view(self) -> None:
@@ -595,13 +595,13 @@ class RightClickTests(_PanelCase):
 
     def test_every_button_with_a_menu_has_an_opener(self) -> None:
         buttons = [opener.button for opener in self.view_tab.openers]
-        self.assertEqual(len(buttons), 11)  # 8 overlays, the AR / MR switch and its "...", and the chunk icon
+        self.assertEqual(len(buttons), 10)  # 8 overlays, the AR / MR switch, and the chunk icon
         for name, button in self._overlay_buttons().items():
             self.assertIn(button, buttons, name)
         self.assertIn(self.view_tab.chunk_grid_controls, buttons)
         controls = self.view_tab.display_range_controls
         self.assertIn(controls.toggle_button, buttons)
-        self.assertIn(controls.more_button, buttons)
+        self.assertFalse(hasattr(controls, "more_button"), "the \"...\" button is gone: the numbers are in the AR / MR right-click menu")
 
     def test_a_right_click_opens_the_menu_beside_the_button_to_its_left(self) -> None:
         for opener in self.view_tab.openers:
@@ -702,7 +702,7 @@ class RightClickTests(_PanelCase):
         self.assertEqual(toggle.isChecked(), not shown)
         toggle.click()
 
-    def test_the_display_range_toggle_opens_its_numbers_on_a_right_click_and_the_dots_on_either(self) -> None:
+    def test_the_display_range_toggle_opens_its_numbers_on_a_right_click(self) -> None:
         controls = self.view_tab.display_range_controls
         _press(controls.toggle_button, Qt.MouseButton.LeftButton)
         self.assertFalse(controls.range_menu.isVisible(), "a left press on the AR / MR switch is left to the button")
@@ -710,18 +710,14 @@ class RightClickTests(_PanelCase):
         _press(controls.toggle_button, Qt.MouseButton.RightButton)
         self.assertTrue(controls.range_menu.isVisible(), "its right-click opens the numbers")
         controls.range_menu.hide()
-        self._opener(controls.more_button)._hidden_at = float("-inf")
-        _press(controls.more_button, Qt.MouseButton.LeftButton)
-        self.assertTrue(controls.range_menu.isVisible(), "the dots open them on a left click")
-        controls.range_menu.hide()
 
     def test_a_press_just_after_the_menu_closed_is_the_click_that_closed_it(self) -> None:
-        button = self.view_tab.display_range_controls.more_button
+        button = self.view_tab.display_range_controls.toggle_button
         menu = self.view_tab.menu_for(button)
         self._opener(button)._hidden_at = float("-inf")
-        _press(button, Qt.MouseButton.LeftButton)
+        _press(button, Qt.MouseButton.RightButton)
         menu.hide()  # Qt closes the menu on the press and hands the same press to the button
-        _press(button, Qt.MouseButton.LeftButton)
+        _press(button, Qt.MouseButton.RightButton)
         self.assertFalse(menu.isVisible(), "it must not open again at once")
 
     def test_the_chunk_icon_menu_holds_the_export_grid_switch_and_opens_while_the_icon_is_greyed_out(self) -> None:
