@@ -52,6 +52,8 @@ try:
         ADD_SELECTION_BLOBS,
         ADD_SELECTION_ONE,
         DESELECT_AREA,
+        FIT_CIRCLE,
+        FIT_RECTANGLE,
         LINK,
         MAKE_REFERENCE,
         MAKE_SAMPLE,
@@ -186,6 +188,69 @@ class Phase3UiTest(unittest.TestCase):
         # the click is view point (30, 30): half a cell off, then the frame's shift undone
         self.assertEqual((self.roi(4).center_x, self.roi(4).center_y), (27.0 - CELL_OFFSET, 32.0 - CELL_OFFSET))
         np.testing.assert_allclose(self.panel._roi_queries.view_centers(frame, affine)[3], (30.0, 30.0))  # and that frame draws it back under the click
+
+    # -- Add ROI > Circle / Rectangle fitted to the one selected blob (2026-11-24) ------------
+
+    @staticmethod
+    def rim_area(roi) -> float:
+        """The area of the rim's band, from its gap and thickness: the area within gap + thickness of the shape's edge minus the area within gap (a rectangle grows with rounded corners)."""
+        gap, thickness = roi.border.gap_px, roi.border.thickness_px
+        if isinstance(roi.shape, Rectangle):
+            w, h = roi.shape.width_px, roi.shape.height_px
+
+            def within(s: float) -> float:
+                return w * h + 2 * (w + h) * s + np.pi * s * s
+
+            outer, inner = within(gap + thickness), within(gap)
+        else:
+            outer = np.pi * (roi.shape.diameter_px / 2 + gap + thickness) ** 2
+            inner = np.pi * (roi.shape.diameter_px / 2 + gap) ** 2
+        return float(outer - inner)
+
+    def test_one_selected_blob_is_found_and_two_are_not(self) -> None:
+        self.assertFalse(self.panel._roi_creation.has_single_blob())  # nothing selected
+        self.select_pixels((30, 40, 10, 30))
+        self.assertTrue(self.panel._roi_creation.has_single_blob())
+        self.select_pixels((30, 40, 10, 30), (5, 9, 50, 55))
+        self.assertFalse(self.panel._roi_creation.has_single_blob())  # a second blob, apart from the first
+
+    def test_fitted_rectangle_matches_the_blob_and_follows_the_default_rim(self) -> None:
+        self.select_pixels((30, 40, 10, 30))  # rows 30..39, columns 10..29
+        self.right_click(70.0, 10.0, RoiMenuChoice(FIT_RECTANGLE))
+        new = self.roi(4)
+        self.assertEqual(new.role, "sample")
+        gap = self.roi_toolbox.detection_settings().default_border().gap_px
+        self.assertEqual(new.border.gap_px, gap)  # the default gap ...
+        self.assertAlmostEqual(self.rim_area(new), 200.0, delta=0.01)  # ... and a rim with the area of the 20 x 10 rectangle
+        self.assertEqual(new.shape, Rectangle(20.0, 10.0, 0.0))
+        self.assertEqual((new.center_x, new.center_y), (19.5, 34.5))
+        self.assertEqual(self.selection.selected_roi_ids(), frozenset({4}))
+        self.assertIn("fitted", self.messages[-1])
+        undo_manager.undo()
+        self.assertEqual(len(self.roi_toolbox.rois()), 3)  # one undo step
+
+    def test_fitted_circle_has_the_blobs_area_and_centre(self) -> None:
+        plane = self.select_pixels((28, 40, 20, 32))
+        self.right_click(70.0, 10.0, RoiMenuChoice(FIT_CIRCLE))
+        new = self.roi(4)
+        self.assertAlmostEqual(np.pi * (new.shape.diameter_px / 2) ** 2, float(plane.sum()), places=6)
+        self.assertEqual((new.center_x, new.center_y), (25.5, 33.5))
+        self.assertAlmostEqual(self.rim_area(new), float(plane.sum()), delta=0.01)  # the rim has the area of the circle
+
+    def test_a_fit_under_a_chromatic_correction_is_stored_in_the_reference_frame(self) -> None:
+        affine = np.array([[1.0, 0.0, 3.0], [0.0, 1.0, -2.0]])
+        with mock.patch.object(self.chromatic, "affine_for", return_value=affine):
+            self.select_pixels((30, 40, 10, 30))
+            self.panel._roi_creation.add_fitted("rectangle")
+        self.assertEqual((self.roi(4).center_x, self.roi(4).center_y), (19.5 - 3.0, 34.5 + 2.0))
+
+    def test_a_fit_without_exactly_one_blob_says_so_and_adds_nothing(self) -> None:
+        self.panel._roi_creation.add_fitted("circle")
+        self.assertIn("no area selection", self.messages[-1])
+        self.select_pixels((30, 40, 10, 30), (5, 9, 50, 55))
+        self.panel._roi_creation.add_fitted("circle")
+        self.assertIn("not one blob", self.messages[-1])
+        self.assertEqual(len(self.roi_toolbox.rois()), 3)
 
     # -- Add ROI > Current selection --------------------------------------------------------
 
@@ -575,6 +640,30 @@ class ContextMenuTest(unittest.TestCase):
         menu, _parent = self._build(can_add=False, can_add_from_selection=False)
         self.assertNotIn("Add ROI", self._texts(menu))
 
+    def test_one_selected_blob_turns_circle_and_rectangle_into_fitted_entries(self) -> None:
+        """2026-11-24: the entries say what they do; the plain ones give way, and the fitted ones do not need the click to be inside the selection."""
+        menu, _parent = self._build(can_add=False, can_add_from_selection=True, fit_to_blob=True)
+        self.assertEqual(
+            [a.text() for a in self._entry(menu, "Add ROI").menu().actions()], ["Circle fitted to selection", "Rectangle fitted to selection", "Current selection"]
+        )
+        menu, _parent = self._build(can_add=True, can_add_from_selection=True, fit_to_blob=False)
+        self.assertEqual([a.text() for a in self._entry(menu, "Add ROI").menu().actions()][:2], ["Circle", "Rectangle"])
+
+    def test_the_fitted_entries_return_their_own_choices(self) -> None:
+        picked: dict = {}
+
+        class Recording(QtWidgets.QMenu):
+            def exec(self, *_args):  # noqa: A003 - Qt's name
+                add = next(a for a in self.actions() if a.text() == "Add ROI").menu()
+                picked.update({a.text(): a for a in add.actions()})
+                return picked["Rectangle fitted to selection"]
+
+        with mock.patch.object(menu_module, "QMenu", Recording):
+            choice = menu_module.show_roi_context_menu(
+                QtWidgets.QWidget(), selected_count=0, groups=[], any_selected_grouped=False, can_add=True, fit_to_blob=True
+            )
+        self.assertEqual(choice, RoiMenuChoice(FIT_RECTANGLE))
+
     def test_make_this_roi_checks_the_role_the_whole_selection_has(self) -> None:
         menu, _parent = self._build(selected_count=2, selected_roles=(0, 2))
         self.assertEqual(self._entry(menu, "Make these ROIs", "Reference").isChecked(), True)
@@ -594,9 +683,9 @@ class ContextMenuTest(unittest.TestCase):
         first_separator = next(i for i, a in enumerate(menu.actions()) if a.isSeparator())
         self.assertEqual(
             [a.text() for a in menu.actions()[:first_separator]],
-            ["Add ROI", "Delete 2 ROIs", 'Select whole group "G" (3 ROIs)', "Deselect 2 ROIs", roi_selection_lock.MENU_TEXT],
+            ["Add ROI", "Copy 2 ROIs", "Delete 2 ROIs", 'Select whole group "G" (3 ROIs)', "Deselect 2 ROIs", roi_selection_lock.MENU_TEXT],  # (Copy since a738508)
         )
-        self.assertEqual(texts[5:], ["Make these ROIs", "Link references", "Unlink", "Group 2 selected ROIs...", "Add to group", "Ungroup"])
+        self.assertEqual(texts[6:], ["Make these ROIs", "Link references", "Unlink", "Group 2 selected ROIs...", "Add to group", "Ungroup"])
 
     def test_deselect_area_is_offered_only_with_an_area_selection_and_sits_by_the_roi_deselect(self) -> None:
         menu, _parent = self._build(selected_count=2)

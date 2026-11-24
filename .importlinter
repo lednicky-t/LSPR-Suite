@@ -156,6 +156,7 @@ source_modules =
     lspr_imaging_app.roi.palette
     lspr_imaging_app.roi.rasterize
     lspr_imaging_app.roi.ring_size
+    lspr_imaging_app.roi.shape_fit
     lspr_imaging_app.roi.shape_hits
 forbidden_modules =
     PyQt6
