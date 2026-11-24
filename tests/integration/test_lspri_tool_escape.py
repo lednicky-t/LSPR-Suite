@@ -90,9 +90,9 @@ class ToolEscapeUnitTest(unittest.TestCase):
     def test_with_no_tool_on_the_action_is_disabled_so_esc_reaches_whatever_has_focus(self) -> None:
         self.assertFalse(self.escape.action.isEnabled())
         self.assertFalse(self.escape.escape())
-        self.tool.set_active(ImageTool.ADD_ROI, True)
+        self.tool.set_active(ImageTool.MEASURE, True)
         self.assertTrue(self.escape.action.isEnabled())
-        self.tool.set_active(ImageTool.ADD_ROI, False)
+        self.tool.set_active(ImageTool.MEASURE, False)
         self.assertFalse(self.escape.action.isEnabled())
 
     def test_every_tool_is_left_by_esc_when_it_has_nothing_in_progress(self) -> None:
@@ -188,7 +188,7 @@ class ImagePanelEscapeTest(unittest.TestCase):
         self.assertIsNone(self.active_tool.active())
 
     def test_arming_a_tool_puts_the_keyboard_on_the_image(self) -> None:
-        self.active_tool.set_active(ImageTool.ADD_ROI, True)
+        self.active_tool.set_active(ImageTool.MEASURE, True)
         _pump(0.05)
         self.assertIs(QApplication.focusWidget(), self.panel._view)
 

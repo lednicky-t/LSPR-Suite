@@ -1,7 +1,7 @@
 """The ROI menu, buttons and shortcuts of phase 3 (apps/LSPRi/eva/docs/roi_shapes_and_linking_plan_2026-11-18.md), on the real Image panel.
 
 Right-click menu: Add ROI > Circle / Rectangle / Current selection > All together / Separate blobs; Make this ROI > Sample / Reference; Link references /
-Unlink. The ROIs tab: Link, Unlink, the Links switch, the Shape picker (Circle, Rectangle). Ctrl+L / Ctrl+K. What the overlay then shows: link lines, the
+Unlink. The ROIs tab: Link, Unlink, the Links switch. Ctrl+L / Ctrl+K. What the overlay then shows: link lines, the
 "R7" label, the reference colour. The menu itself is injected by patching `show_roi_context_menu` (as the gesture tests do); a real menu is checked
 separately in `ContextMenuTest` by driving the QMenu without showing it.
 
@@ -39,7 +39,6 @@ try:
         BackgroundModule,
         ChromaticModule,
         GeometryModule,
-        ImageTool,
         MaskModule,
         MaskScopeModule,
     )
@@ -397,23 +396,7 @@ class Phase3UiTest(unittest.TestCase):
         data = self.panel._roi_overlay.link_curve.getData()[0]
         self.assertTrue(data is None or int(np.isfinite(data).sum()) == 0)
 
-    # -- the Shape picker and the Add ROI tool -----------------------------------------------
-
-    def test_the_picker_offers_circle_and_rectangle_only(self) -> None:
-        picker = self.panel._roi_tab.shape_picker
-        self.assertEqual(sorted(picker._actions), ["circle", "rectangle"])
-        self.assertTrue(all(action.isEnabled() for action in picker._actions.values()))
-
-    def test_the_add_roi_tool_places_the_shape_the_picker_holds(self) -> None:
-        self.active_tool.set_active(ImageTool.ADD_ROI, True)
-        self.panel._on_scene_clicked(_Click(self.scene(10.0, 55.0), Qt.MouseButton.LeftButton))
-        self.assertEqual(type(self.roi(4).shape).__name__, "Circle")
-        self.panel._roi_tab.shape_picker.set_shape("rectangle")
-        self.panel._on_scene_clicked(_Click(self.scene(30.0, 55.0), Qt.MouseButton.LeftButton))
-        self.assertEqual(self.roi(5).shape, Rectangle(20.0, 20.0, 0.0))
-        self.panel._roi_tab.shape_picker.set_shape("circle")
-        self.panel._on_scene_clicked(_Click(self.scene(50.0, 55.0), Qt.MouseButton.LeftButton))
-        self.assertEqual(type(self.roi(6).shape).__name__, "Circle")
+    # (The Shape picker and the click-to-add Add ROI tool were deleted 2026-11-24; Add ROI > Circle / Rectangle is the right-click menu's.)
 
     def test_a_mask_roi_can_be_picked_and_grabbed_by_its_pixels(self) -> None:
         self.select_pixels((10, 20, 60, 72))

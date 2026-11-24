@@ -279,7 +279,7 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
 
     def test_repicking_the_same_mode_rearms_after_another_tool(self) -> None:
         self._pick(AreaSelectionMode.LASSO)
-        self.active_tool.set_active(ImageTool.ADD_ROI, True)
+        self.active_tool.set_active(ImageTool.MEASURE, True)
         self._pick(AreaSelectionMode.LASSO)
         self.assertIs(self.active_tool.active(), ImageTool.SELECT_AREA)
 

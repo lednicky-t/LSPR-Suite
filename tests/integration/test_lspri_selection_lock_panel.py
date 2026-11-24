@@ -355,15 +355,6 @@ class SelectionLockPanelTest(unittest.TestCase):
         self.assertFalse(self.area.has_selection())
         self.assertIn("outside the lock", self.messages[-1])
 
-    def test_a_roi_cannot_be_placed_outside_the_lock_and_the_status_bar_says_why(self) -> None:
-        self._lock_box(20, 70, 20, 90)
-        self.active_tool.set_active(ImageTool.ADD_ROI, True)
-        before = len(self.roi_toolbox.roi_ids()) if hasattr(self.roi_toolbox, "roi_ids") else None
-        self.panel._on_scene_clicked(_Click(self._scene(100.5, 140.5), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-        self.assertIn("outside the lock", self.messages[-1])
-        if before is not None:
-            self.assertEqual(len(self.roi_toolbox.roi_ids()), before)
-
     # -- Add selection to the mask ------------------------------------------------------------------------------------------
 
     def test_add_selection_with_only_a_lock_adds_nothing_and_says_why(self) -> None:
