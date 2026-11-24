@@ -673,12 +673,16 @@ class ContextMenuTest(unittest.TestCase):
         self.assertNotIn("Add rim", self._texts(menu))
         self.assertNotIn("Turn rim off", self._texts(menu))
         self.assertNotIn("Turn rim into linked reference", self._texts(menu))
-        menu, _parent = self._build(selected_count=1, selected_roles=(1, 0), can_add_rim=True, can_turn_rim_off=True, can_rim_to_reference=True)
+        self.assertNotIn("Rim as large as ROI", self._texts(menu))
+        menu, _parent = self._build(
+            selected_count=1, selected_roles=(1, 0), can_add_rim=True, can_turn_rim_off=True, can_rim_to_reference=True, can_match_rim_area=True
+        )
         texts = self._texts(menu)
         self.assertIn("Add rim", texts)
         self.assertIn("Turn rim off", texts)
         self.assertIn("Turn rim into linked reference", texts)
-        for text in ("Add rim", "Turn rim off", "Turn rim into linked reference"):
+        self.assertIn("Rim as large as ROI", texts)
+        for text in ("Add rim", "Turn rim off", "Turn rim into linked reference", "Rim as large as ROI"):
             entry = self._entry(menu, text)
             self.assertFalse(entry.icon().isNull(), text)
             self.assertTrue(entry.toolTip(), text)
