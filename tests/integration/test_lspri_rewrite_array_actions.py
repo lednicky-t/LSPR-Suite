@@ -516,6 +516,61 @@ class ControlsTest(unittest.TestCase):
         self.assertEqual(saved[-1]["array/rows"], 7)
         self.assertAlmostEqual(saved[-1]["array/pitch_x_px"], 80.4)
 
+    def test_a_field_typed_over_can_go_back_to_auto_from_its_right_click_menu(self) -> None:
+        """2026-11-23: rows, columns, disk diameter and both pitches read "auto" at 0; their menu has Set to auto, left out while a field is auto."""
+        from lspr_imaging_app.panels.image.array_controls import auto_value_menu
+
+        controls = ArrayControls(self.geometry)
+        pop = controls.popover()
+        controls.set_mode("semi")
+
+        def texts(spin) -> list[str]:
+            menu = auto_value_menu(spin)
+            return [a.text() for a in menu.actions()]
+
+        self.assertNotIn("Set to auto", texts(pop.rows), "already auto: nothing to offer")
+        pop.rows.setValue(5)
+        pop.cols.setValue(4)
+        for field, px in ((pop.diameter, 41.5), (pop.pitch_x, 80.0), (pop.pitch_y, 60.0)):
+            field.set_value_px(px)
+        for spin in (pop.rows, pop.cols, pop.diameter._spin, pop.pitch_x._spin, pop.pitch_y._spin):
+            self.assertEqual(texts(spin)[0], "Set to auto", spin)
+        heard: list[bool] = []
+        controls.changed.connect(lambda: heard.append(True))
+        for spin in (pop.rows, pop.cols, pop.diameter._spin, pop.pitch_x._spin, pop.pitch_y._spin):
+            next(a for a in auto_value_menu(spin).actions() if a.text() == "Set to auto").trigger()
+        settings = controls.settings()
+        self.assertEqual((settings.prior.rows, settings.prior.cols), (None, None))
+        self.assertEqual((settings.prior.diameter_px, settings.prior.pitch_x_px, settings.prior.pitch_y_px), (None, None, None))
+        self.assertTrue(heard, "the change is announced (so it is remembered)")
+        self.assertEqual(pop.diameter.value_px(), 0.0)
+        self.assertNotIn("Set to auto", texts(pop.rows))
+
+    def test_set_all_to_auto_button_clears_the_five_auto_fields_and_announces_once(self) -> None:
+        """2026-11-24: one button in the settings menu puts rows, columns, diameter and both pitches back to auto; it is off while all are auto."""
+        controls = ArrayControls(self.geometry)
+        pop = controls.popover()
+        controls.set_mode("semi")
+        self.assertFalse(pop.all_auto.isEnabled())
+        pop.rows.setValue(5)
+        pop.pitch_y.set_value_px(60.0)
+        pop.pitch_y.value_changed.emit(60.0)
+        pop.rotation.setValue(3.0)
+        self.assertTrue(pop.all_auto.isEnabled())
+        heard: list[bool] = []
+        controls.changed.connect(lambda: heard.append(True))
+        pop.all_auto.click()
+        self.assertEqual(len(heard), 1)
+        settings = controls.settings()
+        self.assertEqual((settings.prior.rows, settings.prior.pitch_y_px), (None, None))
+        self.assertAlmostEqual(settings.rotation_deg, 3.0)  # only the auto fields are touched
+        self.assertFalse(pop.all_auto.isEnabled())
+        # restored from a saved state where only a length is set: the button must be on
+        store = UiStateStore({"array/diameter_px": 42.5}, on_changed=lambda _s: None)
+        restored = ArrayControls(self.geometry)
+        restored.bind_ui_state(store)
+        self.assertTrue(restored.popover().all_auto.isEnabled())
+
     def test_overlap_rule_is_stated_in_the_run_button_tooltip(self) -> None:
         controls = ArrayControls(self.geometry)
         self.assertIn("never counts pixels of sample disks", controls._run.toolTip())

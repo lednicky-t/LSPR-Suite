@@ -172,11 +172,11 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         self.assertIn("Invert selection", menu.call_args.kwargs["separate_before"])
         self.assertIn("Exit tool", menu.call_args.kwargs["separate_before"])
 
-        # With no tool entry at all (a plain right-click) the order is the same, Lock before the pair.
+        # With no tool entry at all (a plain right-click) the order is the same, Lock before the pair. Since 2026-11-23 the Mask submenu follows the pair.
         with patch("lspr_imaging_app.panels.image.interaction.show_tool_context_menu", return_value=None) as plain:
             self.image_panel._interaction._context_menu([], scene)
         plain_labels = [label for label, _enabled in plain.call_args.args[1]]
-        self.assertEqual(plain_labels[-2:], ["Invert selection", "Deselect"])
+        self.assertEqual(plain_labels[-3:], ["Invert selection", "Deselect", "Mask"])
 
     def test_the_armed_tools_right_click_menu_offers_add_roi_from_the_selection_only_with_a_selection(self) -> None:
         """2026-11-19 (maintainer): an armed selection tool's menu offers Add ROI > Current selection, as the ROIs tab's menu does."""
@@ -190,9 +190,24 @@ class AreaSelectionIntegrationTest(unittest.TestCase):
         scene = self.image_panel._plot.vb.mapViewToScene(QPointF(10.5, 10.5))
         target = "lspr_imaging_app.panels.image.interaction.show_tool_context_menu"
 
-        with patch(target, return_value=None) as menu:  # nothing selected: the entry is not available (the menu leaves it out)
+        with patch(target, return_value=None) as menu:  # nothing selected: still there, for Circle / Rectangle (2026-11-23), without Current selection
             interaction._show_select_area_context_menu(scene)
-        self.assertIn((ADD_ROI_SUBMENU, False), menu.call_args.args[1])
+        self.assertIn((ADD_ROI_SUBMENU, True), menu.call_args.args[1])
+        from PyQt6.QtWidgets import QMenu
+
+        from lspr_imaging_app.panels.image.roi_context_menu import ADD_RECTANGLE, ADD_ROI
+
+        probe = QMenu()
+        picked = menu.call_args.kwargs["submenus"][ADD_ROI_SUBMENU](probe)
+        self.assertEqual(sorted(picked.values()), sorted([ADD_ROI, ADD_RECTANGLE]))
+        self.assertEqual([a.text() for a in probe.actions()], ["Circle", "Rectangle"])
+
+        before_shapes = len(self.roi_toolbox.rois())
+        with patch(target, return_value=ADD_ROI):
+            interaction._show_select_area_context_menu(scene)
+        with patch(target, return_value=ADD_RECTANGLE):
+            interaction._show_select_area_context_menu(scene)
+        self.assertEqual(len(self.roi_toolbox.rois()), before_shapes + 2)
 
         self.area.set_rectangle(5, 5, 20, 20)
         with patch(target, return_value=None) as menu:

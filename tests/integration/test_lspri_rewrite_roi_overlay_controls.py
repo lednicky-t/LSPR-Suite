@@ -111,12 +111,11 @@ class RoiOverlayControlsTest(unittest.TestCase):
 
     # -- the tab -------------------------------------------------------------------------
 
-    def test_the_rois_tab_has_one_display_menu_holding_the_three_rows(self) -> None:
+    def test_the_rois_tab_keeps_a_hidden_display_menu_holding_the_three_rows(self) -> None:
         menu = self.panel._roi_tab._display_menu
         self.panel._tool_ribbon.set_category("ROIs")
-        self.assertTrue(menu.isVisibleTo(self.panel))
-        self.panel._tool_ribbon.set_category("Mask")
-        self.assertFalse(menu.isVisibleTo(self.panel), "only on the ROIs tab")
+        # No Display section on the ROIs tab (2026-11-23): the View ribbon has these controls; the menu only owns the originals.
+        self.assertFalse(menu.isVisibleTo(self.panel))
         popup = menu.menu().actions()[0].defaultWidget()
         for widget in (self.sample, self.reference, self.panel._roi_tab.labels_button):
             self.assertTrue(popup.isAncestorOf(widget), widget)
