@@ -132,6 +132,20 @@ class PanelTest(unittest.TestCase):
             self.assertEqual(button.text(), "")
         self.assertIn("border: none", self.panel._advanced_toggle.styleSheet())  # "Advanced" is free-standing text
 
+    def test_apply_and_cancel_are_free_standing_icons_not_buttons(self) -> None:
+        for button in (self.panel.apply_button, self.panel.cancel_button):
+            self.assertEqual(button.text(), "")
+            self.assertIn("border: none", button.styleSheet())
+            self.assertFalse(button.icon().isNull())
+        self.assertIn("Apply", self.panel.apply_button.toolTip())
+        self.assertIn("Cancel", self.panel.cancel_button.toolTip())
+        got: list[str] = []
+        self.panel.apply_requested.connect(lambda: got.append("apply"))
+        self.panel.cancel_requested.connect(lambda: got.append("cancel"))
+        self.panel.apply_button.click()
+        self.panel.cancel_button.click()
+        self.assertEqual(got, ["apply", "cancel"])
+
     def test_the_type_is_one_icon_that_switches(self) -> None:
         panel = self.panel
 
