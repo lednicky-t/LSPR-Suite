@@ -147,6 +147,9 @@ source_modules =
     lspr_imaging_app.image_tools.selection_wand
     lspr_imaging_app.image_tools.brush_stroke
     lspr_imaging_app.roi.array_detection
+    lspr_imaging_app.roi.array_finder
+    lspr_imaging_app.roi.array_found_plan
+    lspr_imaging_app.roi.array_lattice
     lspr_imaging_app.roi.array_pipeline
     lspr_imaging_app.roi.detection
     lspr_imaging_app.roi.edge_size
@@ -157,6 +160,7 @@ source_modules =
     lspr_imaging_app.roi.rasterize
     lspr_imaging_app.roi.ring_size
     lspr_imaging_app.roi.shape_fit
+    lspr_imaging_app.roi.shape_guess
     lspr_imaging_app.roi.shape_hits
 forbidden_modules =
     PyQt6

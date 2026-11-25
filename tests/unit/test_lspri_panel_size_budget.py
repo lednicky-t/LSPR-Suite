@@ -36,8 +36,9 @@ BUDGETS = (
     # moved into canvas_build.py, ribbon_build.py, navigation_build.py (2,093 / 115). Measured 2026-11-25: 2,020 / 116.
     Budget("panels/image/panel.py", 2150, "ImagePanel", 118,
            "a file of its own with a small builder (the pattern of panels/image/selection_tools.py)"),
-    # Measured 2026-11-25: 2,399 lines, 108 methods (1,748 lines on 2026-11-02).
-    Budget("roi/toolbox.py", 2470, "RoiToolbox", 111,
+    # Measured 2026-11-25: 2,399 lines, 108 methods (1,748 lines on 2026-11-02). Raised on purpose the same day to 2,500 / 113 for the array finder's command
+    # (`place_found_array`) plus the helpers it shares with `stamp_array` (`_next_array_slot`, `_commit_array_plan`: stamp_array's undo code moved there, not copied).
+    Budget("roi/toolbox.py", 2500, "RoiToolbox", 114,
            "a pure helper module under roi/ or domain/ that the toolbox calls (the toolbox keeps the command, undo and signal)"),
     # Measured 2026-11-25: 2,483 lines, 47 top-level functions (1,983 lines on 2026-11-02).
     Budget("app_rewrite.py", 2560, None, 49,
