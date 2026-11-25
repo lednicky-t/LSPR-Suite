@@ -1,6 +1,6 @@
-"""Array* (manual array pop-out): settings panel, live ghost preview, Apply / Cancel, remembered settings.
+"""Array (manual array pop-out): settings panel, live ghost preview, Apply / Cancel, remembered settings.
 
-Real `ArrayStarPanel`, `ArrayStarController`, `RoiToolbox`, `SelectionModule`, `GeometryModule`, `ChromaticModule` and a pyqtgraph plot; no dataset.
+Real `ArrayPanel`, `ArrayController`, `RoiToolbox`, `SelectionModule`, `GeometryModule`, `ChromaticModule` and a pyqtgraph plot; no dataset.
 Clicks are `.click()` / `.setValue()` calls, never screen coordinates. One process per file (offscreen Qt).
 """
 
@@ -28,11 +28,11 @@ try:
 
     from lspr_imaging_app.domain.roi_shapes import Border, Circle
     from lspr_imaging_app.image_tools import ChromaticModule, GeometryModule
-    from lspr_imaging_app.panels.image.array_star import ArrayStarController
-    from lspr_imaging_app.panels.image.array_star_panel import ArrayStarPanel
-    from lspr_imaging_app.panels.image.array_star_ghosts import preview_alphas
-    from lspr_imaging_app.panels.image.array_star_pictograms import KINDS, pictogram_pixmap
-    from lspr_imaging_app.panels.image.array_star_picker import SIZE, CornerPicker, NumberingPicker
+    from lspr_imaging_app.panels.image.array import ArrayController
+    from lspr_imaging_app.panels.image.array_panel import ArrayPanel
+    from lspr_imaging_app.panels.image.array_ghosts import preview_alphas
+    from lspr_imaging_app.panels.image.array_pictograms import KINDS, pictogram_pixmap
+    from lspr_imaging_app.panels.image.array_picker import SIZE, CornerPicker, NumberingPicker
     from lspr_imaging_app.panels.ui_state import UiStateStore
     from lspr_imaging_app.roi import RoiToolbox
     from lspr_imaging_app.roi.array_layout import ArraySpec
@@ -45,7 +45,7 @@ except ImportError as exc:  # pragma: no cover - depends on the checked-out bran
 _APP = QApplication.instance() or QApplication([])
 
 
-def _settle(controller: ArrayStarController) -> None:
+def _settle(controller: ArrayController) -> None:
     """Let the 30 ms coalescing timer fire (what the event loop does), without waiting for it."""
     controller._timer.stop()
     controller._recompute()
@@ -54,7 +54,7 @@ def _settle(controller: ArrayStarController) -> None:
 class PanelTest(unittest.TestCase):
     def setUp(self) -> None:
         self.geometry = GeometryModule()
-        self.panel = ArrayStarPanel(self.geometry)
+        self.panel = ArrayPanel(self.geometry)
 
     def test_every_pictogram_draws(self) -> None:
         for kind in KINDS:
@@ -329,7 +329,7 @@ class ControllerTest(unittest.TestCase):
         self.plot = pg.PlotItem()
         self.host = QWidget()
         self.statuses: list[str] = []
-        self.controller = ArrayStarController(
+        self.controller = ArrayController(
             plot=self.plot, toolbox=self.toolbox, selection=self.selection, chromatic=ChromaticModule(), geometry=self.geometry,
             current_frame=lambda: (0, 600.0), host=self.host,
         )

@@ -38,7 +38,8 @@ BUDGETS = (
            "a file of its own with a small builder (the pattern of panels/image/selection_tools.py)"),
     # Measured 2026-11-25: 2,399 lines, 108 methods (1,748 lines on 2026-11-02). Raised on purpose the same day to 2,500 / 113 for the array finder's command
     # (`place_found_array`) plus the helpers it shares with `stamp_array` (`_next_array_slot`, `_commit_array_plan`: stamp_array's undo code moved there, not copied).
-    Budget("roi/toolbox.py", 2500, "RoiToolbox", 114,
+    # Lowered 2026-11-25 to 2,320 / 113: the old Array group's commands (`detect_rois`, `place_array`, `refine_rois`) were removed with it (2,249 lines, 110 methods).
+    Budget("roi/toolbox.py", 2320, "RoiToolbox", 113,
            "a pure helper module under roi/ or domain/ that the toolbox calls (the toolbox keeps the command, undo and signal)"),
     # Measured 2026-11-25: 2,483 lines, 47 top-level functions (1,983 lines on 2026-11-02).
     Budget("app_rewrite.py", 2560, None, 49,

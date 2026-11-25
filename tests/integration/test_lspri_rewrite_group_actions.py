@@ -133,6 +133,32 @@ class GroupActionsTests(unittest.TestCase):
         self.assertIn(actions.group_action, holder.actions())
         self.assertIn(actions.ungroup_action, holder.actions())
 
+    def test_group_by_rows_and_columns_are_buttons_of_their_own_not_a_menu(self) -> None:
+        """2026-11-25 (maintainer): the Group pick-up menu is split into separate icons."""
+        buttons = self.controls._buttons
+        self.assertEqual(set(buttons), {"create", "ungroup", "rows", "columns"})
+        for key in buttons:
+            self.assertIsNone(buttons[key].menu(), key)
+        for key in ("create", "rows", "columns"):  # (Ungroup shares the Group place; the other two are always there)
+            self.assertFalse(buttons[key].icon().isNull(), key)
+        buttons["rows"].click()
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["Row 01", "Row 02"])
+        undo_manager.undo()
+        buttons["columns"].click()
+        self.assertEqual(len(self.toolbox.groups()), 3)
+        undo_manager.undo()
+        self.names.append("All")
+        buttons["create"].click()
+        self.assertEqual([g.name for g in self.toolbox.groups()], ["All"])
+
+    def test_the_group_label_menu_is_no_longer_shown_here_but_stays_built(self) -> None:
+        """2026-11-25 (maintainer): the View ribbon has the group-label switch; this copy is the hidden original it mirrors."""
+        self.controls.show()
+        _APP.processEvents()
+        self.assertFalse(self.controls.label_menu.isVisible())
+        self.assertIsNotNone(self.controls.label_menu.show_button)
+        self.controls.close()
+
     def test_ungroup_takes_the_place_of_group_when_grouped_rois_are_selected(self) -> None:
         self.names = ["Mine"]
         self.selection.set_roi_selection({1, 2})

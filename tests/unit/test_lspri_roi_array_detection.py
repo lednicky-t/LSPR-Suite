@@ -1,253 +1,78 @@
-"""`roi/array_detection.py`: find a regular spot array (lattice) in synthetic images of known geometry.
+"""`roi/array_detection.py`: what is left of the old detector - the spot-size scan the array finder uses when no ROI says how big the spots are (2026-11-25).
 
-Pure numpy; no Qt, no files. Spots are dark (as in the instrument), blurred, on an uneven background.
+Tested the way it is used: through `find_candidates` / `build_array` on synthetic images of known geometry (pure numpy; no Qt, no files). The old tests of the retired
+`find_array` (clean array, pitch, tilt, missing spots, masks ...) are covered for the finder in `test_lspri_array_finder.py`.
 """
 
 from __future__ import annotations
 
-import math
+import sys
 import unittest
+from pathlib import Path
 
 import numpy as np
-from scipy import ndimage
 
-from lspr_imaging_app.progress import Cancelled
-from lspr_imaging_app.roi.array_detection import ArrayPrior, find_array, lattice_nodes
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tests._paths import REPO_ROOT, ensure_repo_paths  # noqa: E402
 
+ensure_repo_paths()
+sys.path.insert(0, str(REPO_ROOT / "apps" / "LSPRi" / "eva" / "src"))
+sys.path.insert(0, str(REPO_ROOT / "tests"))
 
-def _array_image(
-    rows=4,
-    cols=6,
-    pitch_x=62.0,
-    pitch_y=62.0,
-    tilt_deg=0.0,
-    diameter=24.0,
-    origin=(60.0, 55.0),
-    shape=(300, 440),
-    missing=(),
-    noise=0.01,
-    gradient=0.25,
-    blur=1.2,
-    seed=1,
-    bright=False,
-):
-    """Image plus the true (rows*cols, 2) centres. Dark spots on a bright, uneven background."""
-    rng = np.random.default_rng(seed)
-    a1 = pitch_x * np.array([math.cos(math.radians(tilt_deg)), math.sin(math.radians(tilt_deg))])
-    a2 = pitch_y * np.array([-math.sin(math.radians(tilt_deg)), math.cos(math.radians(tilt_deg))])
-    nodes = lattice_nodes(rows, cols, origin, tuple(a1), tuple(a2))
-    up = 3
-    yy, xx = np.mgrid[0 : shape[0] * up, 0 : shape[1] * up]
-    x_hi, y_hi = (xx + 0.5) / up - 0.5, (yy + 0.5) / up - 0.5
-    mask = np.zeros(x_hi.shape, dtype=bool)
-    for n, (cx, cy) in enumerate(nodes):
-        if n in missing:
-            continue
-        mask |= np.hypot(x_hi - cx, y_hi - cy) <= diameter / 2.0
-    mask = mask.reshape(shape[0], up, shape[1], up).mean(axis=(1, 3))
-    mask = ndimage.gaussian_filter(mask, blur)
-    column = np.linspace(0.0, 1.0, shape[1])[None, :]
-    background = 1000.0 * (1.0 + gradient * (column - 0.5))
-    image = background * (1.0 - 0.6 * mask) + rng.normal(0.0, noise * 1000.0, shape)
-    if bright:
-        image = 2000.0 - image
-    return image.astype(np.float32), nodes
+from _array_synth import synth  # noqa: E402
+
+from lspr_imaging_app.roi.array_finder import FinderError, FinderSettings, build_array, find_candidates  # noqa: E402
 
 
-def _match(fit, truth, tolerance):
-    """Largest distance from each true node to the nearest found centre (rows/cols may differ)."""
-    distances = np.hypot(*(truth[:, None, :] - fit.centers_xy[None, :, :]).transpose(2, 0, 1))
-    return distances.min(axis=1).max() if tolerance is None else float((distances.min(axis=1) <= tolerance).mean())
-
-
-class FindArrayTest(unittest.TestCase):
-    def test_clean_array_rows_cols_pitch_and_centres(self) -> None:
-        image, truth = _array_image()
-        fit = find_array(image)
-        self.assertIsNotNone(fit)
-        self.assertEqual((fit.rows, fit.cols), (4, 6))
-        self.assertAlmostEqual(fit.pitch_x_px, 62.0, delta=0.3)
-        self.assertAlmostEqual(fit.pitch_y_px, 62.0, delta=0.3)
-        self.assertAlmostEqual(fit.rough_diameter_px, 24.0, delta=4.0)
-        self.assertEqual(fit.found_count, 24)
-        self.assertLess(_match(fit, truth, None), 0.6)  # every true centre has a found centre within 0.6 px
-        self.assertLess(fit.residual_rms_px, 0.5)
-
-    def test_non_integer_pitch_does_not_drift(self) -> None:
-        image, truth = _array_image(cols=7, pitch_x=48.4, pitch_y=47.8, shape=(260, 420), origin=(40.0, 40.0), diameter=20.0)
-        fit = find_array(image)
-        self.assertEqual((fit.rows, fit.cols), (4, 7))
-        self.assertAlmostEqual(fit.pitch_x_px, 48.4, delta=0.15)
-        self.assertAlmostEqual(fit.pitch_y_px, 47.8, delta=0.15)
-        self.assertLess(_match(fit, truth, None), 0.7)
-
-    def test_different_pitch_along_x_and_y(self) -> None:
-        image, _truth = _array_image(rows=3, cols=5, pitch_x=56.0, pitch_y=84.0, shape=(300, 340), origin=(50.0, 50.0))
-        fit = find_array(image)
-        self.assertEqual((fit.rows, fit.cols), (3, 5))
-        self.assertAlmostEqual(fit.pitch_x_px, 56.0, delta=0.4)
-        self.assertAlmostEqual(fit.pitch_y_px, 84.0, delta=0.4)
-
-    def test_tilt_is_measured_and_followed(self) -> None:
-        image, truth = _array_image(tilt_deg=3.0, origin=(60.0, 45.0), shape=(320, 460))
-        fit = find_array(image)
-        self.assertEqual((fit.rows, fit.cols), (4, 6))
-        self.assertAlmostEqual(fit.tilt_deg, 3.0, delta=0.3)
-        self.assertAlmostEqual(fit.skew_deg, 0.0, delta=0.5)
-        self.assertLess(_match(fit, truth, None), 0.8)
-
-    def test_a_few_missing_spots_are_reported_not_found(self) -> None:
-        image, truth = _array_image(missing=(8, 9, 21))
-        fit = find_array(image)
-        self.assertEqual((fit.rows, fit.cols), (4, 6))
-        self.assertEqual(fit.found_count, 21)
-        self.assertFalse(fit.found[[8, 9, 21]].any())
-        # the missing nodes still sit at their lattice positions
-        self.assertLess(np.hypot(*(fit.centers_xy[8] - truth[8])), 0.8)
-
-    def test_bright_spots_with_the_bright_flag(self) -> None:
-        image, _truth = _array_image(bright=True)
-        fit = find_array(image, bright=True)
-        self.assertIsNotNone(fit)
-        self.assertEqual((fit.rows, fit.cols), (4, 6))
-
-    def test_a_dark_band_along_the_edge_is_not_taken_for_a_row_of_spots(self) -> None:
-        image, _truth = _array_image(rows=4, cols=6, shape=(330, 440))
-        image[255:, :] *= 0.05  # a dark holder border under the array, on the next lattice row
-        fit = find_array(image)
-        self.assertIsNotNone(fit)
-        self.assertEqual((fit.rows, fit.cols), (4, 6))
-
-    def test_uneven_background_gradient(self) -> None:
-        image, _truth = _array_image(gradient=0.8)
-        fit = find_array(image)
-        self.assertIsNotNone(fit)
-        self.assertEqual((fit.rows, fit.cols), (4, 6))
-
-    def test_nan_corner_from_rotation_is_ignored(self) -> None:
-        image, _truth = _array_image()
-        image[:40, :40] = np.nan
-        fit = find_array(image)
-        self.assertIsNotNone(fit)
-        self.assertEqual((fit.rows, fit.cols), (4, 6))
-
-    def test_a_valid_mask_excludes_part_of_the_image(self) -> None:
-        image, _truth = _array_image(rows=4, cols=6)
-        valid = np.ones(image.shape, dtype=bool)
-        valid[:, 330:] = False  # drop the last column (x = 370)
-        fit = find_array(image, valid_mask=valid)
-        self.assertIsNotNone(fit)
-        self.assertEqual((fit.rows, fit.cols), (4, 5))
-
-    def test_priors_are_checked_against_the_result(self) -> None:
-        image, _truth = _array_image()
-        fit = find_array(image, prior=ArrayPrior(diameter_px=24.0, rows=5, cols=6, pitch_x_px=70.0))
-        self.assertIsNotNone(fit)
-        self.assertTrue(any("expected" in w for w in fit.warnings))
-        self.assertAlmostEqual(fit.rough_diameter_px, 24.0)
-
-    def test_random_scatter_is_not_an_array(self) -> None:
-        rng = np.random.default_rng(3)
-        image = np.full((300, 440), 1000.0)
-        yy, xx = np.mgrid[0:300, 0:440]
-        for _ in range(20):
-            cx, cy = rng.uniform(20, 420), rng.uniform(20, 280)
-            image[np.hypot(xx - cx, yy - cy) <= 12] = 400.0
-        image = ndimage.gaussian_filter(image, 1.0).astype(np.float32)
-        diagnostics: dict = {}
-        self.assertIsNone(find_array(image, diagnostics=diagnostics))
-        self.assertNotEqual(diagnostics.get("reason"), "ok")
-
-    def test_single_spot_flat_and_empty_images_are_rejected_with_a_reason(self) -> None:
-        single, _t = _array_image(rows=1, cols=1)
-        for image in (single, np.full((100, 100), 500.0, dtype=np.float32), np.empty((0, 0), dtype=np.float32)):
-            diagnostics: dict = {}
-            self.assertIsNone(find_array(image, diagnostics=diagnostics))
-            self.assertTrue(diagnostics["reason"])
-
-    def test_progress_runs_to_one_and_cancel_stops_it(self) -> None:
-        image, _truth = _array_image()
-        seen: list[float] = []
-        find_array(image, progress=lambda fraction, _text: seen.append(fraction))
-        self.assertTrue(seen and max(seen) == 1.0 and seen == sorted(seen))
-        with self.assertRaises(Cancelled):
-            find_array(image, cancelled=lambda: True)
+def _find_without_a_guide(image: np.ndarray):
+    candidates = find_candidates(image, (), FinderSettings())
+    return candidates, build_array(candidates, FinderSettings())
 
 
 class SpotSizeScanTest(unittest.TestCase):
-    """No diameter given: the size comes from a scan over 6-120 px scored by lattice fit (2026-10-20). The single
-    scale-space guess it replaced put a real 34 px array at 54-68 px or 12 px and then found no spot at all."""
+    """No ROI given: the size comes from a scan over 6-120 px scored by lattice fit (2026-10-20). The single scale-space guess it replaced put a real 34 px array at
+    54-68 px or 12 px and then found no spot at all."""
 
-    def _assert_whole_array(self, image, truth, rows=4, cols=6):
-        diagnostics: dict = {}
-        fit = find_array(image, diagnostics=diagnostics)
-        self.assertIsNotNone(fit, diagnostics.get("reason"))
-        self.assertEqual((fit.rows, fit.cols), (rows, cols))
-        self.assertEqual(fit.found_count, rows * cols)
-        self.assertLess(_match(fit, truth, None), 1.5)
-        return fit, diagnostics
+    def _assert_whole_array(self, image: np.ndarray, rows: int = 4, cols: int = 6):
+        candidates, result = _find_without_a_guide(image)
+        self.assertTrue(result.ordered, result.report)
+        self.assertEqual((result.rows, result.cols), (rows, cols))
+        self.assertEqual(result.count, rows * cols)
+        return candidates, result
 
     def test_small_medium_and_large_spots_are_all_found(self) -> None:
         for diameter in (10.0, 24.0, 50.0):
             with self.subTest(diameter=diameter):
                 pitch = 2.6 * diameter
-                image, truth = _array_image(diameter=diameter, pitch_x=pitch, pitch_y=pitch, origin=(1.5 * pitch, 1.3 * pitch),
-                                            shape=(int(5.6 * pitch), int(7.8 * pitch)))
-                fit, diagnostics = self._assert_whole_array(image, truth)
+                image, _truth = synth(
+                    rows=4, cols=6, pitch=(pitch, pitch), diameter=diameter, origin=(1.5 * pitch, 1.3 * pitch), shape=(int(5.6 * pitch), int(7.8 * pitch))
+                )
+                candidates, _result = self._assert_whole_array(image)
                 # The search size lands near the true size (the disk test tolerates about +-25 %).
-                self.assertLess(abs(diagnostics["rough_diameter_px"] / diameter - 1.0), 0.35, diagnostics["size_scan"])
-
-    def test_spots_with_a_dark_halo_are_found_at_their_own_size(self) -> None:
-        # A wide, weak dark halo round every spot (as near a plasmon resonance) pulls a blob-scale guess outwards.
-        image, truth = _array_image(diameter=24.0, pitch_x=70.0, pitch_y=70.0, origin=(70.0, 60.0), shape=(340, 500))
-        yy, xx = np.mgrid[0 : image.shape[0], 0 : image.shape[1]]
-        halo = np.zeros(image.shape, dtype=np.float32)
-        for cx, cy in truth:
-            halo = np.maximum(halo, np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2.0 * 18.0**2)))
-        image = image * (1.0 - 0.25 * halo)
-        _fit, diagnostics = self._assert_whole_array(image, truth)
-        self.assertLess(abs(diagnostics["rough_diameter_px"] / 24.0 - 1.0), 0.35, diagnostics["size_scan"])
+                self.assertLess(abs(candidates.diameter_px / diameter - 1.0), 0.35)
 
     def test_debris_does_not_win_the_size_scan(self) -> None:
-        image, truth = _array_image(diameter=24.0, pitch_x=64.0, pitch_y=64.0, origin=(64.0, 58.0), shape=(320, 470))
+        image, _truth = synth(rows=4, cols=6, pitch=(64.0, 64.0), diameter=24.0, origin=(64.0, 58.0), shape=(320, 470))
         rng = np.random.default_rng(5)
         yy, xx = np.mgrid[0 : image.shape[0], 0 : image.shape[1]]
         for _ in range(40):  # small dark specks scattered between the spots
             cx, cy = rng.uniform(0, image.shape[1]), rng.uniform(0, image.shape[0])
             image[np.hypot(xx - cx, yy - cy) <= 3.0] *= 0.5
-        self._assert_whole_array(image, truth)
+        self._assert_whole_array(image)
 
-    def test_no_array_is_refused_with_a_reason(self) -> None:
-        # Pure noise: either no size gives a lattice ("any spot size ... set their diameter"), or a few chance dots
-        # fit one and the occupancy check refuses it ("too sparse to trust"). Never a fake array.
+    def test_noise_is_refused_with_a_reason_never_a_fake_array(self) -> None:
         image = np.random.default_rng(0).normal(1000.0, 10.0, (300, 400)).astype(np.float32)
-        diagnostics: dict = {}
-        self.assertIsNone(find_array(image, diagnostics=diagnostics))
-        self.assertTrue(diagnostics.get("reason"))
+        try:
+            _candidates, result = _find_without_a_guide(image)
+        except FinderError as error:
+            self.assertTrue(str(error))
+        else:
+            self.assertFalse(result.ordered, "pure noise must not give a lattice")
 
-    def test_flat_image_says_no_size_gives_an_array(self) -> None:
-        diagnostics: dict = {}
-        self.assertIsNone(find_array(np.full((300, 400), 1000.0, dtype=np.float32), diagnostics=diagnostics))
-        self.assertIn("any spot size", diagnostics["reason"])
-
-    def test_a_given_diameter_skips_the_scan(self) -> None:
-        image, _truth = _array_image()
-        diagnostics: dict = {}
-        self.assertIsNotNone(find_array(image, prior=ArrayPrior(diameter_px=24.0), diagnostics=diagnostics))
-        self.assertNotIn("size_scan", diagnostics)
-
-
-class LatticeNodesTest(unittest.TestCase):
-    def test_row_major_order(self) -> None:
-        nodes = lattice_nodes(2, 3, (10.0, 20.0), (5.0, 0.0), (0.0, 7.0))
-        self.assertEqual(nodes.shape, (6, 2))
-        np.testing.assert_allclose(nodes[0], (10.0, 20.0))
-        np.testing.assert_allclose(nodes[2], (20.0, 20.0))  # end of row 0
-        np.testing.assert_allclose(nodes[3], (10.0, 27.0))  # start of row 1
-
-    def test_needs_at_least_one_row_and_column(self) -> None:
-        with self.assertRaises(ValueError):
-            lattice_nodes(0, 3, (0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
+    def test_a_flat_image_says_no_spot_size_was_found(self) -> None:
+        with self.assertRaises(FinderError) as caught:
+            find_candidates(np.full((300, 400), 1000.0, dtype=np.float32), (), FinderSettings())
+        self.assertIn("any spot size", str(caught.exception))
 
 
 if __name__ == "__main__":

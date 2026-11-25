@@ -293,9 +293,9 @@ class ToolboxTimelineTest(unittest.TestCase):
         self.toolbox.make_layout_point_individual(3)  # no point
         self.assertFalse(undo_manager.can_undo)
 
-    def test_refine_over_an_individual_point_with_persistent_scope_goes_through(self) -> None:
+    def test_a_persistent_edit_over_an_individual_point_goes_through(self) -> None:
         self.toolbox.move_roi(2, 45.0, 10.0, cube=5, scope=SCOPE_INDIVIDUAL)
-        self.toolbox.refine_rois({1: (11.0, 10.0, 20.0, 28.0, 40.0)}, cube=5, scope=SCOPE_PERSISTENT)  # two writes, one undo step
+        self.toolbox.translate_rois((1,), 1.0, 0.0, cube=5, scope=SCOPE_PERSISTENT)  # two writes, one undo step
         self.assertEqual(self.toolbox.layout_points()[5].kind, SCOPE_PERSISTENT)
         self.assertEqual([self.x(2, 6), self.x(1, 6)], [45.0, 11.0])
         undo_manager.undo()
@@ -331,11 +331,11 @@ class ToolboxTimelineTest(unittest.TestCase):
         self.assertEqual(self.toolbox.roi_by_id(1).area_roi_id, 1)  # ROI 2 became 1
         self.assertEqual([self.x(1, c) for c in (4, 5)], [40.0, 45.0])
 
-    def test_refine_rois_writes_a_timeline_change(self) -> None:
-        self.toolbox.refine_rois({1: (11.0, 10.5, 22.0, 30.0, 40.0)}, cube=4)
+    def test_a_move_on_a_later_cube_writes_a_timeline_change(self) -> None:
+        self.toolbox.translate_rois((1,), 1.0, 0.5, cube=4)
         g = self.toolbox.geometry_at(1, 4)
-        self.assertEqual((g.center_x, g.shape.diameter_px, ring_diameters(g.shape, g.border)[0]), (11.0, 22.0, 30.0))
-        self.assertEqual(self.toolbox.geometry_at(1, 3).shape.diameter_px, 20.0)
+        self.assertEqual((g.center_x, g.center_y), (11.0, 10.5))
+        self.assertEqual(self.toolbox.geometry_at(1, 3).center_x, 10.0)
         undo_manager.undo()
         self.assertFalse(self.toolbox.has_timeline())
         self.assertFalse(undo_manager.can_undo)

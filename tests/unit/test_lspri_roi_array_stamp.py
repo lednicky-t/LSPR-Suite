@@ -1,4 +1,4 @@
-"""`RoiToolbox.stamp_array` (manual array, Array*): copies of the selection on the other lattice nodes, one recipe, one undo step."""
+"""`RoiToolbox.stamp_array` (manual array, Array): copies of the selection on the other lattice nodes, one recipe, one undo step."""
 
 from __future__ import annotations
 

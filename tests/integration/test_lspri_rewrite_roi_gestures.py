@@ -46,6 +46,7 @@ try:
         DELETE,
         DESELECT,
         GROUP,
+        SELECT_ARRAY,
         SELECT_GROUP,
         UNGROUP,
         RoiMenuChoice,
@@ -483,6 +484,71 @@ class RoiGesturesTest(unittest.TestCase):
         self.assertEqual(self.selection.selected_roi_ids(), frozenset({1, 2}))
         menu = self.right_click(20.0, 20.0, None)
         self.assertTrue(menu.call_args.kwargs["clicked_group_fully_selected"])
+
+    def test_menu_select_whole_array_selects_every_member_of_the_clicked_rois_array(self) -> None:
+        from lspr_imaging_app.domain.roi_model import RoiArrayGroup
+
+        self.roi_toolbox._array_groups["array_1"] = RoiArrayGroup(  # (a recipe holding ROIs 1 and 2; how arrays are made is tested with Array)
+            array_id="array_1", label="A", rows=1, cols=2, spacing_x_px=1.0, spacing_y_px=1.0, anchor_x_px=0.0, anchor_y_px=0.0, member_area_roi_ids=[1, 2]
+        )
+        menu = self.right_click(60.0, 45.0, None)  # ROI 3: in no array
+        self.assertIsNone(menu.call_args.kwargs["clicked_array"])
+        self.selection.set_roi_selection({3})
+        menu = self.right_click(20.0, 20.0, RoiMenuChoice(SELECT_ARRAY))  # ROI 1
+        self.assertEqual(self.selection.selected_roi_ids(), frozenset({1, 2}))
+        menu = self.right_click(20.0, 20.0, None)
+        self.assertEqual(menu.call_args.kwargs["clicked_array"], 2)
+        self.assertTrue(menu.call_args.kwargs["clicked_array_fully_selected"])
+
+    def test_the_array_sections_reorder_button_renumbers_from_the_picked_corner(self) -> None:
+        """2026-11-25: one icon in the Array row; its tick reports (by, start_x, start_y) and the ROIs take their numbers again in that order."""
+        tab = self.panel._roi_tab
+        button = tab._reorder_button
+        self.assertFalse(button.icon().isNull())
+        self.assertIsNotNone(button.menu())
+        said: list[str] = []
+        tab.status.connect(said.append)
+        button.picker.set_numbering("rows", 1.0, 1.0)  # from the bottom right, row by row
+        button.apply_button.click()
+        self.assertEqual(self.centre(1), (60.0, 45.0))
+        self.assertEqual(self.centre(3), (20.0, 20.0))
+        self.assertIn("all ROIs", said[-1])
+        self.assertIn("bottom-right", said[-1])
+        undo_manager.undo()
+        self.assertEqual(self.centre(1), (20.0, 20.0))
+
+    def test_the_reorder_icon_has_no_dropdown_arrow(self) -> None:
+        self.assertIn("menu-indicator", self.panel._roi_tab._reorder_button.styleSheet())
+        self.assertIn("image: none", self.panel._roi_tab._reorder_button.styleSheet())
+
+    def test_the_reorder_preview_shows_the_new_numbers_while_the_pickup_is_open(self) -> None:
+        """2026-11-25: live preview of the labels; the real ones are muted under it, and nothing is renumbered until the tick."""
+        button, preview = self.panel._roi_tab._reorder_button, self.panel._reorder_preview
+        real = self.panel._roi_overlay.label_item
+        self.assertFalse(preview.is_showing())
+        button.popup_menu.aboutToShow.emit()  # (the pick-up opened; numbering = rows from the top left: ROI numbers stay as they are)
+        self.assertEqual([entry[3] for entry in preview.labels()], ["1", "2", "3"])
+        button.picker.set_numbering("rows", 1.0, 1.0, emit=True)  # from the bottom right: ROI 3 (60, 45) would become 1, ROI 1 would become 3
+        self.assertEqual([entry[3] for entry in preview.labels()], ["3", "2", "1"])
+        xs = [round(entry[0] - CELL_OFFSET, 3) for entry in preview.labels()]
+        self.assertEqual(xs, [20.0, 40.0, 60.0], "each new number stands on its own ROI")
+        self.assertEqual(real._muted, frozenset({0, 1, 2}))
+        self.assertEqual(self.centre(1), (20.0, 20.0), "nothing is renumbered by looking")
+        button.popup_menu.aboutToHide.emit()
+        self.assertFalse(preview.is_showing())
+        self.assertEqual(real._muted, frozenset())
+
+    def test_the_reorder_preview_covers_only_the_selected_rois(self) -> None:
+        button, preview = self.panel._roi_tab._reorder_button, self.panel._reorder_preview
+        self.selection.set_roi_selection({1, 3})
+        button.picker.set_numbering("rows", 1.0, 1.0)
+        button.popup_menu.aboutToShow.emit()
+        self.assertEqual({round(entry[0] - CELL_OFFSET, 3): entry[3] for entry in preview.labels()}, {20.0: "3", 60.0: "1"})
+        self.assertEqual(self.panel._roi_overlay.label_item._muted, frozenset({0, 2}))
+        self.selection.set_roi_selection({1})  # fewer than two: nothing to preview
+        button.picker.set_numbering("rows", 0.0, 0.0, emit=True)
+        self.assertFalse(preview.is_showing())
+        button.popup_menu.aboutToHide.emit()
 
     def test_menu_delete_removes_the_selected_rois(self) -> None:
         self.selection.set_roi_selection({1, 2})

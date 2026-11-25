@@ -715,6 +715,21 @@ class ContextMenuTest(unittest.TestCase):
         menu, _parent = self._build(selected_count=1, clicked_group=("G", 3))
         self.assertIn('Select whole group "G" (3 ROIs)', self._texts(menu))
 
+    def test_select_whole_array_is_offered_for_an_array_roi_until_every_member_is_selected(self) -> None:
+        """2026-11-25 (maintainer): like Select whole group, for the array the clicked ROI belongs to; left out while locked."""
+        menu, _parent = self._build(selected_count=1, clicked_array=6)
+        self.assertIn("Select whole array (6 ROIs)", self._texts(menu))
+        self.assertFalse(self._entry(menu, "Select whole array (6 ROIs)").icon().isNull())
+        menu, _parent = self._build(selected_count=1, clicked_array=6, clicked_group=("G", 3))
+        texts = self._texts(menu)
+        self.assertEqual(texts.index("Select whole array (6 ROIs)"), texts.index('Select whole group "G" (3 ROIs)') + 1)
+        menu, _parent = self._build(selected_count=6, clicked_array=6, clicked_array_fully_selected=True)
+        self.assertFalse([t for t in self._texts(menu) if t.startswith("Select whole array")])
+        menu, _parent = self._build(selected_count=1, clicked_array=6, locked=True)
+        self.assertFalse([t for t in self._texts(menu) if t.startswith("Select whole array")])
+        menu, _parent = self._build(selected_count=1)
+        self.assertFalse([t for t in self._texts(menu) if t.startswith("Select whole array")])
+
     def test_ungroup_and_add_to_group_need_a_grouped_roi_and_a_group(self) -> None:
         menu, _parent = self._build(selected_count=1)
         self.assertNotIn("Ungroup", self._texts(menu))

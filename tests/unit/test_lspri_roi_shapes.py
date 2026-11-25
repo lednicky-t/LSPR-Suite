@@ -415,14 +415,6 @@ class ToolboxShapeTests(unittest.TestCase):
         self.assertEqual(report.mask_shapes_lost, (roi_id,))
         self.assertIs(self._roi(roi_id).shape.mask, shifted)  # left as it was, not emptied
 
-    def test_place_array_gives_each_roi_its_ring_as_a_border(self) -> None:
-        ids = self.toolbox.place_array(
-            [(20.0, 20.0), (60.0, 20.0)], [20.0, 24.0], [28.0, 30.0], [36.0, 44.0], rows=1, cols=2, pitch_x_px=40.0, pitch_y_px=40.0
-        )
-        self.assertEqual(self._ring(ids[0]), (28.0, 36.0))
-        self.assertEqual(self._ring(ids[1]), (30.0, 44.0))
-        self.assertEqual(self._roi(ids[1]).shape, Circle(24.0))
-
 
 if __name__ == "__main__":
     unittest.main()

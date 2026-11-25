@@ -104,13 +104,6 @@ class RenumberSignalContractTest(unittest.TestCase):
         self.toolbox.delete_rois((1, 2, 3))
         self.assertEqual(self.maps, [{}])
 
-    def test_a_fresh_detection_announces_an_empty_map_both_ways(self) -> None:
-        self.toolbox.detect_rois([_roi(1, 50.0, 50.0), _roi(2, 60.0, 60.0)])
-        self.assertEqual(self.maps, [{}])
-        undo_manager.undo()
-        self.assertEqual(self.maps, [{}, {}])
-        self.assertEqual(sorted(roi.area_roi_id for roi in self.toolbox.rois()), [1, 2, 3])
-
 
 if __name__ == "__main__":
     unittest.main()
