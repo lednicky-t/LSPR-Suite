@@ -1,101 +1,72 @@
 # CLAUDE.md — LSPR Suite
 
-Repo map, commands and rules for AI coding agents. Situational detail loads on demand: path-scoped `.claude/rules/*.md` (gui, acq-runtime, numerics, hdf5, `lspri-*`), skills, `docs/`, and each app's own `CLAUDE.md`. This file is the authoritative rule set; `AGENTS.md` is a human-facing pointer.
-
-Abbreviations: **CC** = chromatic correction, **wl** = wavelength. Expand on first use unless clearly known.
+Authoritative agent rules. Detail loads on demand: path-scoped `.claude/rules/*.md`, skills, `docs/`, each app's `CLAUDE.md`. Abbreviations: **CC** = chromatic correction, **wl** = wavelength.
 
 ## Who You're Working With
 
-The maintainer is a **scientist, not a professional software developer**: deep in LSPR and nano-optics, still learning to code. This changes communication, not engineering standards.
+The maintainer is a **scientist, not a professional developer**: deep in LSPR and nano-optics, still learning to code. This changes communication, not standards.
 
-- **Explain *why* in plain language**; define a technical term the first time.
-- **Teach as you go**: a one-line "what this means" for an unfamiliar library feature or pattern.
+- **Explain *why* in plain language**; define a technical term the first time; a one-line "what this means" for unfamiliar library features or patterns.
 - **Be a proactive advisor**: flag anything cleaner, safer, faster or more correct, with the trade-off; let the maintainer decide. Don't silently change unrelated things.
 - **Flag your own uncertainty**: subtle mistakes may not be caught in review.
 
 ## Match Effort to Task Size
 
-- **Small / cosmetic** (icons, labels, colors, spacing, moving a widget): terse. No teaching notes, design write-up or priority label. Reply with file:line, which repo, what to look at. See `/quick`.
-- **Normal code changes**: brief plain-language "why"; define a new term once; end with what changed, where, how to verify.
+- **Small / cosmetic** (icons, labels, colors, spacing, moving a widget): terse; no teaching notes or write-ups. Reply with file:line, which repo, what to look at. See `/quick`.
+- **Normal changes**: brief "why"; end with what changed, where, how to verify.
 - **Science, data formats, threading, architecture, shared packages**: full explanation, check in first, name the engineering priority served.
 
 ## Usage Efficiency
 
-- While iterating, run only the relevant test file(s); run the full suite once near the end, before calling work done or committing.
-- Don't re-read a file you just edited. Keep tool output lean (targeted grep/read; pass/fail counts). Avoid subagents for small inline work.
-- Suggest `/clear` when a task is finished or the next is unrelated.
-- After non-trivial exploration or a non-obvious design decision, save a short summary (what, `file:line`, why) in the app's `docs/` folder. Skip for small changes.
+- Iterate with the relevant test file(s) only, not after every fix; run the scoped suite once near the end, before done or commit. The full suite only when `packages/` or several apps changed; otherwise the app's subset (`--pattern "test_*lspri*.py"`).
+- Don't re-read a file you just edited. Lean tool output (targeted grep/read, pass/fail counts). No subagents for small inline work. Suggest `/clear` between unrelated tasks.
+- After non-trivial exploration or a non-obvious decision, save a short summary (what, `file:line`, why) in the app's `docs/`.
 
-## Apps
+## Repo Map
 
-| App | Path | Package | Entry point |
-|-----|------|---------|-------------|
+| App | Path | Package | Entry |
+|-----|------|---------|-------|
 | singleLSPR Acquisition | `apps/sLSPR/acq` | `lspr_app` | `lspr-acquisition` |
-| singleLSPR Evaluation | `apps/sLSPR/eva` | `lspr_single_evaluation` | `lspr-single-evaluation` |
+| singleLSPR Evaluation | `apps/sLSPR/eva` | `lspr_single_evaluation` | `lspr-single-evaluation`; placeholder, leave out of cross-app work |
 | LSPRimaging Evaluation | `apps/LSPRi/eva` | `lspr_imaging_app` | `lspri-evaluation` |
-| LSPRimaging Acquisition | `apps/LSPRi/acq` | `lspri_acq_app` | `lspri-acquisition` |
-| Suite Launcher | `apps/suite_launcher` | `suite_launcher` | `lspr-suite` |
+| LSPRimaging Acquisition | `apps/LSPRi/acq` | `lspri_acq_app` | `lspri-acquisition`; early scaffold on `lspr-acq-shell`, launcher card disabled |
+| Suite Launcher | `apps/suite_launcher` | `suite_launcher` | `lspr-suite` (in this repo) |
 
-All but the launcher are git submodules. LSPRi Acquisition is an early scaffold on `lspr-acq-shell` (launcher card disabled). **sLSPR Evaluation is a placeholder: leave it out of cross-app work** (still unpinned). App source: `apps/<app>/src/<package>/`; read the app's `docs/` before changing its architecture. Main windows are split across several files: check all before assuming how a feature is wired.
+Shared packages (`packages/`): `lspr_core` (domain models, schema identity, plan steps, units, `perf`), `lspr_io` (HDF5/session helpers, schema stamping), `lspr_ui` (theme, icons, bootstrap), `lspr_acq_shell` (live-acquisition shell). Cross-app logic goes there. Icons: `lspr_ui.load_tabler_icon()`; read `packages/lspr_ui/ICONS.md` before adding one.
 
-## Shared Packages
+App source: `apps/<app>/src/<package>/`; read the app's `docs/` before changing its architecture. Main windows span several files: check all before assuming wiring. Setup and launcher profiles: `README.md`; VS Code runs each app's `run.py`.
 
-| Package | Path | Purpose |
-|---------|------|---------|
-| `lspr-core` | `packages/lspr_core` | Domain models, schema identity, plan steps, units; `lspr_core.perf` (machine probe, worker counts) |
-| `lspr-io` | `packages/lspr_io` | HDF5/session helpers, schema stamping, version readers |
-| `lspr-ui` | `packages/lspr_ui` | Qt theme tokens, icon helpers, app bootstrap |
-| `lspr-acq-shell` | `packages/lspr_acq_shell` | Shared live-acquisition shell |
+## Tests and Tools
 
-Cross-app logic goes here, not in app packages. Icons: `lspr_ui.load_tabler_icon()` from vendored `icon_assets/`; read `packages/lspr_ui/ICONS.md` before adding one.
+- `tests/unit/` (pure logic) and `tests/integration/` (Qt, HDF5, device mock); no hardware needed. Float assertions use tolerances.
+- Run `python tools/run_tests_per_file.py` (one process per file; `--pattern "test_*lspri*.py"`; CI `--shard K/N`). Never all files in one process (`docs/test_platform_and_ci_failures_2026-10-18.md`).
+- Every PyPI dependency needs floor and ceiling (`dependency-pinning` skill; internal `lspr-*` exempt).
+- Never run `radon`, `pytest-cov`, `vulture`, `import-linter` or `mypy` unasked: name tool and reason, wait (`docs/code_health_tools.md`).
 
-## Setup, Running, Tests
+## Submodules
 
-- Setup, launcher profiles: `README.md`. Recommended entry point `lspr-suite`; VS Code "Run Python File" uses each app's `run.py`.
-- Every PyPI dependency in a `pyproject.toml` needs a floor and a ceiling (internal `lspr-*` exempt): `dependency-pinning` skill.
-- Tests: `tests/unit/` (pure logic) and `tests/integration/` (Qt, HDF5, device mock); all pass without hardware. Use tolerances for floats. Run with `python tools/run_tests_per_file.py` (one process per file; `--pattern "test_*lspri*.py"` narrows; CI shards with `--shard K/N`). Never run all files in one process. Details: `docs/test_platform_and_ci_failures_2026-10-18.md`.
-- Never run `radon`, `pytest-cov`, `vulture`, `import-linter` or `mypy` on your own initiative: name the tool and reason, wait for a go-ahead (`docs/code_health_tools.md`).
+Apps (not the launcher) are submodules with their own history. Edit inside, commit and push there, then `git add apps/<app>` and commit "bump <app> submodule" here. Never commit app changes to the umbrella. **Say which repo a change lands in before committing.**
 
-## Submodule Workflow
-
-Each app repo has its own git history; editing the folder is not enough. Edit inside the submodule, commit and push from inside it, then in this repo `git add apps/<app>` and commit "bump <app> submodule". Never commit app changes directly to the umbrella repo. **Tell the maintainer which repo a change lands in before committing.**
-
-## Config Files
-
-- `lspr_settings.json` and `apps/sLSPR/eva/lspr_evaluation_settings.json` are gitignored runtime/UI state: never commit.
-- `docs/schemas/`: HDF5 format contracts. Authoritative; do not change lightly.
+`lspr_settings.json` and `apps/sLSPR/eva/lspr_evaluation_settings.json` are gitignored state: never commit. `docs/schemas/` (HDF5 contracts) is authoritative.
 
 ## Never Without Explicit Approval
 
-Check in and wait for a yes before:
-
-- Deleting data or files; rewriting git history; committing app changes to the wrong repo.
+- Deleting data or files; rewriting git history; committing to the wrong repo.
 - Changing a saved data format without a migration plan.
-- Rewriting application architecture.
-- Removing measurement workflows; adding a large new dependency without explaining why.
-- Hiding errors from users, failing silently, or optimizing in ways that make scientific code hard to verify.
-- Driving a GUI app yourself (screenshots, pywinauto). Default to static checks; offer manual checking.
+- Rewriting application architecture; removing measurement workflows; adding a large dependency without explaining why.
+- Hiding errors, failing silently, or optimizing in ways that make scientific code hard to verify.
+- Driving a GUI app yourself (screenshots, pywinauto); default to static checks, offer manual checking.
 
-Also check in first when a change touches a hard rule, a file format or HDF5 schema, a scientific calculation or its results, a shared `packages/` module, multiple submodules, a public function signature, or anything you are unsure about.
+Also check in first for: hard rules, file formats / HDF5 schemas, scientific calculations or results, shared `packages/`, multiple submodules, public signatures, or anything you're unsure about.
 
 ## Engineering Priority Order
 
-From `docs/engineering_policy.md`. Don't reorder. When goals conflict, prefer the higher one and name it.
-
-1. Correctness and scientific validity.
-2. Data integrity and reproducibility.
-3. Maintainability and readability.
-4. Modularity and testability.
-5. Performance and memory efficiency.
-6. GUI polish and user convenience.
-
-Don't make code clever if it becomes hard for scientists or future agents to understand.
+(`docs/engineering_policy.md`; don't reorder; name which one a change serves.) 1. Correctness and scientific validity. 2. Data integrity and reproducibility. 3. Maintainability and readability. 4. Modularity and testability. 5. Performance and memory. 6. GUI polish and convenience. No clever code that scientists or future agents can't follow.
 
 ## Common Pitfalls
 
-- **Raw data is sacred.** Never overwrite raw measurement data; derived results go in separate groups or files.
-- **Keep long work off the GUI thread** (acquisition, loading, fitting, image processing, saving). Acquisition workers: `gui/workers.py`. In LSPRi, dataset/zarr work uses `threading.Thread`, never `QThreadPool` (see its CLAUDE.md).
-- **Keep science out of GUI code.** Analysis functions must work without a running Qt application.
-- **Parallel work:** a fan-out (export, scan, batch analysis, bulk reads) gets its worker count from `lspr_core.perf` (`get_runtime().begin("domain.task", ...)`), never a hard-coded number or bare `os.cpu_count()`. Output must be identical at any worker count (pinned by a test); never tune what is saved. Full rules: `performance-work` skill, `docs/performance_tuning.md`.
-- **Numeric changes need a before/after comparison** on realistic data, with the quantified impact even if negligible (`.claude/rules/numerics.md`).
-- **HDF5 files** follow `docs/schemas/hdf_standard.md` (`.claude/rules/hdf5.md`).
+- **Raw data is sacred**: never overwrite it; derived results go in separate groups or files.
+- **Long work off the GUI thread** (acquisition, loading, fitting, image processing, saving, file I/O): design it off-thread from the start, never "cheaper but still on the GUI thread". Acquisition workers: `gui/workers.py`. LSPRi dataset/zarr work: `threading.Thread`, never `QThreadPool`.
+- **Science out of GUI code**: analysis works without a running Qt app.
+- **Parallel fan-out** takes its worker count from `lspr_core.perf` (`get_runtime().begin(...)`), never hard-coded or bare `os.cpu_count()`; identical output at any count (pinned by a test); never tune what is saved. Full rules: `performance-work` skill.
+- **Numeric changes need a before/after comparison** on realistic data with quantified impact (`.claude/rules/numerics.md`). HDF5 follows `docs/schemas/hdf_standard.md`.

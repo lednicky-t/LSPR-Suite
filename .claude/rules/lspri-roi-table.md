@@ -1,17 +1,20 @@
 ---
 paths:
   - "apps/LSPRi/eva/src/lspr_imaging_app/panels/roi_table/**"
-  - "apps/LSPRi/eva/src/lspr_imaging_app/selection/**"
+  - "apps/LSPRi/eva/src/lspr_imaging_app/selection/step_table_module.py"
+  - "apps/LSPRi/eva/src/lspr_imaging_app/selection/sensorgram_axis.py"
 ---
 
 # LSPRi: ROI / Groups table
 
-Moved verbatim from `apps/LSPRi/eva/CLAUDE.md` (2026-11-25). Docs: `docs/roi_table_performance_2026-11-19.md` (tool `tools/roi_table_timing.py`), `docs/step_table_2026-11-05.md` (step columns), `docs/roi_resize_drag_cost_2026-11-19.md`. Rim columns 5-7 (Type): see `lspri-scan-roi.md`.
+Docs: `docs/roi_table_performance_2026-11-19.md` (tool `tools/roi_table_timing.py`), `docs/step_table_2026-11-05.md`, `docs/roi_resize_drag_cost_2026-11-19.md`.
 
-- **Never ask the table's selection model for `selectedRows()` / `selectedIndexes()`** (they call the Python `flags()` of every cell of every selected row: 70 ms to select 160 ROIs): read `selection()` ranges (`RoiTablePanel._view_selection`) and select runs of rows (`RoiTreeModel.roi_index_runs`). A rebuild that lists the same rows in the same groups **updates in place** (`RoiTreeModel._adopt`, `dataChanged` with `VALUES_ONLY_ROLE`, no reset: groups, selection, scroll and Qt's current row stay); `RoiTablePanel._rebuild` re-applies view state only after `model.take_reset_flag()` or with `restore_view=True` (a change whose point is view state, like the Groups-only lock). One `PAINT_ROLE` answers what a ROI cell needs, not one role per fact. A speed-only change must keep the pixel hashes the timing tool prints. DEBUG stage records (one per unit of work: `roi_table.rebuild`, `.fit_step_columns`, `.step_state`, `.slow_paint`, built with `applog.StageTimer`) say where a slow rebuild spent its time: read the log with `python -m lspr_imaging_app.applog grep <file> --event roi_table.rebuild`; a new stage of the rebuild gets a `stages.mark(...)`.
-- **One `SensorgramAxis` per settings module, always made with `SensorgramAxis.of`**. `SensorgramAxis` and `StepTableModule` live in `selection/`.
-- Comparison column titles are formulas with real subscripts (`step_columns.subscript_runs`), written only by `step_table_module.compare_title`, never with underscores; a step's title is the user's note and is never parsed; CSV labels stay ASCII.
-- A "which rows are on screen" answer is asked again after the table's own rebuild (`RoiTablePanel._rebuild`), not only after the module's signals.
-- **Frozen columns:** read `panels/roi_table/view.py`'s module docstring before touching `drawRow`, `indexAt`, `visualRect` or the delegate's column positions (they stay relative to the cell's own rectangle). A coloured step header is drawn by hand and must follow the header style sheet in `panel.py`.
-- **`RoiTreeView.refresh_column_visibility` is the only code that shows or hides a column**; never call `setColumnHidden` elsewhere. Fixed widths only through `RoiTreeView.set_fixed_column_width`.
-- **While a ROI is being dragged the table waits** (`HiddenPanelGate.set_held`, fed by `ImagePanel.roi_edit_running`; 2026-11-19): a debounce timer fires at every pause of the mouse, i.e. in the middle of the drag, and the next move waited ~0.5 s behind the table's rebuild. A new panel that rebuilds on ROI changes does the same.
+- **Never call `selectedRows()` / `selectedIndexes()`** on the selection model (70 ms for 160 ROIs): read `selection()` ranges (`RoiTablePanel._view_selection`), select runs (`RoiTreeModel.roi_index_runs`).
+- A rebuild with the same rows in the same groups **updates in place** (`RoiTreeModel._adopt`, `dataChanged` + `VALUES_ONLY_ROLE`, no reset). `_rebuild` re-applies view state only after `model.take_reset_flag()` or with `restore_view=True`. One `PAINT_ROLE` per ROI cell. A speed-only change keeps the timing tool's pixel hashes. Slow-rebuild stages: DEBUG records via `applog.StageTimer` (`roi_table.rebuild` etc.; `python -m lspr_imaging_app.applog grep <file> --event roi_table.rebuild`); a new stage gets `stages.mark(...)`.
+- **While a ROI is dragged the table waits** (`HiddenPanelGate.set_held` fed by `ImagePanel.roi_edit_running`); any panel rebuilding on ROI changes does the same.
+- "Which rows are on screen" is asked again after the table's own rebuild, not only after module signals.
+- **Frozen columns:** read `panels/roi_table/view.py`'s docstring before touching `drawRow`, `indexAt`, `visualRect` or delegate column positions. Coloured step headers are hand-drawn and follow the header style sheet in `panel.py`.
+- **`RoiTreeView.refresh_column_visibility` is the only code that shows / hides columns** (never `setColumnHidden` elsewhere); fixed widths only via `set_fixed_column_width`.
+- Columns 5 / 6 = rim offset `d` (from the shape edge, negative = inside) / thickness `w` for every shape (`rows.COLUMN_RIM_OFFSET / COLUMN_RIM_THICKNESS`, `has_cell`, `RoiToolbox.set_rim`); blank when no rim. Column 7 **Type**: `rows.icon_of` / `kind_of` pick pictogram and colour (green rim or links, amber no reference, blue reference in use, gray unused; `type_icons.py`); the first column's dot keeps the ROI colour; `row.shape` stays the editing key.
+- **One `SensorgramAxis` per settings module, made with `SensorgramAxis.of`**; it and `StepTableModule` live in `selection/`.
+- Comparison column titles use real subscripts (`step_columns.subscript_runs`), written only by `step_table_module.compare_title`; a step title is the user's note, never parsed; CSV labels stay ASCII.

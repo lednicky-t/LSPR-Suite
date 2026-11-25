@@ -2,7 +2,7 @@
 
 Maintainer request: the suite will run on computers much faster (or slower) than the development laptop, so parallel work must tune itself,
 and the rule must be written down so future building stays performance-aware. This is the design record and the recipe. The code is
-`packages/lspr_core/src/lspr_core/perf/`; the rule is one bullet in the root `CLAUDE.md` ("Parallel work is performance-aware").
+`packages/lspr_core/src/lspr_core/perf/`; the rule is one bullet in the root `CLAUDE.md` ("Common Pitfalls", parallel fan-out), with the full rules in the `performance-work` skill.
 
 ## The rule
 
