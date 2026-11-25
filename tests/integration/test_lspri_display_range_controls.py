@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 import unittest
 
-from PyQt6 import QtWidgets
+from PyQt6 import QtCore, QtWidgets
 from PyQt6.QtGui import QFontMetrics
 
 _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -187,12 +187,14 @@ class DisplayRangeControlsTest(unittest.TestCase):
             edit.setText("99999")
             self.assertEqual(edit.text(), "99999")
 
-    def test_the_group_in_the_ribbon_is_just_two_buttons(self) -> None:
+    def test_the_group_in_the_ribbon_is_just_one_button(self) -> None:
         """The View tab only has ~88 px of room before it sets the Image panel's minimum width (measured
         2026-10-14, real fonts: number fields in the row made the panel 80 px wider, spin boxes 217 px), so the
-        row holds two 28 px buttons and the numbers live in a popup."""
+        numbers live in a popup. Since 2026-11-23 the row is only the AR / MR switch: the separate "..." button
+        is gone and the side ribbon opens `range_menu` on a right-click of the switch."""
         self.assertLessEqual(self.controls.minimumSizeHint().width(), 64)
-        self.assertIs(self.controls._more.menu(), self.controls._menu)
+        self.assertEqual(self.controls.findChildren(QtWidgets.QToolButton, options=QtCore.Qt.FindChildOption.FindDirectChildrenOnly), [self.controls._toggle])
+        self.assertIs(self.controls.range_menu, self.controls._menu)
 
     def test_the_numbers_and_fit_button_are_in_the_popup_panel(self) -> None:
         actions = self.controls._menu.actions()
@@ -201,8 +203,8 @@ class DisplayRangeControlsTest(unittest.TestCase):
         for widget in (self.controls._low_edit, self.controls._high_edit, self.controls._fit, self.controls._full):
             self.assertTrue(panel.isAncestorOf(widget))
 
-    def test_both_buttons_are_real_buttons_with_tooltips_and_icons(self) -> None:
-        for button in (self.controls._toggle, self.controls._more, self.controls._fit, self.controls._full):
+    def test_the_buttons_are_real_buttons_with_tooltips_and_icons(self) -> None:
+        for button in (self.controls._toggle, self.controls._fit, self.controls._full):
             self.assertIsInstance(button, QtWidgets.QToolButton)
             self.assertTrue(button.toolTip())
             self.assertFalse(button.icon().isNull())

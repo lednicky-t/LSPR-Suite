@@ -1158,70 +1158,56 @@ class RewriteImagePanelTest(unittest.TestCase):
     # `mask_alpha_slider`; moved into its own "Mask" ribbon tab 2026-10-01,
     # maintainer request - keep the mask icons out of "Image tools") -------
 
-    def test_mask_overlay_controls_live_in_the_mask_tab(self) -> None:
-        """Own "Mask" tab (index 1, right after "Image tools") - no longer
-        sharing "Image tools" with Transforms behind a vertical divider.
-        One level removed from the page itself (wrapped in its own
-        `_labeled_icon_group`, see the "State"/"Visibility" caption test
-        below), but still only ever a grandchild of this tab's page, never
-        of any other tab."""
+    def test_mask_overlay_controls_are_a_hidden_twin_in_the_mask_tab(self) -> None:
+        """Since 2026-11-23 the Mask tab has no "Visibility" group: the View rail beside the image has the
+        mask's show / colour / transparency. The tab keeps the controls as the hidden twin the View rail
+        mirrors and the Layers button reads; they belong to the Mask tab's page and are never shown there."""
         from lspr_imaging_app.panels.image.mask_overlay_controls import MaskOverlayControls
 
         controls = self.panel._mask_tab.overlay_controls
         self.assertIsInstance(controls, MaskOverlayControls)
         page = self._ribbon_page("Mask")
-        self.assertIs(controls.parentWidget().parentWidget(), page)
+        self.assertIs(controls.parentWidget(), page)
+        self.assertTrue(controls.isHidden())
+        self.assertEqual(page.layout().indexOf(controls), -1)
 
-    def test_mask_scope_toggle_sits_left_of_a_divider_before_the_overlay_controls(self) -> None:
-        """Maintainer request, 2026-10-02: "put them on the left side and
-        separate from rest by | line" - the Persistent/Individual toggle's
-        group, then the divider, then the overlay controls' group, left to
-        right, all inside the same "Mask" tab page."""
+    def test_mask_scope_toggle_comes_first_left_of_a_divider(self) -> None:
+        """Maintainer request, 2026-10-02: "put them on the left side and separate from rest by | line"; since
+        2026-11-23 Scope is the first group of the Mask tab (commit "Scope first in Mask and ROIs tabs"): the
+        Persistent/Individual toggle's group, then a divider, then the Selection group."""
         from lspr_imaging_app.panels.image.mask_scope_toggle import MaskScopeToggle
 
-        toggle = self.panel._mask_tab._scope_toggle
+        tab = self.panel._mask_tab
+        toggle = tab._scope_toggle
         self.assertIsInstance(toggle, MaskScopeToggle)
         page = self._ribbon_page("Mask")
-        self.assertIs(self.panel._mask_tab._separators[1].parentWidget(), page)
+        self.assertIs(tab._separators[0].parentWidget(), page)
 
-        # Each icon widget is now wrapped in its own `_labeled_icon_group`
-        # container (the caption-below-icons group, see the "State"/
-        # "Visibility" test below) - that wrapper, not the icon widget
-        # itself, is what sits directly in the page's row.
+        # Each icon widget is wrapped in its own labelled group (caption below the icons, see the caption
+        # test below); that wrapper, not the icon widget itself, sits directly in the page's row.
         toggle_group = toggle.parentWidget()
-        overlay_group = self.panel._mask_tab.overlay_controls.parentWidget()
+        selection_group = tab.selection_actions.parentWidget()
         self.assertIs(toggle_group.parentWidget(), page)
-        self.assertIs(overlay_group.parentWidget(), page)
+        self.assertIs(selection_group.parentWidget(), page)
 
         layout = page.layout()
-        toggle_index = layout.indexOf(toggle_group)
-        separator_index = layout.indexOf(self.panel._mask_tab._separators[1])
-        overlay_index = layout.indexOf(overlay_group)
-        self.assertNotEqual(toggle_index, -1)
-        self.assertLess(toggle_index, separator_index)
-        self.assertLess(separator_index, overlay_index)
+        order = [layout.indexOf(w) for w in (toggle_group, tab._separators[0], selection_group)]
+        self.assertEqual(order, [0, 1, 2])
 
-    def test_mask_tab_groups_are_captioned_state_and_visibility(self) -> None:
+    def test_mask_tab_scope_group_is_captioned_below_its_icon(self) -> None:
         """Maintainer request, 2026-10-02: "non-intrusive labels... under
         [each group]... center of section" - a caption below each group's
         icons, not above (unlike `lspr_ui`'s `toolbarSectionTitle`
-        convention used elsewhere in the suite)."""
+        convention used elsewhere in the suite). The "Visibility" group left the tab on 2026-11-23."""
         state_label = self.panel._mask_tab._scope_label
-        visibility_label = self.panel._mask_tab._visibility_label
         self.assertEqual(state_label.text(), "Scope")
-        self.assertEqual(visibility_label.text(), "Visibility")
+        self.assertFalse(hasattr(self.panel._mask_tab, "_visibility_label"))
 
         toggle = self.panel._mask_tab._scope_toggle
         toggle_group = toggle.parentWidget()
         self.assertIs(state_label.parentWidget(), toggle_group)
         group_layout = toggle_group.layout()
         self.assertLess(group_layout.indexOf(toggle), group_layout.indexOf(state_label))
-
-        overlay_controls = self.panel._mask_tab.overlay_controls
-        overlay_group = overlay_controls.parentWidget()
-        self.assertIs(visibility_label.parentWidget(), overlay_group)
-        overlay_group_layout = overlay_group.layout()
-        self.assertLess(overlay_group_layout.indexOf(overlay_controls), overlay_group_layout.indexOf(visibility_label))
 
     def test_mask_scope_toggle_shares_live_state_with_the_shared_mask_scope_module(self) -> None:
         """This toggle must never own its own private selection - clicking it

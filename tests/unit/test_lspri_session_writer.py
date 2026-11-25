@@ -198,5 +198,74 @@ class ChromaticEncodingTests(unittest.TestCase):
                 self.assertIsInstance(value, (int, float, str, bool, list, type(None)), f"{cls.__name__}.{f.name}: _flat_asdict copies plain values and lists only")
 
 
+class NewerSessionGuardTests(unittest.TestCase):
+    """2026-11-25: an older build reads a newer session "minus the fields it does not know", so saving it back would delete
+    what the newer build stored (LbL series, line order, spectral correction; a reference ROI would become a sample). The
+    writer refuses before it writes anything, the mask PNGs included; an older or equal session saves as before."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self._tmp.name)
+        self.state = SessionState(mask_changes=(_change(1),))
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _put_session_of_version(self, version: str) -> Path:
+        path = session_path(self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f'{{\n  "schema_name": "{session_module.SESSION_SCHEMA_NAME}",\n  "schema_version": "{version}",\n  "lbl": "from the future"\n}}',
+            encoding="utf-8",
+        )
+        return path
+
+    def _next_minor(self) -> str:
+        major, minor = session_module.SESSION_SCHEMA_VERSION.split(".")
+        return f"{major}.{int(minor) + 1}"
+
+    def test_a_newer_session_is_not_saved_over_and_nothing_is_written(self) -> None:
+        path = self._put_session_of_version(self._next_minor())
+        before = path.read_bytes()
+        with self.assertRaises(session_module.NewerSessionError) as caught:
+            save_session(self.root, self.state, NAMING)
+        self.assertIn(self._next_minor(), str(caught.exception))
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(_pngs(self.root), [], "refused before any mask PNG is written")
+
+    def test_an_older_or_equal_session_is_saved_as_before(self) -> None:
+        for version in ("1.0", "1.9", session_module.SESSION_SCHEMA_VERSION):
+            with self.subTest(version=version):
+                self._put_session_of_version(version)
+                save_session(self.root, self.state, NAMING)
+                self.assertEqual(session_module.session_file_version(session_path(self.root)), session_module.SESSION_SCHEMA_VERSION)
+
+    def test_no_session_yet_is_saved(self) -> None:
+        save_session(self.root, self.state, NAMING)
+        self.assertTrue(session_path(self.root).is_file())
+
+    def test_versions_compare_as_numbers(self) -> None:
+        with mock.patch.object(session_module, "SESSION_SCHEMA_VERSION", "1.9"):
+            self.assertTrue(session_module.is_newer_than_this_build("1.10"))
+            self.assertFalse(session_module.is_newer_than_this_build("1.9"))
+            self.assertFalse(session_module.is_newer_than_this_build("1.8"))
+        self.assertFalse(session_module.is_newer_than_this_build("not a version"))
+
+    def test_the_version_is_found_in_a_real_saved_file(self) -> None:
+        save_session(self.root, self.state, NAMING)
+        self.assertEqual(session_module.session_file_version(session_path(self.root)), session_module.SESSION_SCHEMA_VERSION)
+        self.assertIsNone(session_module.session_file_version(self.root / "nothing.json"))
+
+    def test_loading_a_newer_session_warns(self) -> None:
+        save_session(self.root, self.state, NAMING)
+        path = session_path(self.root)
+        text = path.read_text(encoding="utf-8").replace(
+            f'"schema_version": "{session_module.SESSION_SCHEMA_VERSION}"', f'"schema_version": "{self._next_minor()}"'
+        )
+        path.write_text(text, encoding="utf-8")
+        with self.assertLogs("lspr_imaging_app.storage.session", level="WARNING"):
+            self.assertIsNotNone(load_session(self.root))
+
+
 if __name__ == "__main__":
     unittest.main()

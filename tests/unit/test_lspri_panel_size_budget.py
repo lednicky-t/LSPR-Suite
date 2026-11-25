@@ -1,9 +1,12 @@
-"""A size budget for the biggest file of LSPRi Evaluation, `panels/image/panel.py` (maintainability audit 2026-11-01, item D).
+"""Size budgets for the biggest files of LSPRi Evaluation (maintainability audit 2026-11-01 item D; maintenance pass 2026-11-25).
 
-`ImagePanel` is one class of about 180 methods that share about 120 attributes, so every feature added to it makes the next change
-harder to follow. This test does not forbid growth; it makes growth a decision: when it fails, either the new code belongs in a file of its
-own (the audit lists the cleanest sections to extract: `docs/maintainability_audit_2026-11-01.md`), or the budget below is raised on
-purpose, in the same commit and with the reason in the commit message. When the class is split, LOWER the numbers to the new size.
+`ImagePanel` was one class of about 180 methods that shared about 120 attributes, so every feature added to it made the next change
+harder to follow. The 2026-11-25 maintenance pass found the same growth in three more places: `roi/toolbox.py` (`RoiToolbox`, +650 lines
+in three weeks), `app_rewrite.py` (the wiring of the whole app, +500) and `panels/roi_table/panel.py` (`RoiTablePanel`, +370).
+
+These tests do not forbid growth; they make growth a decision: when one fails, either the new code belongs in a file of its own, or the
+budget below is raised on purpose, in the same commit and with the reason in the commit message. When a file is split, LOWER its numbers
+to the new size. Each budget leaves about 3 % of room, so a small fix needs no ceremony.
 
 Static: it reads the source text and imports nothing, so it needs no Qt and no dataset.
 """
@@ -12,42 +15,67 @@ from __future__ import annotations
 
 import ast
 import unittest
+from dataclasses import dataclass
 
 from tests._paths import REPO_ROOT
 
-PANEL = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src" / "lspr_imaging_app" / "panels" / "image" / "panel.py"
-
-# Measured 2026-11-02 after split batch 3 (slider marks and slideshow settings moved out): 2,630 lines in the file, 120 methods in
-# `ImagePanel` (before the split: 3,492 and 178). About 3 % of room, so a small fix needs no ceremony.
-# 2026-11-15: the construction code (canvas, ribbon tabs and top bar, navigation bar) moved into `canvas_build.py`, `ribbon_build.py`,
-# `navigation_build.py`, the constants they share into `panel_constants.py`, and `__init__` was split into named steps: 2,093 lines, 115 methods (it was
-# 2,711 and 121 an hour before; 3,492 and 178 before the audit's item D). The budget follows the new size with about 3 % of room.
-MAX_FILE_LINES = 2150
-MAX_IMAGE_PANEL_METHODS = 118
+SRC = REPO_ROOT / "apps" / "LSPRi" / "eva" / "src" / "lspr_imaging_app"
 
 
-@unittest.skipUnless(PANEL.is_file(), "LSPRi Evaluation is not in this checkout")
-class ImagePanelSizeBudgetTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.source = PANEL.read_text(encoding="utf-8")
+@dataclass(frozen=True)
+class Budget:
+    path: str  # relative to the package
+    max_lines: int
+    cls: str | None  # the class whose methods are counted; None = the module's top-level functions
+    max_methods: int
+    note: str  # where new code should go instead
 
-    def test_the_file_stays_inside_its_line_budget(self) -> None:
-        lines = len(self.source.splitlines())
-        self.assertLessEqual(
-            lines, MAX_FILE_LINES,
-            f"panels/image/panel.py has {lines} lines, the budget is {MAX_FILE_LINES}. Put the new code in a file of its own, or raise "
-            "MAX_FILE_LINES in this test on purpose (see the docstring).",
-        )
 
-    def test_image_panel_stays_inside_its_method_budget(self) -> None:
-        tree = ast.parse(self.source)
-        image_panel = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "ImagePanel")
-        methods = sum(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in image_panel.body)
-        self.assertLessEqual(
-            methods, MAX_IMAGE_PANEL_METHODS,
-            f"ImagePanel has {methods} methods, the budget is {MAX_IMAGE_PANEL_METHODS}. Put the new behaviour in a class of its own, or "
-            "raise MAX_IMAGE_PANEL_METHODS in this test on purpose (see the docstring).",
-        )
+BUDGETS = (
+    # 2026-11-02: 2,630 lines / 120 methods after split batch 3 (3,492 / 178 before the audit's item D). 2026-11-15: the construction code
+    # moved into canvas_build.py, ribbon_build.py, navigation_build.py (2,093 / 115). Measured 2026-11-25: 2,020 / 116.
+    Budget("panels/image/panel.py", 2150, "ImagePanel", 118,
+           "a file of its own with a small builder (the pattern of panels/image/selection_tools.py)"),
+    # Measured 2026-11-25: 2,399 lines, 108 methods (1,748 lines on 2026-11-02).
+    Budget("roi/toolbox.py", 2470, "RoiToolbox", 111,
+           "a pure helper module under roi/ or domain/ that the toolbox calls (the toolbox keeps the command, undo and signal)"),
+    # Measured 2026-11-25: 2,483 lines, 47 top-level functions (1,983 lines on 2026-11-02).
+    Budget("app_rewrite.py", 2560, None, 49,
+           "a wiring helper module next to it (the pattern of the startup tracker), called from build_main_window"),
+    # Measured 2026-11-25: 1,492 lines, 97 methods (1,120 lines on 2026-11-02).
+    Budget("panels/roi_table/panel.py", 1540, "RoiTablePanel", 100,
+           "a helper in panels/roi_table/ (the pattern of freeze.py, hide_columns.py, step_controls.py)"),
+)
+
+
+def _methods(tree: ast.Module, cls: str | None) -> int:
+    body = tree.body if cls is None else next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == cls).body
+    return sum(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in body)
+
+
+@unittest.skipUnless((SRC / "app_rewrite.py").is_file(), "LSPRi Evaluation is not in this checkout")
+class SizeBudgetTests(unittest.TestCase):
+    def test_each_file_stays_inside_its_line_budget(self) -> None:
+        for budget in BUDGETS:
+            with self.subTest(path=budget.path):
+                lines = len((SRC / budget.path).read_text(encoding="utf-8").splitlines())
+                self.assertLessEqual(
+                    lines, budget.max_lines,
+                    f"{budget.path} has {lines} lines, the budget is {budget.max_lines}. Put the new code in {budget.note}, or raise "
+                    "the budget in this test on purpose (see the docstring).",
+                )
+
+    def test_each_class_stays_inside_its_method_budget(self) -> None:
+        for budget in BUDGETS:
+            with self.subTest(path=budget.path):
+                tree = ast.parse((SRC / budget.path).read_text(encoding="utf-8"))
+                methods = _methods(tree, budget.cls)
+                what = budget.cls or f"{budget.path} (top-level functions)"
+                self.assertLessEqual(
+                    methods, budget.max_methods,
+                    f"{what} has {methods} methods, the budget is {budget.max_methods}. Put the new behaviour in {budget.note}, or "
+                    "raise the budget in this test on purpose (see the docstring).",
+                )
 
 
 if __name__ == "__main__":

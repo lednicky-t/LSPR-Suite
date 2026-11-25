@@ -224,6 +224,29 @@ class SessionAutosaveDebounceTest(unittest.TestCase):
         self.assertIn("disk full", reported[0])
         self.assertIn("not saved", reported[0])
 
+    def test_a_session_from_a_newer_build_is_reported_as_refused_not_as_a_retry(self) -> None:
+        """2026-11-25: the writer refuses to save over a newer build's session (`NewerSessionError`). That is said as it
+        is: no "will retry" (every retry is refused the same way), a WARNING rather than an error traceback, and the
+        change stays pending."""
+        from lspr_imaging_app.storage.session import NewerSessionError
+
+        reported: list[str] = []
+        self.autosave.save_failed.connect(reported.append)
+
+        def _refusing(root, prepared):
+            raise NewerSessionError("this session was saved by a newer version of the app")
+
+        self.autosave._write = _refusing
+        self.autosave.set_root(self.root)
+        self.autosave.schedule()
+        with self.assertLogs("lspr_imaging_app.storage.session_autosave", level="WARNING") as logs:
+            self.autosave.flush()
+        self.assertEqual(len(reported), 1)
+        self.assertIn("newer version", reported[0])
+        self.assertNotIn("retry", reported[0])
+        self.assertTrue(all(record.levelname == "WARNING" for record in logs.records))
+        self.assertTrue(self.autosave._dirty)
+
     def test_a_successful_write_reports_nothing(self) -> None:
         reported: list[str] = []
         self.autosave.save_failed.connect(reported.append)

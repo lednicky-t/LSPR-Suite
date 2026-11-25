@@ -163,7 +163,8 @@ class MaskScanUiTest(unittest.TestCase):
         layout = page.layout()
         features_group = tab.features_panel.parentWidget()
         png_group = tab._png_actions.parentWidget()
-        order = [layout.indexOf(w) for w in (features_group, tab._separators[3], scan_group, tab._separators[4], png_group)]
+        # Dividers 2 and 3 since the Visibility group (and its divider) left the tab, 2026-11-23.
+        order = [layout.indexOf(w) for w in (features_group, tab._separators[2], scan_group, tab._separators[3], png_group)]
         self.assertEqual(order, sorted(order))
         self.assertTrue(all(i >= 0 for i in order))
 
@@ -377,7 +378,7 @@ class MaskScanUiTest(unittest.TestCase):
         layout = page.layout()
         scan_group = tab._scan_controls.parentWidget()
         png_group = tab._png_actions.parentWidget()
-        order = [layout.indexOf(w) for w in (scan_group, tab._separators[4], auto_group, tab._separators[5], png_group)]
+        order = [layout.indexOf(w) for w in (scan_group, tab._separators[3], auto_group, tab._separators[4], png_group)]
         self.assertEqual(order, sorted(order))
         self.assertTrue(all(i >= 0 for i in order))
 
