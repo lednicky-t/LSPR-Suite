@@ -115,6 +115,51 @@ class SolverTests(unittest.TestCase):
         self.assertIn("voigt", FIT_METHODS)
 
 
+class ProfileShortcutTests(unittest.TestCase):
+    """`profile` takes exp(-x^2) for a row without a Lorentzian part (gamma = 0: Re w(x) = exp(-x^2) exactly) and the Faddeeva function for the others (2026-11-26: the curve sampling of the
+    Voigt metric was 55 % of its time, and 99.6 % of the cubes of the real scan end at gamma = 0). The shape is the one `wofz` gives, to rounding; a batch with no gamma = 0 row is the old expression."""
+
+    @staticmethod
+    def _reference(energy, centre, sigma, gamma, band_sigma=None):
+        """The shape as before the shortcut: Faddeeva for every row."""
+        if band_sigma is None:
+            return wofz((energy[None, :] - centre[:, None] + 1j * gamma[:, None]) / (np.sqrt(2.0) * sigma[:, None])).real
+        sp = np.sqrt(sigma[:, None] ** 2 + np.asarray(band_sigma)[None, :] ** 2)
+        return (sigma[:, None] / sp) * wofz((energy[None, :] - centre[:, None] + 1j * gamma[:, None]) / (np.sqrt(2.0) * sp)).real
+
+    def setUp(self) -> None:
+        rng = np.random.default_rng(11)
+        self.energy = vf.energy_ev(np.linspace(450.0, 750.0, 40))
+        n = 12
+        self.centre = rng.uniform(1.9, 2.2, n)
+        self.sigma = rng.uniform(0.05, 0.3, n)
+        self.gamma = np.where(rng.random(n) < 0.6, 0.0, rng.uniform(0.001, 0.1, n))  # a mix of pure Gaussians and Voigts
+        self.gamma[0], self.gamma[1] = 0.0, 0.05  # both kinds are certainly there
+
+    def test_a_mixed_batch_gives_the_faddeeva_shape_to_rounding(self) -> None:
+        got = vf.profile(self.energy, self.centre, self.sigma, self.gamma)
+        np.testing.assert_allclose(got, self._reference(self.energy, self.centre, self.sigma, self.gamma), rtol=1e-12, atol=1e-15)
+
+    def test_only_gaussian_rows_and_only_lorentzian_rows(self) -> None:
+        zero = np.zeros_like(self.gamma)
+        np.testing.assert_allclose(vf.profile(self.energy, self.centre, self.sigma, zero), self._reference(self.energy, self.centre, self.sigma, zero), rtol=1e-12, atol=1e-15)
+        broad = np.full_like(self.gamma, 0.04)
+        np.testing.assert_array_equal(  # nothing to shortcut: bit for bit the old expression
+            vf.profile(self.energy, self.centre, self.sigma, broad), self._reference(self.energy, self.centre, self.sigma, broad)
+        )
+
+    def test_with_a_filter_band_the_shape_is_still_the_faddeeva_one(self) -> None:
+        band = np.linspace(0.01, 0.05, self.energy.size)
+        got = vf.profile(self.energy, self.centre, self.sigma, self.gamma, band)
+        np.testing.assert_allclose(got, self._reference(self.energy, self.centre, self.sigma, self.gamma, band), rtol=1e-12, atol=1e-15)
+
+    def test_the_fitted_curve_of_a_gaussian_peak_is_unchanged_to_rounding(self) -> None:
+        params = np.array([[0.8, 2.05, 0.12, 0.0, 0.02], [0.5, 1.95, 0.08, 0.03, 0.01]])  # (amplitude, centre, sigma, gamma, offset): one pure, one with a Lorentzian part
+        curve = vf.model(np.linspace(460.0, 740.0, 400), params)
+        shape = self._reference(vf.energy_ev(np.linspace(460.0, 740.0, 400)), params[:, 1], params[:, 2], params[:, 3])
+        np.testing.assert_allclose(curve, params[:, 0:1] * shape + params[:, 4:5], rtol=1e-12, atol=1e-15)
+
+
 class SensorgramPathTests(unittest.TestCase):
     """The batch path (`trace_fit`) against the one-cube-at-a-time reference (`query.fit_and_metric`), as for the other fits."""
 

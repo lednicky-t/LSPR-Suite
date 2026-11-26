@@ -14,8 +14,12 @@ if str(APP_SRC) not in sys.path:
 import numpy as np
 from scipy.signal import savgol_filter
 
+from lspr_imaging_app.analysis.settings import StatisticsSettings
 from lspr_imaging_app.analysis.statistics import (
     aggregate_traces,
+    apply_baseline_with_fit,
+    apply_statistics_with_fit,
+    filter_traces,
     normalize_to_baseline_window,
     reject_spikes_hampel,
     reject_spikes_running_median,
@@ -191,6 +195,53 @@ class TestAggregateGroupTraces(unittest.TestCase):
         self.assertEqual(center.size, 0)
         self.assertEqual(low.size, 0)
         self.assertEqual(high.size, 0)
+
+
+class TestFilterTracesBatch(unittest.TestCase):
+    """`filter_traces` (all ROIs at once) must give the numbers of `apply_statistics_with_fit` ROI by ROI; only the speed differs (the Sensorgram's 21 s on 160 ROIs)."""
+
+    def setUp(self) -> None:
+        rng = np.random.default_rng(3)
+        n = 300
+        self.x = np.linspace(0.0, 900.0, n)
+        self.traces = 600.0 + np.sin(np.linspace(0, 9, n))[None, :] + rng.normal(0, 0.05, (7, n))
+        self.traces[:, 120] += 3.0  # a spike
+        self.traces[1, 40:46] = np.nan  # an interior gap
+        self.traces[2, 290:] = np.nan  # a trailing gap
+        self.traces[3, :] = np.nan  # a ROI nothing is known of
+        # like `membership_segments`: steps, cubes in no step (-1), a few one-cube runs (< -1) and a run shorter than the window
+        labels = np.repeat(np.arange(30), 10).astype(np.int64)
+        labels[::13] = -1
+        labels[100:103] = [-2, -3, -4]
+        self.segments = labels
+
+    def _compare(self, settings: StatisticsSettings, segments) -> None:
+        batch = filter_traces(self.traces, settings, segments)
+        for row, trace in enumerate(self.traces):
+            expected, _, _ = apply_statistics_with_fit(self.x, trace, settings, segments, None)
+            got, _, _ = apply_baseline_with_fit(self.x, batch[row], settings, None)
+            np.testing.assert_array_equal(np.isnan(got), np.isnan(expected))
+            np.testing.assert_allclose(got, expected, rtol=0, atol=1e-9, equal_nan=True)
+
+    def test_savgol_inside_steps_matches_row_by_row(self) -> None:
+        self._compare(StatisticsSettings(smoothing_method="savgol", smoothing_window=15, smoothing_polyorder=2), self.segments)
+
+    def test_savgol_whole_trace_matches_row_by_row(self) -> None:
+        self._compare(StatisticsSettings(smoothing_method="savgol", smoothing_window=21, smoothing_polyorder=3), None)
+
+    def test_hampel_then_savgol_matches_row_by_row(self) -> None:
+        self._compare(StatisticsSettings(smoothing_method="savgol", spike_rejection_enabled=True), self.segments)
+
+    def test_moving_average_and_running_median_match_row_by_row(self) -> None:
+        self._compare(StatisticsSettings(smoothing_method="moving_average", spike_rejection_enabled=True, spike_rejection_method="running_median"), self.segments)
+
+    def test_nothing_on_returns_the_traces(self) -> None:
+        np.testing.assert_array_equal(filter_traces(self.traces, StatisticsSettings(), None), self.traces)
+
+    def test_no_rows_and_bad_segments(self) -> None:
+        self.assertEqual(filter_traces(np.empty((0, 300)), StatisticsSettings(smoothing_method="savgol"), self.segments).shape, (0, 300))
+        with self.assertRaises(ValueError):
+            filter_traces(self.traces, StatisticsSettings(smoothing_method="savgol"), self.segments[:-1])
 
 
 if __name__ == "__main__":

@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
+import time
 import unittest
 from concurrent.futures import BrokenExecutor
 from unittest import mock
@@ -21,6 +23,7 @@ if str(APP_SRC) not in sys.path:
     sys.path.insert(0, str(APP_SRC))
 
 try:
+    from lspr_core.perf import PerfPreferences, PerfRuntime, SystemProfile, set_runtime
     from lspr_imaging_app.analysis import trace_pool
     from lspr_imaging_app.analysis.settings import MetricSettings
     from lspr_imaging_app.analysis.trace_fit import TraceInput, trace_from_input, traces_from_inputs
@@ -110,6 +113,119 @@ class TracePoolTests(unittest.TestCase):
             self.pool.run([(1, broken)], "absorbance", MetricSettings())
         done, _ = self.pool.run(jobs(2), "absorbance", MetricSettings())  # and the process is still usable
         self.assertEqual(len(done), 2)
+
+
+GIB = 1024**3
+
+
+class FanOutTests(unittest.TestCase):
+    """The fits fan out over several processes (2026-11-26) with the count from `lspr_core.perf`. Pinned: the traces are identical at Fixed 1, Fixed 3 and Standard (the tasks do not
+    depend on the count), a short run stays on one process (extra ones must be paid back), the memory limit holds, tuning on a simulated machine changes no trace, cancel keeps what
+    finished, and the extra processes are released after idle. Real processes (Windows "spawn"), so this class takes some seconds."""
+
+    def setUp(self) -> None:
+        previous = set_runtime(None)
+        self.addCleanup(set_runtime, previous)
+        patch_rows = mock.patch.object(trace_pool, "BATCH_ROWS", 12)  # 12 cubes per ROI: one ROI per task
+        patch_rows.start()
+        self.addCleanup(patch_rows.stop)
+        self.work = jobs(8)
+        self.metric = MetricSettings(fit_method="gaussian")
+
+    def _pool(self, preferences: PerfPreferences, *, cores: int = 8, free_gib: float = 8.0) -> "trace_pool.TracePool":
+        machine = SystemProfile(cores, max(cores // 2, 1), 16 * GIB, int(free_gib * GIB), None, "test")
+        set_runtime(PerfRuntime(preferences, probe=lambda: machine))
+        pool = trace_pool.TracePool()
+        self.addCleanup(pool.shutdown)
+        return pool
+
+    def _run(self, pool: "trace_pool.TracePool", **kwargs):
+        with self.assertLogs(trace_pool.logger, logging.DEBUG) as logs:
+            done, was_cancelled = pool.run(self.work, "absorbance", self.metric, **kwargs)
+        line = next(line for line in logs.output if "sensorgram.trace_run" in line)
+        return done, was_cancelled, int(re.search(r"workers=(\d+)", line).group(1)), logs.output
+
+    def _same(self, done) -> None:
+        self.assertEqual(sorted(done), [roi_id for roi_id, _ in self.work])
+        for roi_id, data in self.work:
+            np.testing.assert_array_equal(done[roi_id], trace_from_input(data, "absorbance", self.metric))
+
+    def test_one_three_and_standard_workers_give_identical_traces(self) -> None:
+        with mock.patch.object(trace_pool, "_EXTRA_WORKER_PAYBACK_S", 0.0):  # these tasks are tiny: let every allowed process work
+            used = {}
+            for name, preferences in (
+                ("one", PerfPreferences(mode="manual", manual_workers=1)),
+                ("three", PerfPreferences(mode="manual", manual_workers=3)),
+                ("standard", PerfPreferences()),  # 4 logical cores: every core but one = 3
+            ):
+                pool = self._pool(preferences, cores=4)
+                done, was_cancelled, used[name], _ = self._run(pool)
+                self.assertFalse(was_cancelled)
+                self._same(done)
+        self.assertEqual(used, {"one": 1, "three": 3, "standard": 3})
+
+    def test_a_short_run_stays_on_one_process_whatever_is_allowed(self) -> None:
+        """The tasks are far shorter than the ~1-2 s a new process costs to start, so Fixed 3 does not start any (the default payback rule)."""
+        pool = self._pool(PerfPreferences(mode="manual", manual_workers=3), cores=4)
+        done, _, workers, _ = self._run(pool)
+        self.assertEqual(workers, 1)
+        self.assertEqual(pool._alive(pool._executor), 1)
+        self._same(done)
+
+    def test_almost_no_free_memory_gives_a_pool_of_one(self) -> None:
+        with mock.patch.object(trace_pool, "_EXTRA_WORKER_PAYBACK_S", 0.0):
+            pool = self._pool(PerfPreferences(), free_gib=0.2)
+            done, _, workers, _ = self._run(pool)
+        self.assertEqual((pool._pool_size, workers), (1, 1))
+        self._same(done)
+
+    def test_tuning_on_a_simulated_machine_changes_no_trace_and_says_what_it_did(self) -> None:
+        with mock.patch.object(trace_pool, "_EXTRA_WORKER_PAYBACK_S", 0.0):
+            pool = self._pool(PerfPreferences(mode="auto"), cores=4)
+            done, _, workers, output = self._run(pool)
+        self._same(done)
+        self.assertGreaterEqual(workers, 1)
+        report = next(line for line in output if "perf.run" in line)
+        self.assertIn("task=sensorgram.fits", report)
+        self.assertIn("mode=fixed", report)  # 8 tasks are far too few to pay back a search
+
+    def test_cancel_keeps_what_finished_with_several_workers(self) -> None:
+        with mock.patch.object(trace_pool, "_EXTRA_WORKER_PAYBACK_S", 0.0):
+            pool = self._pool(PerfPreferences(mode="manual", manual_workers=3), cores=4)
+            seen: list[int] = []
+            done, was_cancelled, _, _ = self._run(pool, cancelled=lambda: len(seen) >= 2, progress=lambda d, total: seen.append(d))
+        self.assertTrue(was_cancelled)
+        self.assertGreaterEqual(len(done), 2)
+        self.assertLess(len(done), 8)
+        for roi_id, trace in done.items():
+            np.testing.assert_array_equal(trace, trace_from_input(dict(self.work)[roi_id], "absorbance", self.metric))
+
+    def test_the_extra_processes_are_released_after_idle_and_the_pool_still_works(self) -> None:
+        with mock.patch.object(trace_pool, "_EXTRA_WORKER_PAYBACK_S", 0.0), mock.patch.object(trace_pool, "_IDLE_SHRINK_S", 0.3):
+            pool = self._pool(PerfPreferences(mode="manual", manual_workers=3), cores=4)
+            done, _, workers, _ = self._run(pool)
+            self.assertEqual(workers, 3)
+            deadline = time.monotonic() + 40.0
+            while time.monotonic() < deadline:  # the timer replaces the pool by one warm process (which takes a moment to start)
+                executor = pool._executor
+                if executor is not None and pool._alive(executor) == 1 and pool._shrink_timer is None:
+                    break
+                time.sleep(0.2)
+            self.assertEqual(pool._alive(pool._executor), 1)
+            again, _, _, _ = self._run(pool)
+        self._same(again)
+
+    def test_a_run_that_starts_cancels_the_pending_release(self) -> None:
+        with mock.patch.object(trace_pool, "_EXTRA_WORKER_PAYBACK_S", 0.0), mock.patch.object(trace_pool, "_IDLE_SHRINK_S", 600.0):
+            pool = self._pool(PerfPreferences(mode="manual", manual_workers=3), cores=4)
+            self._run(pool)
+            first = pool._shrink_timer
+            self.assertIsNotNone(first)
+            self._run(pool)
+            self.assertIsNot(pool._shrink_timer, first)  # the first timer was cancelled, a new one set
+            self.assertTrue(first.finished.is_set())  # `Timer.cancel` sets it
+        pool.shutdown()
+        self.assertIsNone(pool._shrink_timer)
 
 
 class TimingTests(unittest.TestCase):

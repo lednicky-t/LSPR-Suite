@@ -263,5 +263,56 @@ class PreviousFormulaTests(unittest.TestCase):
             self.assertFalse(stamped_by_previous_formula(current, current, self.plan).any())
 
 
+class _SharedMaskWorld(_World):
+    """Five cubes like a real run: three share one mask on every spectral frame (the common case: one authored mask, thousands of frames with the same mask and the same
+    wavelength's affine), one has another mask on two of its frames, one has none."""
+
+    def source(self) -> ScanSource:
+        source = super().source()
+        masks = self.masks
+        return ScanSource(**{**source.__dict__, "cube_indices": lambda: (0, 1, 2, 3, 4),
+                             "resolve_mask": lambda c, w: MaskRef((c, w), "individual", lambda a=masks[(c, w)]: a) if (c, w) in masks else None})
+
+
+class WindowSetCacheTests(unittest.TestCase):
+    """`cell_hashes` works out what a frame adds to each ROI once per distinct (mask, affine, layout) and once per distinct sequence of frames, not once per frame (18 s -> 1 s on
+    the 2,655-cube run, 2026-11-25). The hashes must stay exactly what the per-frame version gave: a changed hash makes every stored cell read as out of date."""
+
+    # blake2b-8 of the uint64 [cube, roi] array (little endian) made by the per-frame version, for the world below
+    EXPECTED_DIGEST = "fa7d99a9ed62a4a5"
+
+    def _world(self) -> _SharedMaskWorld:
+        rng = np.random.default_rng(4242)
+        rois = _rois(rng, 16)
+        mask_a, mask_b = _blobs(rng, 4), _blobs(rng, 3)
+        masks = {(c, w): mask_a for c in (0, 1, 2) for w in (500.0, 510.0, 520.0)}
+        masks.update({(3, 500.0): mask_b, (3, 520.0): mask_b})
+        return _SharedMaskWorld(rois, masks)
+
+    def test_hashes_are_the_ones_of_the_per_frame_version(self) -> None:
+        import hashlib
+
+        hashes = cell_hashes(self._world().light())
+        self.assertEqual(hashes.shape, (5, 16))
+        self.assertEqual(hashlib.blake2b(hashes.astype("<u8").tobytes(), digest_size=8).hexdigest(), self.EXPECTED_DIGEST)
+
+    def test_cubes_with_the_same_mask_pattern_share_their_mask_part_and_others_do_not(self) -> None:
+        hashes = cell_hashes(self._world().light())
+        self.assertFalse(np.array_equal(hashes[0], hashes[1]))  # the cube's own digest (columns, file names) still differs: the file names carry the cube number
+        for other in (3, 4):
+            self.assertFalse(np.array_equal(hashes[0], hashes[other]))
+        again = cell_hashes(self._world().light())  # a second call (its own caches) gives the same numbers
+        np.testing.assert_array_equal(hashes, again)
+
+    def test_a_mask_edit_still_changes_exactly_the_cells_it_touches(self) -> None:
+        world = self._world()
+        before = cell_hashes(world.light())
+        edited = world.masks[(3, 500.0)] | _blobs(np.random.default_rng(1), 2)
+        world.masks[(3, 500.0)] = edited
+        after = cell_hashes(world.light())
+        np.testing.assert_array_equal(before[[0, 1, 2, 4]], after[[0, 1, 2, 4]])  # other cubes: unchanged
+        self.assertTrue((before[3] != after[3]).any())  # the edited cube: some cells changed
+
+
 if __name__ == "__main__":
     unittest.main()

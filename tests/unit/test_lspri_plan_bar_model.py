@@ -97,6 +97,39 @@ class SectionLevelsTest(unittest.TestCase):
         self.assertIsNone(bm.section_levels([], 0.0, 5.0))
 
 
+class SectionLevelsPerStepTest(unittest.TestCase):
+    """`section_levels_per_step` (all steps in one pass, what `build_bar_steps` uses) must give exactly what `section_levels` gives step by step: 240 steps x 16 lines cost
+    0.22 s, and 4.7 s while another thread held the GIL, with the per-step version (2026-11-25 log)."""
+
+    def _lines(self):
+        rng = np.random.default_rng(5)
+        x = np.linspace(0.0, 900.0, 300)
+        lines = [(x.copy(), 600.0 + k + rng.normal(0, 0.3, x.size)) for k in range(5)]
+        lines[1][1][20:30] = np.nan  # a gap in y
+        lines[2][0][50:55] = np.nan  # a gap in x
+        lines[3] = (x[::-1].copy(), lines[3][1][::-1].copy())  # a line not in time order
+        lines[4][0][100:110] = lines[4][0][99]  # ties in x
+        return lines
+
+    def test_equals_the_one_step_version_bit_for_bit(self) -> None:
+        lines = self._lines()
+        edges = np.linspace(-20.0, 950.0, 61)
+        bounds = [(float(a), float(b)) for a, b in zip(edges[:-1], edges[1:])]
+        bounds += [(300.0, 300.0), (1000.0, 1100.0), (float("nan"), 500.0), (200.0, float("nan")), (500.0, 100.0)]  # empty, outside, NaN bounds, reversed
+        got = bm.section_levels_per_step(lines, bounds)
+        self.assertEqual(len(got), len(bounds))
+        for (a, b), levels in zip(bounds, got):
+            expected = bm.section_levels(lines, a, b)
+            if expected is None:
+                self.assertIsNone(levels, (a, b))
+            else:
+                self.assertEqual((levels.low, levels.median, levels.high), (expected.low, expected.median, expected.high), (a, b))
+
+    def test_no_lines_and_no_steps(self) -> None:
+        self.assertEqual(bm.section_levels_per_step([], [(0.0, 5.0)]), [None])
+        self.assertEqual(bm.section_levels_per_step(self._lines(), []), [])
+
+
 class ColorTest(unittest.TestCase):
     def test_the_same_solution_gets_the_same_colour_whatever_follows_the_separator(self) -> None:
         colors = bm.automatic_colors(["H2O_--_ch1F", "10perEG_-_ch1F", "H2O_--_ch2P", "20perEG_-_ch1F"])
