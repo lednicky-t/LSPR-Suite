@@ -139,26 +139,49 @@ class ControlsTest(unittest.TestCase):
 
     def test_a_changed_setting_asks_for_a_new_preview(self) -> None:
         panel = self.controls.panel(be.KIND_SHRINK)
-        panel._unit_buttons[be.UNIT_TIME].click()
-        self.assertEqual((self.previews[-1].unit, panel._box.decimals(), panel._box.suffix()), (be.UNIT_TIME, 1, " s"))
+        panel._unit_text.choose(be.UNIT_TIME)
+        self.assertEqual((self.previews[-1].unit, panel._box.decimals(), panel._unit_text.text()), (be.UNIT_TIME, 1, "s"))
         panel._side_buttons[be.SIDE_END].click()
         self.assertEqual(self.previews[-1].side, be.SIDE_END)
         panel._box.setValue(7.5)
         self.assertEqual(self.previews[-1].amount, 7.5)
 
+    def test_the_mouse_wheel_over_the_unit_text_changes_the_unit_and_a_click_goes_to_the_next(self) -> None:
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QWheelEvent
+
+        panel = self.controls.panel(be.KIND_SHRINK)
+        text = panel._unit_text
+
+        def wheel(delta: int) -> None:
+            QtWidgets.QApplication.sendEvent(
+                text, QWheelEvent(QPointF(3, 3), QPointF(3, 3), QPoint(0, 0), QPoint(0, delta), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                                  Qt.ScrollPhase.NoScrollPhase, False)
+            )
+
+        self.assertEqual((text.text(), panel.spec().unit), ("cubes", be.UNIT_CUBES))
+        wheel(-120)  # down: the next unit
+        self.assertEqual((text.text(), panel.spec().unit, self.previews[-1].unit), ("s", be.UNIT_TIME, be.UNIT_TIME))
+        wheel(120)  # up: the one before
+        self.assertEqual(panel.spec().unit, be.UNIT_CUBES)
+        wheel(120)  # up from the first: round to the last
+        self.assertEqual((text.text(), panel.spec().unit), ("%", be.UNIT_PERCENT))
+        text.click()  # a click: the next one (round to the first)
+        self.assertEqual(panel.spec().unit, be.UNIT_CUBES)
+
     def test_each_unit_keeps_its_own_amount(self) -> None:
         panel = self.controls.panel(be.KIND_SHRINK)
         panel._box.setValue(3)
-        panel._unit_buttons[be.UNIT_PERCENT].click()
+        panel._unit_text.choose(be.UNIT_PERCENT)
         panel._box.setValue(25)
-        panel._unit_buttons[be.UNIT_CUBES].click()
+        panel._unit_text.choose(be.UNIT_CUBES)
         self.assertEqual(panel.spec().amount, 3.0)
-        panel._unit_buttons[be.UNIT_PERCENT].click()
+        panel._unit_text.choose(be.UNIT_PERCENT)
         self.assertEqual(panel.spec().amount, 25.0)
 
     def test_an_offset_has_no_side_and_no_percentage_and_takes_negative_amounts(self) -> None:
         panel = self.controls.panel(be.KIND_OFFSET)
-        self.assertEqual((panel._side_buttons, sorted(panel._unit_buttons)), ({}, [be.UNIT_CUBES, be.UNIT_TIME]))
+        self.assertEqual((panel._side_buttons, list(panel._unit_text.units)), ({}, [be.UNIT_CUBES, be.UNIT_TIME]))
         panel._box.setValue(-3)
         self.assertEqual(panel.spec(), be.BatchSpec(be.KIND_OFFSET, be.UNIT_CUBES, -3.0, be.SIDE_BOTH))
 
@@ -180,7 +203,7 @@ class ControlsTest(unittest.TestCase):
         store = UiStateStore({})
         self.controls.restore_ui_state(store)
         panel = self.controls.panel(be.KIND_SHRINK)
-        panel._unit_buttons[be.UNIT_PERCENT].click()
+        panel._unit_text.choose(be.UNIT_PERCENT)
         panel._box.setValue(15)
         panel._side_buttons[be.SIDE_START].click()
         other = BatchEditControls(self.host)

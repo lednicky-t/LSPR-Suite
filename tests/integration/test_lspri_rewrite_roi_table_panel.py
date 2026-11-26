@@ -39,7 +39,7 @@ import numpy as np  # noqa: E402
 try:
     from lspr_imaging_app.domain.roi_model import RoiMask
     from lspr_imaging_app.domain.roi_shapes import MaskShape, NO_BORDER, Rectangle, ring_diameters
-    from lspr_ui import get_active_theme, load_tabler_icon, set_active_theme, transparent_icon_button_stylesheet
+    from lspr_ui import get_active_theme, load_tabler_icon, set_active_theme
 
     from lspr_imaging_app.gui.app_theme import LSPRI_BRIGHT_THEME, LSPRI_DARK_THEME, apply_app_theme
     from lspr_imaging_app.image_tools import GeometryModule
@@ -456,7 +456,9 @@ class UnitToggleTest(_PanelCase):
     def test_it_keeps_its_own_look_when_the_theme_switches(self) -> None:
         set_active_theme(LSPRI_BRIGHT_THEME)
         self.panel.refresh_theme()
-        ribbon_style = transparent_icon_button_stylesheet()
+        from lspr_imaging_app.panels.icon_button_style import ribbon_icon_button_stylesheet
+
+        ribbon_style = ribbon_icon_button_stylesheet()
         self.assertEqual(self.panel._unit_toggle.styleSheet(), ribbon_style)
         self.assertEqual(self.panel._up_button.styleSheet(), ribbon_style, "the ribbon's icon-button style, not a private one")
 

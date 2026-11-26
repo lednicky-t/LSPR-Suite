@@ -201,17 +201,23 @@ class PanelTest(unittest.TestCase):
         self.assertIn(self.panel.picker, widgets)
         self.assertNotIn(self.panel.cols, widgets)
 
-    def test_one_background_for_the_panel_and_none_on_the_labels(self) -> None:
+    def test_the_pop_out_has_the_menu_background_and_the_panel_and_labels_paint_none(self) -> None:
         from PyQt6.QtGui import QColor, QImage
+        from PyQt6.QtWidgets import QVBoxLayout
 
+        from lspr_imaging_app.panels.image.array import PopupFrame
         from lspr_ui import get_active_theme
 
         self.assertIn("QLabel { background: transparent; }", self.panel.styleSheet())
-        self.panel.resize(300, 200)
-        image = QImage(self.panel.size(), QImage.Format.Format_RGB32)
-        self.panel.render(image)
-        # a spot with no control on it (the bottom-right corner of the panel's own margin) is exactly the colour the fields have (the window colour)
-        self.assertEqual(image.pixelColor(image.width() - 2, 2), QColor(get_active_theme().window_bg))
+        frame = PopupFrame()
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.panel)
+        frame.resize(300, 200)
+        image = QImage(frame.size(), QImage.Format.Format_RGB32)
+        frame.render(image)
+        # a spot with no control on it (the top-right corner of the panel's own margin) is the colour every menu pop-up of the app has, not a lighter box
+        self.assertEqual(image.pixelColor(image.width() - 3, 3), QColor(get_active_theme().toolbar_bg))
 
     def test_the_dot_pattern_is_small_but_the_dots_keep_their_size(self) -> None:
         self.assertLessEqual(SIZE, 60)
