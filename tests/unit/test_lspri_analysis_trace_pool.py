@@ -64,16 +64,46 @@ class TracePoolTests(unittest.TestCase):
 
         metric = MetricSettings(fit_method="template", template_first_cube=102, template_last_cube=106)
         work = [(roi_id, template_input(np.r_[np.zeros(8), np.linspace(0.0, 6.0, 12)], noise=0.0005, seed=roi_id, cube_offset=100)) for roi_id in range(1, 4)]
-        with mock.patch.object(trace_pool, "BATCH_ROWS", 20):  # one ROI per task
+        with mock.patch.object(trace_pool, "TASK_ROWS", 20):  # one ROI per task
             done, was_cancelled = self.pool.run(work, "absorbance", metric)
         self.assertFalse(was_cancelled)
         for roi_id, data in work:
             np.testing.assert_array_equal(done[roi_id], trace_from_input(data, "absorbance", metric))
             self.assertTrue(np.all(np.isfinite(done[roi_id])))
 
+    def test_a_run_in_the_process_logs_the_time_outside_the_fits(self) -> None:
+        """`setup_ms` / `send_*` / `back_*` / `payload_mb` say where wall time that is not fitting goes; the clock stamps of the worker are not logged."""
+        work = jobs(4)
+        with mock.patch.object(trace_pool, "TASK_ROWS", 24), self.assertLogs(trace_pool.logger, logging.DEBUG) as logs:  # two ROIs per task: two tasks
+            self.pool.run(work, "absorbance", MetricSettings())
+        line = next(line for line in logs.output if "sensorgram.trace_run" in line)
+        self.assertIn("where=process", line)
+        for key in ("setup_ms=", "send_ms=", "send_max_ms=", "back_ms=", "back_max_ms=", "payload_mb=", "tasks=2 ", "pickle_one_ms=", "pickle_one_mb="):
+            self.assertIn(key, line)
+        self.assertNotIn("_recv", line)
+        self.assertNotIn("_done", line)
+
+    def test_the_payload_is_the_bytes_of_the_arrays_sent(self) -> None:
+        chunk = jobs(2)
+        expected = sum(v.nbytes for _id, data in chunk for v in (data.wavelengths, data.sample, data.reference, data.usable, data.scanned))
+        expected += sum(v.nbytes for _id, data in chunk for v in (data.cube_indices, data.band, data.passband) if v is not None)
+        self.assertEqual(trace_pool._payload_bytes(chunk), expected)
+
+    def test_transfer_times_are_never_negative_and_stamps_are_not_summed(self) -> None:
+        stage = {"send_ms": 0.0, "send_max_ms": 0.0, "back_ms": 0.0, "back_max_ms": 0.0, "payload_mb": 0.0, "tasks": 0.0}
+        trace_pool._note_transfer(stage, 100.0, {"_recv": 100.5, "_done": 101.0}, 101.25)
+        trace_pool._note_transfer(stage, 100.0, {"_recv": 99.0, "_done": 101.0}, 100.0)  # clocks that disagree: 0, not negative
+        self.assertAlmostEqual(stage["send_ms"], 500.0)
+        self.assertAlmostEqual(stage["back_ms"], 250.0)
+        self.assertEqual(stage["tasks"], 2.0)
+        total: dict[str, float] = {}
+        trace_pool._add_timings(total, {"fit_ms": 2.0, "_recv": 5.0})
+        trace_pool._add_timings(total, {"fit_ms": 3.0, "_recv": 6.0})
+        self.assertEqual(total, {"fit_ms": 5.0})
+
     def test_progress_is_reported_per_task_of_several_rois(self) -> None:
         seen: list[tuple[int, int]] = []
-        with mock.patch.object(trace_pool, "BATCH_ROWS", 24):  # 12 cubes per ROI: two ROIs per task
+        with mock.patch.object(trace_pool, "TASK_ROWS", 24):  # 12 cubes per ROI: two ROIs per task
             done, _ = self.pool.run(jobs(5), "absorbance", MetricSettings(), progress=lambda d, total: seen.append((d, total)))
         self.assertEqual(seen, [(2, 5), (4, 5), (5, 5)])
         self.assertEqual(len(done), 5)
@@ -82,7 +112,7 @@ class TracePoolTests(unittest.TestCase):
         work = jobs(5)
         metric = MetricSettings(fit_method="gaussian")
         whole, _ = self.pool.run(work, "absorbance", metric)
-        with mock.patch.object(trace_pool, "BATCH_ROWS", 12):  # one ROI per task
+        with mock.patch.object(trace_pool, "TASK_ROWS", 12):  # one ROI per task
             single, _ = self.pool.run(work, "absorbance", metric)
         for roi_id, _data in work:
             np.testing.assert_array_equal(whole[roi_id], single[roi_id])
@@ -99,7 +129,7 @@ class TracePoolTests(unittest.TestCase):
 
     def test_cancel_returns_what_was_finished(self) -> None:
         work = dict(jobs(20))
-        with mock.patch.object(trace_pool, "BATCH_ROWS", 12):  # 20 tasks of one ROI
+        with mock.patch.object(trace_pool, "TASK_ROWS", 12):  # 20 tasks of one ROI
             done, was_cancelled = self.pool.run(list(work.items()), "absorbance", MetricSettings(), cancelled=lambda: True)  # at the first look
         self.assertTrue(was_cancelled)
         self.assertLess(len(done), 20)
@@ -126,7 +156,7 @@ class FanOutTests(unittest.TestCase):
     def setUp(self) -> None:
         previous = set_runtime(None)
         self.addCleanup(set_runtime, previous)
-        patch_rows = mock.patch.object(trace_pool, "BATCH_ROWS", 12)  # 12 cubes per ROI: one ROI per task
+        patch_rows = mock.patch.object(trace_pool, "TASK_ROWS", 12)  # 12 cubes per ROI: one ROI per task
         patch_rows.start()
         self.addCleanup(patch_rows.stop)
         self.work = jobs(8)
@@ -226,6 +256,61 @@ class FanOutTests(unittest.TestCase):
             self.assertTrue(first.finished.is_set())  # `Timer.cancel` sets it
         pool.shutdown()
         self.assertIsNone(pool._shrink_timer)
+
+
+class GilProbeTests(unittest.TestCase):
+    def test_the_summary_of_the_lags(self) -> None:
+        self.assertEqual(trace_pool._summarize_lags([]), {})
+        summary = trace_pool._summarize_lags([float(v) for v in range(1, 101)])  # 1..100 ms
+        self.assertEqual(summary["gil_samples"], 100.0)
+        self.assertEqual(summary["gil_lag_max_ms"], 100.0)
+        self.assertEqual(summary["gil_stalls"], 50.0)  # 51..100 are later than 50 ms
+        self.assertNotIn("gil_lag_mean_ms", summary)  # the mean only measured the system timer (see `_GilProbe`)
+
+    def test_a_thread_hogging_the_interpreter_lock_shows_as_lag(self) -> None:
+        """A thread that never lets go (a pure Python loop) makes the sleeping probe thread wait for its switch interval each time it wakes."""
+        import threading
+
+        stop = threading.Event()
+
+        def hog() -> None:
+            n = 0
+            while not stop.is_set():
+                n += 1
+
+        thread = threading.Thread(target=hog, daemon=True)
+        probe = trace_pool._GilProbe()
+        thread.start()
+        probe.start()
+        time.sleep(0.4)
+        summary = probe.stop()
+        stop.set()
+        thread.join()
+        self.assertGreater(summary["gil_samples"], 3)
+        self.assertGreater(summary["gil_lag_max_ms"], 1.0)  # the default switch interval is 5 ms; 1 ms leaves a wide margin for a fast machine
+
+    def test_a_probe_stopped_at_once_does_not_raise(self) -> None:
+        probe = trace_pool._GilProbe()
+        probe.start()
+        self.assertIsInstance(probe.stop(), dict)
+
+
+class TaskSizeTests(unittest.TestCase):
+    def test_a_real_sized_scan_goes_in_tasks_of_several_rois(self) -> None:
+        """2655 cubes per ROI (the size of the 2026-11-26 measurements) -> 4 ROIs per task, not one message per ROI (see ``TASK_ROWS``)."""
+        work = [(roi_id, make_input(n_cube=2655, seed=roi_id)) for roi_id in range(1, 11)]
+        sizes = [len(chunk) for chunk in trace_pool._chunks(work)]
+        self.assertEqual(sizes, [4, 4, 2])
+
+    def test_tasks_keep_every_roi_once_in_order(self) -> None:
+        work = jobs(7)
+        with mock.patch.object(trace_pool, "TASK_ROWS", 24):  # 12 cubes per ROI: two per task
+            flat = [roi_id for chunk in trace_pool._chunks(work) for roi_id, _ in chunk]
+        self.assertEqual(flat, [roi_id for roi_id, _ in work])
+
+    def test_a_roi_longer_than_a_task_still_gets_a_task_of_its_own(self) -> None:
+        with mock.patch.object(trace_pool, "TASK_ROWS", 5):
+            self.assertEqual([len(chunk) for chunk in trace_pool._chunks(jobs(3))], [1, 1, 1])
 
 
 class TimingTests(unittest.TestCase):

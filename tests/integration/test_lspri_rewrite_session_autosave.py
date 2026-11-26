@@ -256,6 +256,114 @@ class SessionAutosaveDebounceTest(unittest.TestCase):
         self.assertEqual(reported, [])
 
 
+class SessionAutosaveWaitsForTasksTest(unittest.TestCase):
+    """2026-11-26: a save that is due while a background task runs waits for it (`set_busy_check`); checkpoints never wait."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self._tmp.name)
+        self.saved = RecordingSave()
+        self.busy = True
+        self.autosave = SessionAutosave(capture=lambda: SessionState(), naming=lambda: _NAMING, write=self.saved, interval_ms=60_000)
+        self.autosave.set_busy_check(lambda: self.busy)
+        self.autosave.set_root(self.root)
+
+    def tearDown(self) -> None:
+        self.autosave.close()
+        self._tmp.cleanup()
+
+    def _written(self) -> int:
+        self.autosave.wait_until_written()
+        return len(self.saved.calls)
+
+    def test_a_due_save_waits_while_a_task_runs_and_goes_ahead_when_it_ends(self) -> None:
+        self.autosave.schedule()
+        self.autosave._on_debounce()  # the debounce elapsed
+        self.assertEqual(self._written(), 0)
+        self.assertTrue(self.autosave._hold_timer.isActive())  # looking again soon
+        self.autosave._on_debounce()  # still running
+        self.assertEqual(self._written(), 0)
+        self.busy = False
+        self.autosave._on_debounce()  # the next look: the task has ended
+        self.assertEqual(self._written(), 1)
+        self.assertFalse(self.autosave._hold_timer.isActive())
+
+    def test_the_wait_is_logged_and_its_length_is_on_the_capture(self) -> None:
+        self.autosave.schedule()
+        with self.assertLogs("lspr_imaging_app.storage.session_autosave", level="DEBUG") as logs:
+            self.autosave._on_debounce()
+            self.busy = False
+            self.autosave._on_debounce()
+        text = "\n".join(logs.output)
+        self.assertIn("session.autosave_held", text)
+        self.assertIn("held_ms=", text)  # on `session.capture`
+
+    def test_the_wait_has_an_end_even_if_the_task_never_does(self) -> None:
+        self.autosave.schedule()
+        with mock.patch("lspr_imaging_app.storage.session_autosave.MAX_HOLD_S", 0.0), self.assertLogs(
+            "lspr_imaging_app.storage.session_autosave", level="INFO"
+        ) as logs:
+            self.autosave._on_debounce()
+        self.assertEqual(self._written(), 1)  # saved although `busy` is still True
+        self.assertIn("session.autosave_hold_expired", "\n".join(logs.output))
+
+    def test_flush_and_a_dataset_switch_never_wait(self) -> None:
+        self.autosave.schedule()
+        self.autosave.flush()
+        self.assertEqual(len(self.saved.calls), 1)
+        other = self.root / "other"
+        other.mkdir()
+        self.autosave.schedule()
+        self.autosave.set_root(other)  # hands the pending save of the old root over, task or not
+        self.assertEqual(self._written(), 2)
+
+    def test_a_new_edit_during_the_wait_starts_the_debounce_again(self) -> None:
+        self.autosave.schedule()
+        self.autosave._on_debounce()
+        self.assertTrue(self.autosave._hold_timer.isActive())
+        self.autosave.schedule()
+        self.assertFalse(self.autosave._hold_timer.isActive())
+        self.assertTrue(self.autosave._timer.isActive())
+
+    def test_nothing_waits_without_a_check_or_with_a_broken_one(self) -> None:
+        self.autosave.set_busy_check(None)
+        self.autosave.schedule()
+        self.autosave._on_debounce()
+        self.assertEqual(self._written(), 1)
+
+        def broken() -> bool:
+            raise RuntimeError("no indicator")
+
+        self.autosave.set_busy_check(broken)
+        self.autosave.schedule()
+        with self.assertLogs("lspr_imaging_app.storage.session_autosave", level="WARNING"):
+            self.autosave._on_debounce()
+        self.assertEqual(self._written(), 2)  # fails open: a broken check never stops saving
+
+    def test_with_real_timers_the_save_follows_the_end_of_the_task(self) -> None:
+        autosave = SessionAutosave(capture=lambda: SessionState(), naming=lambda: _NAMING, write=self.saved, interval_ms=10)
+        state = {"busy": True}
+        autosave.set_busy_check(lambda: state["busy"])
+        autosave._hold_timer.setInterval(10)
+        autosave.set_root(self.root)
+        try:
+            autosave.schedule()
+            deadline = time.monotonic() + 0.4
+            while time.monotonic() < deadline:  # the debounce fires and finds the task running
+                QtWidgets.QApplication.processEvents()
+            autosave.wait_until_written()
+            self.assertEqual(len(self.saved.calls), 0)
+            state["busy"] = False
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and not self.saved.calls:
+                QtWidgets.QApplication.processEvents()
+                time.sleep(0.005)
+            autosave.wait_until_written()
+            self.assertEqual(len(self.saved.calls), 1)
+        finally:
+            autosave.close()
+
+
 class CachedFrameNamingTest(unittest.TestCase):
     """The scheme walks every cube (16 ms for 314), so the autosave asks for it once per loaded dataset, not on every save."""
 

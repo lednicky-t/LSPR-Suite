@@ -52,6 +52,17 @@ class IndicatorTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.host.close()
 
+    def test_has_running_follows_the_tasks(self) -> None:
+        """What the session autosave waits for (`SessionAutosave.set_busy_check`)."""
+        self.assertFalse(self.indicator.has_running())
+        self.indicator.report("a", "Task A", 0.1, "")
+        self.indicator.report("b", "Task B", -1.0, "")
+        self.assertTrue(self.indicator.has_running())
+        self.indicator.finish("a")
+        self.assertTrue(self.indicator.has_running())  # b still runs
+        self.indicator.finish("b", "cancelled")
+        self.assertFalse(self.indicator.has_running())  # a shown result is not a running task
+
     def test_hidden_until_first_task_then_shows_progress(self) -> None:
         self.assertFalse(self.indicator.isVisible())
         self.indicator.report("t", "Task", 0.4, "step 2")
