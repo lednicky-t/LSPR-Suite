@@ -136,7 +136,7 @@ class WhatTheModelSaysTest(StepTintBase):
 class TheBarsOpacityTest(StepTintBase):
     def setUp(self) -> None:
         super().setUp()
-        app_rewrite._follow_plan_bar(self.panel, self.table, self.view)
+        app_rewrite._follow_plan_bar(self.panel, self.table, self.view, self.m.experiment_plan)
 
     def test_the_opacity_of_the_bar_is_the_opacity_of_the_tint_and_zero_means_none(self) -> None:
         slider = self.panel._steps.plan_controls._alpha
@@ -159,7 +159,7 @@ class TheBarsOpacityTest(StepTintBase):
     def test_the_opacity_the_bar_was_restored_with_is_the_tint_from_the_start(self) -> None:
         self.panel._steps.plan_controls._alpha.setValue(40)
         fresh = RoiTablePanel(self.m.roi_toolbox, self.m.selection, self.m.geometry, step_table=self.table)
-        app_rewrite._follow_plan_bar(self.panel, self.table, fresh)  # (what the app does once, after the panels restored their state)
+        app_rewrite._follow_plan_bar(self.panel, self.table, fresh, self.m.experiment_plan)  # (what the app does once, after the panels restored their state)
         self.assertAlmostEqual(fresh._model.step_tint_alpha(), 0.40, places=2)
         fresh.deleteLater()
 
@@ -238,7 +238,7 @@ class WhatIsPaintedTest(StepTintBase):
         self.assert_close(self.pixel(header.viewport(), header.sectionViewportPosition(COLUMN_ID) + 2, 3), plain(self.theme.toolbar_bg))
 
     def test_a_new_opacity_is_painted_without_any_rebuild(self) -> None:
-        app_rewrite._follow_plan_bar(self.panel, self.table, self.view)
+        app_rewrite._follow_plan_bar(self.panel, self.table, self.view, self.m.experiment_plan)
         self.panel._steps.plan_controls._alpha.setValue(100)
         _APP.processEvents()
         x, y = self.cell_probe(1, COLUMN_COUNT)

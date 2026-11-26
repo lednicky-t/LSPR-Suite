@@ -883,7 +883,7 @@ class StepTablePanelTest(StepTableBase):
             self.assertTrue(all(not row.icon().isNull() for row in pick._rows))
             self.assertEqual([row.isChecked() for row in pick._rows], [True, False])
             self.assertTrue(all(row.toolTip() for row in pick._rows), "the explanation moved into the tips")
-            self.assertEqual([b.text() for b in menus[0].findChildren(QtWidgets.QToolButton) if b not in pick._rows], ["Remove this column"])
+            self.assertEqual([b.text() for b in menus[0].findChildren(QtWidgets.QToolButton) if b not in pick._rows], ["Sort by this column", "Remove this column"])  # (a header click selects the column now, 2026-11-26: the sort is here)
             self._press_header(COLUMN_COUNT + 0, 6)  # the same place on a step column: a plain header, no menu
             self.assertEqual(asked, [COLUMN_COUNT + 2])
             self.assertEqual(len(menus), 1)
