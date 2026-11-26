@@ -312,6 +312,60 @@ class _Cells(StepCells):
         return CellValue(n=10, mean=590.0, sd=0.05, current=True, sem=0.015)
 
 
+class LayoutPassTest(_Grouped):
+    """`RoiTreeModel.index` (no `hasIndex`) and `layout_pass` (2026-11-26): Qt asks every cell of every row for its height while it expands the tree, 44 000 Python calls for 160 ROIs and 241
+    step columns. The answers must stay what Qt's own bounds check gives, and the row heights what they were."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.model.set_step_columns([StepColumn((1, i), i + 1, f"step {i + 1}", "", (), "#58a6ff") for i in range(6)], _Cells())
+        self.refresh()
+
+    def parents(self) -> list[QModelIndex]:
+        return [QModelIndex(), *self.model.group_headers()]
+
+    def test_index_gives_what_a_bounds_check_by_has_index_gives(self) -> None:
+        checked = 0
+        for parent in self.parents():
+            for row in range(-1, self.model.rowCount(parent) + 2):
+                for column in range(-1, self.model.columnCount() + 2):
+                    index = self.model.index(row, column, parent)
+                    self.assertEqual(index.isValid(), self.model.hasIndex(row, column, parent), (row, column, parent.row()))
+                    if index.isValid():
+                        self.assertEqual((index.row(), index.column()), (row, column))
+                        self.assertEqual(index.parent(), parent)
+                    checked += 1
+        self.assertGreater(checked, 200)
+        header = self.model.group_headers()[0]
+        self.assertFalse(self.model.index(0, 0, header.siblingAtColumn(1)).isValid())  # (a parent in another column has no children)
+
+    def test_in_a_layout_pass_only_the_fixed_columns_answer_and_it_ends_even_after_an_error(self) -> None:
+        step_column = self.model.columnCount() - 1
+        self.assertTrue(self.model.index(0, step_column).isValid())
+        with self.model.layout_pass():
+            self.assertTrue(self.model.index(0, COLUMN_COUNT - 1).isValid())
+            self.assertFalse(self.model.index(0, COLUMN_COUNT).isValid())
+            self.assertFalse(self.model.index(0, step_column).isValid())
+        self.assertTrue(self.model.index(0, step_column).isValid())
+        with self.assertRaises(RuntimeError), self.model.layout_pass():
+            raise RuntimeError("boom")
+        self.assertTrue(self.model.index(0, step_column).isValid())
+
+    def test_expanding_in_a_layout_pass_gives_the_row_heights_expanding_without_it_gives(self) -> None:
+        def heights() -> list[int]:
+            rows = [(self.model.index(r, 0, p), p) for p in self.parents() for r in range(self.model.rowCount(p))]
+            return [self.tree.visualRect(index).height() for index, _ in rows]
+
+        self.tree.collapseAll()
+        self.tree.expandAll()
+        plain = heights()
+        self.tree.collapseAll()
+        with self.model.layout_pass():
+            self.tree.expandAll()
+        self.assertEqual(heights(), plain)
+        self.assertGreater(len(set(plain)), 1, "a group header and a ROI row have different heights: the check would prove nothing without both")
+
+
 class PaintRoleTest(_Grouped):
     """`PAINT_ROLE` answers in one call what the delegate asked six or seven times: the text, whether it is dimmed, stale, its alignment and its tint."""
 

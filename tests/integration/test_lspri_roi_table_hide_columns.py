@@ -129,9 +129,9 @@ class HidingTest(FixedColumnsBase):
 
     def test_a_freeze_that_ends_at_a_hidden_column_holds_the_visible_ones_before_it(self) -> None:
         self.tree.set_frozen_upto(COLUMN_X)
-        self.assertEqual(self.tree.pinned_columns(), [COLUMN_ID, COLUMN_X])
+        self.assertEqual(self.tree.pinned_columns(), [COLUMN_ID, COLUMN_NAME, COLUMN_X])  # (Geometry shows Label too)
         self.hide._hide_section(COLUMN_X)
-        self.assertEqual(self.tree.pinned_columns(), [COLUMN_ID])
+        self.assertEqual(self.tree.pinned_columns(), [COLUMN_ID, COLUMN_NAME])
 
 
 class TheMenuTest(FixedColumnsBase):
@@ -184,7 +184,7 @@ class TheMenuTest(FixedColumnsBase):
 
     def test_the_hide_and_show_entries_sit_between_the_view_choice_and_the_freeze_entries(self) -> None:
         texts = menu_texts(self.panel._view_menu)
-        order = ["Geometry view (position, shape, diameters)", "Hide column", "Show hidden column", "Show all hidden columns", "Freeze columns up to here", "Unfreeze columns", "Fit step columns to content"]
+        order = ["Geometry view (label, position, shape, diameters)", "Hide column", "Show hidden column", "Show all hidden columns", "Freeze columns up to here", "Unfreeze columns", "Fit step columns to content"]
         self.assertEqual([t for t in texts if t in order], order)
         self.assertIsNotNone(next(a for a in self.panel._view_menu.actions() if a.text() == "Show hidden column").menu(), "the list is a submenu")
 
@@ -267,7 +267,7 @@ class HidingTheFirstColumnTest(FixedColumnsBase):
         self.hide._hide_section(COLUMN_ID)
         self.assertEqual(self.tree.columnWidth(COLUMN_ID), 0)
         self.assertEqual({c: self.tree.columnWidth(c) for c in widths}, widths)
-        self.assertEqual(self.tree.header().sectionViewportPosition(COLUMN_X), 0, "the first visible column starts at the left edge")
+        self.assertEqual(self.tree.header().sectionViewportPosition(COLUMN_NAME), 0, "the first visible column (Label, shown in Geometry too) starts at the left edge")
 
     def test_the_group_headers_are_still_drawn_and_the_roi_rows_lose_only_their_dot_and_number(self) -> None:
         _cells, dots = self.painted()
@@ -536,7 +536,7 @@ class HidingTheFirstColumnTest(FixedColumnsBase):
     def test_a_freeze_up_to_a_later_column_holds_the_visible_ones(self) -> None:
         self.hide._hide_section(COLUMN_ID)
         self.tree.set_frozen_upto(COLUMN_X)
-        self.assertEqual(self.tree.pinned_width(), self.tree.columnWidth(COLUMN_X))  # #/ROIs adds nothing
+        self.assertEqual(self.tree.pinned_width(), self.tree.columnWidth(COLUMN_NAME) + self.tree.columnWidth(COLUMN_X))  # #/ROIs adds nothing
 
     def test_it_is_remembered_and_comes_back_collapsed(self) -> None:
         self.hide._hide_section(COLUMN_ID)

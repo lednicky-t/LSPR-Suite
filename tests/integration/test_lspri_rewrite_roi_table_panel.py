@@ -458,7 +458,7 @@ class UnitToggleTest(_PanelCase):
         self.panel.refresh_theme()
         ribbon_style = transparent_icon_button_stylesheet()
         self.assertEqual(self.panel._unit_toggle.styleSheet(), ribbon_style)
-        self.assertEqual(self.panel._delete_button.styleSheet(), ribbon_style, "the ribbon's icon-button style, not a private one")
+        self.assertEqual(self.panel._up_button.styleSheet(), ribbon_style, "the ribbon's icon-button style, not a private one")
 
 
 class SelectionSyncTest(_PanelCase):
@@ -753,12 +753,12 @@ class DeleteTest(_PanelCase):
         self.assertEqual(self.toolbox.groups(), ())
         self.assertEqual(len(self.toolbox.rois()), 3)
 
-    def test_ungroup_button_dissolves_selected_groups_and_keeps_their_rois(self) -> None:
+    def test_ungroup_dissolves_selected_groups_and_keeps_their_rois(self) -> None:
+        # (there is no Ungroup button in the toolbar since 2026-11-26: the right-click menu and its key do this)
         self.toolbox.group_rois((1, 2), "A")
         self.refresh()
         self.select_in_view(self.header("group_1"))
-        self.assertTrue(self.panel._ungroup_button.isEnabled())
-        self.panel._ungroup_button.click()
+        self.panel._ungroup_selected()
         self.assertEqual(self.toolbox.groups(), ())
         self.assertEqual(len(self.toolbox.rois()), 5)
 
@@ -1139,7 +1139,35 @@ class GroupOnlyViewTest(_PanelCase):
         later = RoiTablePanel(self.toolbox, self.selection, self.geometry)
         later.restore_ui_state(store)
         self.assertTrue(later.group_only())
+        self.assertTrue(later._group_only_toggle.isChecked())  # (the icon row's button shows a restored choice)
         later.deleteLater()
+
+    def test_the_geometry_controls_are_greyed_while_only_groups_are_shown(self) -> None:
+        def enabled() -> list[bool]:
+            return [self.panel._view_toggle.isEnabled(), *(a.isEnabled() for a in self.panel._view_actions.values())]
+
+        self.assertTrue(all(enabled()))
+        self.panel.set_group_only(True)
+        self.assertFalse(any(enabled()))
+        self.panel.set_group_only(False)
+        self.assertTrue(all(enabled()))
+        later = RoiTablePanel(self.toolbox, self.selection, self.geometry)
+        later.restore_ui_state(UiStateStore({"roi_table/group_only": True}))
+        self.assertFalse(later._view_toggle.isEnabled())  # (a restored choice too)
+        later.deleteLater()
+
+    def test_the_icon_row_button_switches_it_and_follows_the_menu_choice(self) -> None:
+        button = self.panel._group_only_toggle
+        self.assertFalse(button.isChecked())
+        button.click()
+        self.assertTrue(self.panel.group_only())
+        self.assertTrue(button.isChecked())
+        self.panel.set_group_only(False)  # (from the right-click menu or the keys)
+        self.assertFalse(button.isChecked())
+        button.click()
+        button.click()
+        self.assertFalse(self.panel.group_only())
+        self.assertFalse(button.isChecked())
 
     def test_the_dock_title_is_the_switch(self) -> None:
         from lspr_imaging_app.panels.dock_container import PanelContainer, TitleChoice
@@ -1240,10 +1268,7 @@ class LayoutAndPaintTest(_PanelCase):
             self.panel.refresh_theme()
             self.panel.resize(460, 300)
             self.panel.show()
-            buttons = {
-                "group": self.panel._group_button, "ungroup": self.panel._ungroup_button, "color": self.panel._color_button,
-                "up": self.panel._up_button, "down": self.panel._down_button, "delete": self.panel._delete_button,
-            }
+            buttons = {"up": self.panel._up_button, "down": self.panel._down_button}
             _APP.processEvents()
             for name, button in buttons.items():
                 button.setEnabled(True)  # a disabled icon is greyed, not smaller; measure them all alike
@@ -1256,11 +1281,8 @@ class LayoutAndPaintTest(_PanelCase):
                 _APP.processEvents()
                 expected = self._painted_extent(reference)
                 self.assertGreaterEqual(expected, 10, f"{name}: the reference itself must be a normal-sized icon")
-                # 2 px of slack (was 1 at the 22 px ribbon icons; ribbon icons are 18 px since 2026-10-18). The rainbow
-                # colour droplet's saturated edge falls under the contrast limit (see `_painted_extent`), which at
-                # 18 px costs it 2 px against the grey reference. Checked then: every button here and its reference
-                # have the same icon size (18) and an identical painted alpha extent (18 px) - only this contrast
-                # reading of the gradient differs. A real regression (the 22 px icon shrunk to ~4 px) still fails.
+                # 2 px of slack (was 1 at the 22 px ribbon icons; ribbon icons are 18 px since 2026-10-18; the rainbow colour droplet that needed it is gone).
+                # A real regression (the 22 px icon shrunk to ~4 px) still fails.
                 self.assertGreaterEqual(self._painted_extent(button), expected - 2, f"{name} icon is smaller than the ribbon's")
                 reference.hide()
         finally:
@@ -1270,11 +1292,11 @@ class LayoutAndPaintTest(_PanelCase):
             _APP.setStyle(saved[2])
 
     def test_the_toolbar_buttons_get_icons_and_follow_the_theme(self) -> None:
-        for button in (self.panel._group_button, self.panel._delete_button):
+        for button in (self.panel._up_button, self.panel._down_button, self.panel._view_toggle):
             self.assertFalse(button.icon().isNull())
         set_active_theme(LSPRI_BRIGHT_THEME)
         self.panel.refresh_theme()
-        self.assertFalse(self.panel._group_button.icon().isNull())
+        self.assertFalse(self.panel._up_button.icon().isNull())
 
 
 
@@ -1448,7 +1470,7 @@ class ViewModeTest(_PanelCase):
         self.addCleanup(self.panel.hide)
 
     def test_geometry_is_the_default_and_simple_shows_only_id_and_label(self) -> None:
-        geometry = [COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS]
+        geometry = [COLUMN_ID, COLUMN_NAME, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS]
         self.assertEqual(self.shown_left_to_right(), geometry)
         self.panel._view_actions["simple"].trigger()
         self.assertEqual(self.shown_left_to_right(), [COLUMN_ID, COLUMN_NAME])
@@ -1459,7 +1481,10 @@ class ViewModeTest(_PanelCase):
         button = self.panel._view_toggle
         layout = self.panel.layout().itemAt(0).layout()
         widgets = [w for w in (layout.itemAt(i).widget() for i in range(layout.count())) if w is not None]  # (spacers have no widget)
-        self.assertEqual(widgets[widgets.index(self.panel._delete_button) + 1], self.panel._view_toggle, "right behind the delete button")
+        self.assertEqual(widgets[widgets.index(self.panel._down_button) + 1], self.panel._lock_toggle, "the selection lock is right behind the move buttons")
+        self.assertEqual(widgets[widgets.index(self.panel._lock_toggle) + 1], self.panel._view_toggle)
+        for gone in ("_group_button", "_ungroup_button", "_color_button", "_delete_button"):
+            self.assertFalse(hasattr(self.panel, gone), f"{gone}: Group / Ungroup, colour and Delete are in the right-click menu, not in the toolbar")
         self.assertTrue(button.isChecked())  # Geometry is the default
         button.click()
         self.assertEqual(self.panel._view_mode, "simple")

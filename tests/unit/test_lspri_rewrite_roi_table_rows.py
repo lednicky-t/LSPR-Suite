@@ -297,7 +297,7 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual(VIEW_MODE_COLUMNS[VIEW_SIMPLE], (COLUMN_ID, COLUMN_NAME))
         self.assertEqual(
             VIEW_MODE_COLUMNS[VIEW_GEOMETRY],
-            (COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS, COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE),
+            (COLUMN_ID, COLUMN_NAME, COLUMN_X, COLUMN_Y, COLUMN_SHAPE, COLUMN_AREA, COLUMN_SAMPLE, COLUMN_RIM_OFFSET, COLUMN_RIM_THICKNESS, COLUMN_WIDTH, COLUMN_HEIGHT, COLUMN_ANGLE),  # (Label too since 2026-11-26)
         )
 
     def test_the_area_of_a_shape_in_pixels_and_in_the_display_unit(self) -> None:

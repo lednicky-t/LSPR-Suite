@@ -76,6 +76,7 @@ class FreezeBase(unittest.TestCase):
         self.model = self.panel._model
         self.panel.resize(300, 340)
         self.panel.show()
+        self.panel._hide._hide_section(COLUMN_NAME)  # (Geometry shows Label since 2026-11-26; these tests are about x / y / Type, so they keep the layout they were written for)
         for column, width in ((COLUMN_ID, ID_WIDTH), (COLUMN_X, X_WIDTH), (COLUMN_Y, Y_WIDTH)):
             self.tree.setColumnWidth(column, width)
         self.panel.refresh_now()
@@ -136,8 +137,9 @@ class WhichColumnsAreHeldTest(FreezeBase):
         self.assertEqual(self.tree.pinned_columns()[:4], [COLUMN_ID, COLUMN_X, COLUMN_Y, COLUMN_SHAPE])
 
     def test_a_hidden_last_column_freezes_the_visible_ones_before_it(self) -> None:
-        self.tree.set_frozen_upto(COLUMN_NAME)  # the geometry view hides the label column
+        self.tree.set_frozen_upto(COLUMN_NAME)  # (Label is hidden here by the setUp)
         self.assertEqual(self.tree.pinned_columns(), [COLUMN_ID])
+        self.tree.set_hidden_keys(frozenset())  # (the setUp's own hiding of Label ends)
         self.tree.setColumnWidth(COLUMN_NAME, 70)
         self.panel._view_actions["simple"].trigger()
         self.assertEqual(self.tree.pinned_columns(), [COLUMN_ID, COLUMN_NAME])
