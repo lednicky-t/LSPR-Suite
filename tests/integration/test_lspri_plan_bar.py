@@ -732,7 +732,7 @@ class PlanBarPanelTest(unittest.TestCase):
         tabs = self.panel._ribbon_tabs
         self.assertEqual(tabs._category_names, ["Plot", "View", "Experimental plan"])  # the View tab: 2026-11-13
         self.assertEqual(self.panel.current_ribbon_tab(), "Plot")  # the first one is shown at the start
-        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["Edit", "Evaluation", "Checks"])  # the two View groups moved to the View tab (2026-11-13)
+        self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["Edit", "Batch edit", "Evaluation", "Checks"])  # the two View groups moved to the View tab (2026-11-13)
         self.assertEqual([c.text() for c in self.panel._view_ribbon._captions], ["Show", "Points & lines", "Legend", "Steps", "Evaluation", "Stats"])  # "View steps" / "View stats" until 2026-11-13; Evaluation the same day
 
     def test_the_structure_tools_are_live_only_while_the_experimental_plan_tab_is_shown(self) -> None:
