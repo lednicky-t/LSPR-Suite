@@ -17,14 +17,17 @@ from lspr_core.perf import (  # noqa: E402
     ConcurrencyGate,
     PerfPreferences,
     PerfRuntime,
+    DestinationProfile,
     ProfileStore,
     SystemProfile,
     get_runtime,
+    pool_threads,
     probe_destination,
     probe_system,
     set_runtime,
     worker_limits,
 )
+from lspr_core.perf import system_profile  # noqa: E402
 from lspr_core.perf.preferences import MODE_AUTO, MODE_MANUAL, MODE_STANDARD  # noqa: E402
 
 TUNE = PerfPreferences(mode=MODE_AUTO)  # tuning switched on (the default is Standard)
@@ -62,6 +65,60 @@ class SystemProfileTests(unittest.TestCase):
         self.assertIn(destination.kind, ("local", "removable", "network", "unknown"))
         self.assertIsNotNone(destination.free_bytes)
         self.assertGreater(destination.free_bytes, 0)
+
+    def test_the_disk_type_is_a_hint_that_is_always_one_of_three_words(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            destination = probe_destination(folder)
+        self.assertIn(destination.media, ("ssd", "hdd", "unknown"))
+        if destination.kind != "local":
+            self.assertEqual(destination.media, "unknown", "only a fixed disk is asked")
+
+    def test_a_disk_type_that_cannot_be_read_is_unknown_not_an_error(self) -> None:
+        for path in (Path("relative/folder"), Path("\\\\server\\share\\folder"), Path("/")):
+            self.assertEqual(system_profile._windows_drive_media(path), "unknown", path)
+
+    def test_the_disk_type_never_changes_the_key_of_what_tuning_saved(self) -> None:
+        self.assertEqual(DestinationProfile("local", 1, "ssd").key(), DestinationProfile("local", 1, "hdd").key())
+        self.assertEqual(DestinationProfile("local", 1).media, "unknown")
+
+    def test_the_destination_reads_as_a_few_words(self) -> None:
+        self.assertEqual(DestinationProfile("local", 1, "ssd").describe(), "local SSD")
+        self.assertEqual(DestinationProfile("local", 1).describe(), "local disk")
+        self.assertEqual(DestinationProfile("network", 1).describe(), "network")
+        self.assertEqual(DestinationProfile("unknown", None).describe(), "unknown disk")
+
+
+class PoolThreadsTests(unittest.TestCase):
+    """The small fixed pools that are not tuned: one rule, instead of `os.cpu_count()` in several places."""
+
+    def test_at_the_default_setting_it_is_every_core_but_one_up_to_the_callers_cap(self) -> None:
+        self.assertEqual(pool_threads(machine(logical=8), PerfPreferences(), cap=8), 7)
+        self.assertEqual(pool_threads(machine(logical=8), PerfPreferences(), cap=4), 4)
+        self.assertEqual(pool_threads(machine(logical=32), PerfPreferences(), cap=8), 8)
+
+    def test_the_transient_scan_start_is_the_number_it_always_was(self) -> None:
+        # was max(2, min(6, cpu_count - 2)); now cores - cores kept free (1) - 1 for its second pool
+        for logical, expected in ((2, 2), (3, 2), (4, 2), (6, 4), (8, 6), (12, 6), (32, 6)):
+            self.assertEqual(pool_threads(machine(logical=logical), PerfPreferences(), cap=6, extra_free=1, floor=2), expected, logical)
+
+    def test_cores_kept_free_are_honoured_and_a_tiny_machine_keeps_all_of_its_cores(self) -> None:
+        self.assertEqual(pool_threads(machine(logical=8), PerfPreferences(reserved_cores=3), cap=8), 5)
+        self.assertEqual(pool_threads(machine(logical=2), PerfPreferences(reserved_cores=1), cap=8), 2)
+        self.assertEqual(pool_threads(machine(logical=1), PerfPreferences(), cap=8), 1)
+
+    def test_it_never_goes_below_the_floor_or_above_the_cap(self) -> None:
+        self.assertEqual(pool_threads(machine(logical=4), PerfPreferences(reserved_cores=60), cap=8), 1)
+        self.assertEqual(pool_threads(machine(logical=4), PerfPreferences(reserved_cores=60), cap=8, floor=2), 2)
+        self.assertEqual(pool_threads(machine(logical=64), PerfPreferences(), cap=3), 3)
+
+    def test_a_fixed_number_of_workers_is_for_the_big_jobs_not_for_these_pools(self) -> None:
+        self.assertEqual(pool_threads(machine(logical=8), PerfPreferences(mode=MODE_MANUAL, manual_workers=1), cap=8), 7)
+
+    def test_the_runtime_asks_the_machine_it_was_given(self) -> None:
+        runtime = PerfRuntime(probe=lambda: machine(logical=4))
+        self.assertEqual(runtime.pool_threads(8), 3)
+        runtime.set_preferences(PerfPreferences(reserved_cores=0))
+        self.assertEqual(runtime.pool_threads(8), 4)
 
 
 class WorkerLimitsTests(unittest.TestCase):
@@ -325,6 +382,11 @@ class RuntimeTests(unittest.TestCase):
     def test_report_fields_are_plain_values_for_the_log(self) -> None:
         fields = self.runtime().begin("export", total_units=5).finish().as_fields()
         self.assertTrue(all(isinstance(value, (str, int, float, bool)) for value in fields.values()), fields)
+        self.assertEqual(fields["media"], "-", "a job that writes nowhere has no disk type")
+
+    def test_a_run_that_writes_somewhere_reports_the_disk_type(self) -> None:
+        fields = self.runtime().begin("export", total_units=5, destination=self._tmp.name).finish().as_fields()
+        self.assertIn(fields["media"], ("ssd", "hdd", "unknown"))
 
 
 if __name__ == "__main__":

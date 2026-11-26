@@ -111,6 +111,47 @@ class RuntimeInstallTests(unittest.TestCase):
         self.assertNotIn("2 workers", text, "another machine's counts are not shown")
         self.assertEqual(perf_setup.saved_count(), 2)
 
+    def test_every_tuned_job_has_a_readable_name_in_the_status_text(self) -> None:
+        machine = SystemProfile(8, 4, 16 * 1024**3, 9 * 1024**3, False, "test")
+        store = ProfileStore(Path(self._tmp.name) / "p.json")
+        set_runtime(PerfRuntime(store=store, probe=lambda: machine))
+        for key in ("sensorgram.fits", "mask.feature_map.fits", "mask.feature_map.wavelengths", "analysis.scan"):
+            store.record(machine.fingerprint(), key, "", workers=3, rate=10.0)
+        text = perf_setup.status_text()
+        self.assertNotIn("mask.feature_map", text, "a raw task key must not reach the dialog")
+        self.assertIn("Feature map (disks): 3 workers", text)
+        self.assertIn("Feature map (wavelengths): 3 workers", text)
+
+
+class HandPickedPoolCountsTests(unittest.TestCase):
+    """The small pools that are not tuned ask `lspr_core.perf`, so affinity and "cores kept free" reach them (not `os.cpu_count()`)."""
+
+    def setUp(self) -> None:
+        self.previous = set_runtime(None)
+        self.addCleanup(set_runtime, self.previous)
+
+    def _runtime(self, logical: int, reserved: int = 1) -> None:
+        machine = SystemProfile(logical, max(logical // 2, 1), 16 * 1024**3, 9 * 1024**3, False, "test")
+        set_runtime(PerfRuntime(PerfPreferences(reserved_cores=reserved), probe=lambda: machine))
+
+    def test_the_transient_scan_start_follows_the_machine_it_runs_on(self) -> None:
+        from lspr_imaging_app.image_tools.mask import transient_scan
+
+        for logical, expected in ((8, 6), (4, 2), (2, 2), (32, 6)):
+            self._runtime(logical)
+            self.assertEqual(transient_scan._default_workers(), expected, logical)
+        self._runtime(8, reserved=3)
+        self.assertEqual(transient_scan._default_workers(), 4, "cores kept free are honoured")
+
+    def test_the_session_pools_are_capped_and_follow_the_machine(self) -> None:
+        from lspr_imaging_app.storage import session, session_carry
+
+        self._runtime(32)
+        self.assertEqual(get_runtime().pool_threads(session._MASK_READ_WORKERS_CAP), 8)
+        self.assertEqual(get_runtime().pool_threads(session_carry._CARRY_MASK_WORKERS_CAP), 8)
+        self._runtime(2)
+        self.assertEqual(get_runtime().pool_threads(session._MASK_READ_WORKERS_CAP), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

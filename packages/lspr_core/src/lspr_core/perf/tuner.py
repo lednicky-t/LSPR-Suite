@@ -112,6 +112,7 @@ class ThroughputTuner:
         self._step = max(1, int(initial_step) if initial_step else round(limits.start * 0.25))
         self._fine = initial_step is not None and initial_step <= 1  # steps of one worker (a learned start, or a re-check)
         self._discard = self._settle
+        self._initial_step = initial_step
         self._started = False  # the first window starts at the first finished unit
         self._highest = limits.start  # the largest count used so far: a larger one starts new processes
         self._settled_windows = 0
@@ -123,6 +124,7 @@ class ThroughputTuner:
         searchable = (not limits.fixed) and limits.maximum > limits.minimum
         if searchable and total_units is not None and total_units < MIN_WINDOWS_FOR_SEARCH * self._window_units():
             searchable = False
+        self._job_worth_searching = total_units is None or total_units >= MIN_WINDOWS_FOR_SEARCH * self._window_units()
         self.phase = PHASE_BASELINE if searchable else PHASE_FIXED
 
     # -- feeding it ------------------------------------------------------------------------------------------------------
@@ -148,6 +150,38 @@ class ThroughputTuner:
 
     def _window_units(self) -> float:
         return self._units_per_worker * max(self.workers, 1)
+
+    # -- the range changes while the job runs -------------------------------------------------------------------------------------
+
+    def set_limits(self, limits: WorkerLimits) -> None:
+        """The allowed range changed (another job took cores, or gave them back: ``budget.py``). Never called by the tuner itself.
+
+        What this does, and why. The count is moved into the new range at once. Every rate measured so far was measured in the old
+        range, and the window that is open now spans the change, so both are thrown away: a search that compared a rate from before
+        with one from after would be comparing two different machines. A job that was being searched starts a new search from where
+        it is (so it climbs back by itself when the range grows again); a job that was never searched (Standard / Fixed mode, or too
+        short) just takes the count its new range starts at. The job's owner must not save what a shared run found (it is not what
+        this computer can do alone): ``TunedRun`` marks such a run ``shared``."""
+        with self._lock:
+            if limits == self.limits:
+                return
+            self.limits = limits
+            searchable = self._job_worth_searching and not limits.fixed and limits.maximum > limits.minimum
+            if searchable:
+                target = max(limits.minimum, min(limits.maximum, self.workers))
+                self.phase = PHASE_BASELINE
+                self._incumbent_n = target
+                self._incumbent_rate = self._best_rate = 0.0
+                self._step = max(1, int(self._initial_step) if self._initial_step else round(limits.start * 0.25))
+                self._fine = self._initial_step is not None and self._initial_step <= 1
+                self._settled_windows = 0
+            else:
+                target = limits.start
+                self.phase = PHASE_FIXED
+                self._incumbent_n = target
+            self._discard = self._settle
+            self._window = _Window(self._clock())
+            self._move_to(target, "range changed")
 
     # -- the search --------------------------------------------------------------------------------------------------------
 

@@ -118,14 +118,82 @@ DESTINATION_UNKNOWN = "unknown"
 _DRIVE_REMOVABLE, _DRIVE_FIXED, _DRIVE_REMOTE = 2, 3, 4  # GetDriveTypeW return values
 
 
+MEDIA_SSD = "ssd"
+MEDIA_HDD = "hdd"
+MEDIA_UNKNOWN = "unknown"
+
+_IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400
+_STORAGE_DEVICE_SEEK_PENALTY_PROPERTY = 7
+_PROPERTY_STANDARD_QUERY = 0
+_FILE_SHARE_READ_WRITE = 0x1 | 0x2
+_OPEN_EXISTING = 3
+
+
 @dataclass(frozen=True)
 class DestinationProfile:
     kind: str
     """``local`` (a fixed disk), ``removable`` (USB stick / SD card), ``network`` (share) or ``unknown``."""
     free_bytes: int | None
+    media: str = MEDIA_UNKNOWN
+    """``ssd`` or ``hdd`` for a fixed disk Windows could ask (a spinning disk pays a seek penalty), else ``unknown``. **Information
+    only**: it is logged and shown, and it does not change a worker count (nobody has measured what an HDD should get here; the tuner
+    finds that). Not part of :meth:`key`, so what an earlier run saved stays valid."""
 
     def key(self) -> str:
         return self.kind
+
+    def describe(self) -> str:
+        """"local SSD", "network", "local disk" (media unknown)."""
+        if self.kind in (DESTINATION_UNKNOWN, ""):
+            return "unknown disk"
+        if self.media == MEDIA_UNKNOWN:
+            return self.kind if self.kind in (DESTINATION_NETWORK, DESTINATION_REMOVABLE) else f"{self.kind} disk"
+        return f"{self.kind} {self.media.upper()}"
+
+
+def _windows_drive_media(path: Path) -> str:
+    """Ask Windows whether the drive holding ``path`` is a solid-state disk: ``IOCTL_STORAGE_QUERY_PROPERTY`` /
+    ``StorageDeviceSeekPenaltyProperty`` on the volume, opened with no access rights (a query, nothing is read or written).
+    ``IncursSeekPenalty`` false = SSD, true = HDD. Any failure (a USB bridge that does not answer, a virtual disk, a storage pool, no
+    permission) is ``unknown``: this is a hint, and a wrong hint would be worse than none."""
+    anchor = path.anchor
+    if len(anchor) < 2 or anchor[1] != ":":
+        return MEDIA_UNKNOWN
+    try:
+        import ctypes.wintypes as wt
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        kernel32.CreateFileW.restype = wt.HANDLE
+        kernel32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, wt.LPVOID, wt.DWORD, wt.DWORD, wt.HANDLE]
+        kernel32.DeviceIoControl.restype = wt.BOOL
+        kernel32.DeviceIoControl.argtypes = [wt.HANDLE, wt.DWORD, wt.LPVOID, wt.DWORD, wt.LPVOID, wt.DWORD, ctypes.POINTER(wt.DWORD), wt.LPVOID]
+        kernel32.CloseHandle.argtypes = [wt.HANDLE]
+        handle = kernel32.CreateFileW(f"\\\\.\\{anchor[0]}:", 0, _FILE_SHARE_READ_WRITE, None, _OPEN_EXISTING, 0, None)
+        if handle is None or handle == wt.HANDLE(-1).value:
+            return MEDIA_UNKNOWN
+        try:
+
+            class _Query(ctypes.Structure):  # STORAGE_PROPERTY_QUERY (one spare byte of AdditionalParameters)
+                _fields_ = [("PropertyId", wt.DWORD), ("QueryType", wt.DWORD), ("Extra", ctypes.c_ubyte * 1)]
+
+            class _Descriptor(ctypes.Structure):  # DEVICE_SEEK_PENALTY_DESCRIPTOR
+                _fields_ = [("Version", wt.DWORD), ("Size", wt.DWORD), ("IncursSeekPenalty", ctypes.c_ubyte)]
+
+            query = _Query(_STORAGE_DEVICE_SEEK_PENALTY_PROPERTY, _PROPERTY_STANDARD_QUERY, (ctypes.c_ubyte * 1)(0))
+            answer = _Descriptor()
+            returned = wt.DWORD(0)
+            ok = kernel32.DeviceIoControl(
+                handle, _IOCTL_STORAGE_QUERY_PROPERTY, ctypes.byref(query), ctypes.sizeof(query),
+                ctypes.byref(answer), ctypes.sizeof(answer), ctypes.byref(returned), None,
+            )
+            if not ok or returned.value < ctypes.sizeof(answer):
+                return MEDIA_UNKNOWN
+            return MEDIA_HDD if answer.IncursSeekPenalty else MEDIA_SSD
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:  # noqa: BLE001 - a hint must not be able to stop an export
+        logger.debug("Could not read the disk type of %s", anchor, exc_info=True)
+        return MEDIA_UNKNOWN
 
 
 def _windows_drive_kind(path: Path) -> str:
@@ -154,6 +222,7 @@ def probe_destination(path: Path | str) -> DestinationProfile:
     except OSError:
         pass
     kind = _windows_drive_kind(target) if sys.platform == "win32" else DESTINATION_UNKNOWN
+    media = _windows_drive_media(target) if kind == DESTINATION_LOCAL else MEDIA_UNKNOWN  # only a fixed disk is worth asking
     free: int | None = None
     probe = target
     for _ in range(64):  # walk up to the first parent that exists
@@ -168,4 +237,4 @@ def probe_destination(path: Path | str) -> DestinationProfile:
         free = int(shutil.disk_usage(probe).free)
     except OSError:
         free = None
-    return DestinationProfile(kind=kind, free_bytes=free)
+    return DestinationProfile(kind=kind, free_bytes=free, media=media)

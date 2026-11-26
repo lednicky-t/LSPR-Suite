@@ -33,6 +33,25 @@ class WorkerLimits:
             raise ValueError(f"inconsistent worker limits: {self}")
 
 
+def usable_cores(system: SystemProfile, preferences: PerfPreferences) -> int:
+    """The cores the app as a whole may keep busy: the cores this process may use, minus the cores the user keeps free (ignored on a
+    machine of 2 cores or fewer). This is the capacity of the shared budget (`budget.py`) and the core part of every range below."""
+    preferences = preferences.normalized()
+    free = preferences.reserved_cores if system.logical_cores > 2 else 0
+    return max(1, system.logical_cores - free)
+
+
+def pool_threads(system: SystemProfile, preferences: PerfPreferences, *, cap: int, extra_free: int = 0, floor: int = 1) -> int:
+    """Threads for a small, fixed pool that is *not* tuned: reading hundreds of tiny files, a first guess handed to a tuned job.
+
+    The one place such a count is worked out, so that none of them calls ``os.cpu_count()`` (which ignores a CPU-affinity limit and the
+    user's "cores kept free"). The count is the cores this process may use, minus the cores kept free (ignored on a machine of 2 cores
+    or fewer, like ``worker_limits``), minus ``extra_free`` (for a caller that runs more than one pool), kept between ``floor`` and
+    ``cap``. ``cap`` is the caller's own measured limit: beyond it, more threads wait on the disk or fight for the interpreter lock.
+    Fixed-number mode does not apply here: that number is for the big jobs. Scheduling only: the count never changes what is computed."""
+    return max(int(floor), min(int(cap), usable_cores(system, preferences) - max(int(extra_free), 0)))
+
+
 def worker_limits(
     system: SystemProfile,
     preferences: PerfPreferences,
@@ -58,8 +77,7 @@ def worker_limits(
         count = max(1, min(int(wanted), system.logical_cores * MANUAL_CAP_FACTOR, ceiling))
         return WorkerLimits(minimum=count, start=count, maximum=count, fixed=True, reason="manual")
 
-    by_cores = system.logical_cores - (preferences.reserved_cores if system.logical_cores > 2 else 0)
-    maximum, reason = max(1, by_cores), "cores"
+    maximum, reason = usable_cores(system, preferences), "cores"
     if per_worker_bytes > 0 and system.available_ram_bytes > 0:
         by_memory = int(RAM_SHARE * system.available_ram_bytes // per_worker_bytes)
         if max(1, by_memory) < maximum:
