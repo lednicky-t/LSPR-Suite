@@ -336,11 +336,13 @@ class HidingTheFirstColumnTest(FixedColumnsBase):
                 again.hide()
                 again.deleteLater()
 
-    def test_the_delegate_gives_a_row_height_from_the_first_column_with_width(self) -> None:
+    def test_the_delegate_gives_the_same_row_height_from_every_column(self) -> None:
+        """Qt asks only the columns on screen (not the hidden first one, not column 0 while scrolled sideways): each must answer the real height, never 0 (2026-11-27)."""
         option = QStyleOptionViewItem()
         option.widget, option.fontMetrics = self.tree, self.tree.fontMetrics()
         delegate, other = self.tree.itemDelegate(), self.model.roi_index(2, COLUMN_X)
-        self.assertEqual(delegate.sizeHint(option, other).height(), 0, "the shortcut for the columns Qt does not ask is gone")
+        self.assertEqual(delegate.sizeHint(option, other).height(), delegate.sizeHint(option, self.model.roi_index(2, COLUMN_ID)).height())
+        self.assertGreater(delegate.sizeHint(option, other).height(), 0)
         self.hide._hide_section(COLUMN_ID)
         self.assertEqual(delegate.sizeHint(option, other).height(), delegate.sizeHint(option, self.model.roi_index(2, COLUMN_ID)).height())
         self.assertGreater(delegate.sizeHint(option, other).height(), 0)

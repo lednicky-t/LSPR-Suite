@@ -1,6 +1,6 @@
 """Column selection in the ROI / Groups table, as in a spreadsheet (2026-11-26).
 
-Pinned: `click_columns` (plain click, Ctrl, Shift, an anchor, a hidden column); a click on a header selects the column and the left end of the header sorts instead; Ctrl and Shift
+Pinned: `click_columns` (plain click, Ctrl, Shift, an anchor, a hidden column); a click on a header selects the column and the sort end of the header (opposite its title's alignment) sorts instead; Ctrl and Shift
 extend the selection; the selection is kept by key (it follows a step column that moves, and comes back when a hidden column is shown); the selected columns are painted (header and
 cells); `StepLink` announces only the step columns, sets them quietly from the plan bar's selection, and keeps a selected fixed column.
 """
@@ -26,7 +26,7 @@ _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 try:
     from lspr_imaging_app.panels.roi_table.column_selection import click_columns, is_step_key
-    from lspr_imaging_app.panels.roi_table.rows import COLUMN_COUNT, COLUMN_X
+    from lspr_imaging_app.panels.roi_table.rows import COLUMN_COUNT, COLUMN_ID, COLUMN_NAME, COLUMN_X
     from lspr_imaging_app.panels.roi_table.view import _SORT_ZONE
     from tests.integration.test_lspri_step_column_width import WidthBase
 except ImportError as exc:  # pragma: no cover - depends on the checked-out branch
@@ -84,8 +84,12 @@ class ColumnSelectionBase(WidthBase):
         return self.tree.column_key(COLUMN_COUNT + position)
 
     def click(self, column: int, where: str = "middle", modifiers=NONE) -> None:
-        """A left click on the header of `column`: in its sort zone or in the middle of it."""
-        x = self.header.sectionViewportPosition(column) + (4 if where == "sort" else self.header.sectionSize(column) // 2 + _SORT_ZONE // 2)
+        """A left click on the header of `column`: in its sort zone ("sort": the end opposite its title's alignment), at its "left_end" or "right_end", or in the middle of it."""
+        left, width = self.header.sectionViewportPosition(column), self.header.sectionSize(column)
+        if where == "sort":
+            where = "right_end" if self.header.sort_zone_on_right(column) else "left_end"
+        offset = {"left_end": 4, "right_end": width - 4}.get(where, width // 2 + _SORT_ZONE // 2)
+        x = left + offset
         point = QPointF(x, 6.0)
         for kind, buttons in ((QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton), (QEvent.Type.MouseButtonRelease, Qt.MouseButton.NoButton)):
             event = QMouseEvent(kind, point, self.header.viewport().mapToGlobal(point), Qt.MouseButton.LeftButton, buttons, modifiers)
@@ -101,11 +105,56 @@ class HeaderClickTest(ColumnSelectionBase):
         self.assertFalse(self.tree.is_column_selected(COLUMN_COUNT + 1))
         self.assertEqual(self.model.sort_state(), sort_before)
 
-    def test_a_click_on_the_left_end_of_a_header_sorts_and_does_not_select(self) -> None:
+    def test_a_click_on_the_sort_end_of_a_header_sorts_and_does_not_select(self) -> None:
         self.click(COLUMN_X, "sort")
         self.assertEqual(self.model.sort_state()[0], COLUMN_X)
         self.assertFalse(self.tree.has_column_selection())
         self.assertEqual(self.announced, [])
+
+    def test_the_sort_zone_is_at_the_end_opposite_the_titles_alignment(self) -> None:
+        """Label (left-aligned) sorts at its right end; numbers and steps (right-aligned) at their left end (2026-11-27)."""
+        self.assertTrue(self.header.sort_zone_on_right(COLUMN_NAME))
+        for column in (COLUMN_X, COLUMN_COUNT):
+            self.assertFalse(self.header.sort_zone_on_right(column), column)
+
+    def test_the_label_header_sorts_at_its_right_end_and_selects_elsewhere(self) -> None:
+        self.assertGreater(self.header.sectionSize(COLUMN_NAME), 2 * _SORT_ZONE)  # (wide enough that the two ends are different places)
+        self.click(COLUMN_NAME, "left_end")  # the left end is where its title is: a click selects
+        self.assertNotEqual(self.model.sort_state()[0], COLUMN_NAME)
+        self.assertTrue(self.tree.is_column_selected(COLUMN_NAME))
+        self.click(COLUMN_NAME, "right_end", modifiers=CTRL)  # (Ctrl would extend a selection, but the sort zone sorts whatever is held)
+        self.assertEqual(self.model.sort_state()[0], COLUMN_NAME)
+
+    def test_a_number_header_does_not_sort_at_its_right_end(self) -> None:
+        self.assertGreater(self.header.sectionSize(COLUMN_X), 2 * _SORT_ZONE)
+        self.click(COLUMN_X, "right_end")
+        self.assertNotEqual(self.model.sort_state()[0], COLUMN_X)
+        self.assertTrue(self.tree.is_column_selected(COLUMN_X))
+
+    def ink(self, column: int, end: str) -> int:
+        """How many pixels of the header of `column`, in its left or right `_SORT_ZONE` px (not the line under it), differ from the section's fill."""
+        image = self.header.viewport().grab().toImage()
+        left, width = self.header.sectionViewportPosition(column), self.header.sectionSize(column)
+        fill = image.pixelColor(left + 1, 2)
+        xs = range(_SORT_ZONE) if end == "left" else range(width - _SORT_ZONE, width)
+        count = 0
+        for y in range(self.header.viewport().height() - 2):
+            for x in xs:
+                c = image.pixelColor(left + x, y)
+                count += max(abs(c.red() - fill.red()), abs(c.green() - fill.green()), abs(c.blue() - fill.blue())) > 40
+        return count
+
+    def test_the_sort_triangle_is_drawn_at_the_sort_zones_end(self) -> None:
+        for column, end, other in ((COLUMN_NAME, "right", "left"), (COLUMN_X, "left", "right"), (COLUMN_COUNT, "left", "right")):
+            self.tree.setColumnWidth(column, max(self.header.sectionSize(column), 120))  # (wide: a title does not come near the triangle)
+            self.header.setSortIndicator(COLUMN_ID, Qt.SortOrder.AscendingOrder)
+            _APP.processEvents()
+            at_end, at_other = self.ink(column, end), self.ink(column, other)
+            for order in (Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder):
+                self.header.setSortIndicator(column, order)
+                _APP.processEvents()
+                self.assertGreater(self.ink(column, end), at_end, (column, end, order, "no triangle at the sort end"))
+                self.assertEqual(self.ink(column, other), at_other, (column, other, order, "something at the other end changed"))
 
     def test_a_fixed_column_can_be_selected_too(self) -> None:
         self.click(COLUMN_X)

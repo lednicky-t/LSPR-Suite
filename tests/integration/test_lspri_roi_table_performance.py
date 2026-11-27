@@ -339,31 +339,76 @@ class LayoutPassTest(_Grouped):
         header = self.model.group_headers()[0]
         self.assertFalse(self.model.index(0, 0, header.siblingAtColumn(1)).isValid())  # (a parent in another column has no children)
 
-    def test_in_a_layout_pass_only_the_fixed_columns_answer_and_it_ends_even_after_an_error(self) -> None:
-        step_column = self.model.columnCount() - 1
-        self.assertTrue(self.model.index(0, step_column).isValid())
-        with self.model.layout_pass():
-            self.assertTrue(self.model.index(0, COLUMN_COUNT - 1).isValid())
-            self.assertFalse(self.model.index(0, COLUMN_COUNT).isValid())
-            self.assertFalse(self.model.index(0, step_column).isValid())
-        self.assertTrue(self.model.index(0, step_column).isValid())
-        with self.assertRaises(RuntimeError), self.model.layout_pass():
+    def test_every_column_answers_a_row_height_so_a_table_scrolled_sideways_keeps_its_rows(self) -> None:
+        """Qt takes a row's height from the columns on screen only. Scrolled sideways those are step columns; if they answer 0 every row is 0 px high after a rebuild (a sort):
+        a blank table until the view is scrolled back to the start (2026-11-27)."""
+        delegate = self.tree.itemDelegate()
+        option = QtWidgets.QStyleOptionViewItem()
+        option.initFrom(self.tree)
+        option.widget = self.tree
+        checked = 0
+        for parent in self.parents():
+            for row in range(self.model.rowCount(parent)):
+                heights = {delegate.sizeHint(option, self.model.index(row, column, parent)).height() for column in range(self.model.columnCount())}
+                self.assertEqual(len(heights), 1, (parent.row(), row))  # the same from every column
+                self.assertGreater(heights.pop(), 0, (parent.row(), row))
+                checked += 1
+        self.assertGreater(checked, 10)
+        self.assertGreater(len({delegate.sizeHint(option, self.model.index(0, 0, p)).height() for p in self.parents()}), 1, "a group header and a ROI row differ: the check needs both")
+
+    def test_in_a_layout_pass_the_fixed_columns_and_the_first_shown_one_answer_and_it_ends_even_after_an_error(self) -> None:
+        first_step, last_step = COLUMN_COUNT, self.model.columnCount() - 1
+        self.assertGreater(last_step, first_step + 1)
+        self.assertTrue(self.model.index(0, last_step).isValid())
+        with self.model.layout_pass(first_step + 1):
+            self.assertTrue(self.model.index(0, COLUMN_COUNT - 1).isValid())  # (a fixed column always answers)
+            self.assertTrue(self.model.index(0, first_step + 1).isValid())  # (the one named)
+            self.assertFalse(self.model.index(0, first_step).isValid())
+            self.assertFalse(self.model.index(0, last_step).isValid())
+        self.assertTrue(self.model.index(0, last_step).isValid())
+        with self.assertRaises(RuntimeError), self.model.layout_pass(first_step):
             raise RuntimeError("boom")
-        self.assertTrue(self.model.index(0, step_column).isValid())
+        self.assertTrue(self.model.index(0, last_step).isValid())
 
-    def test_expanding_in_a_layout_pass_gives_the_row_heights_expanding_without_it_gives(self) -> None:
-        def heights() -> list[int]:
-            rows = [(self.model.index(r, 0, p), p) for p in self.parents() for r in range(self.model.rowCount(p))]
-            return [self.tree.visualRect(index).height() for index, _ in rows]
+    def show_wide(self) -> None:
+        self.panel.resize(500, 400)
+        self.panel.show()  # (the tree must be visible: a tree that is not shown is asked about every column, and the bug hides)
+        _APP.processEvents()
+        self.assertTrue(self.tree.isVisible())
+        self.assertGreater(self.tree.horizontalScrollBar().maximum(), 0, "the table must be wider than the view for the check to mean anything")
 
-        self.tree.collapseAll()
-        self.tree.expandAll()
-        plain = heights()
-        self.tree.collapseAll()
-        with self.model.layout_pass():
-            self.tree.expandAll()
-        self.assertEqual(heights(), plain)
-        self.assertGreater(len(set(plain)), 1, "a group header and a ROI row have different heights: the check would prove nothing without both")
+    def assert_rows_have_height(self, label: str) -> None:
+        for parent in self.parents():
+            for row in range(self.model.rowCount(parent)):
+                self.assertGreater(self.tree.visualRect(self.model.index(row, 0, parent)).height(), 0, (label, parent.row(), row))
+
+    def test_a_sort_keeps_the_rows_wherever_the_table_is_scrolled_to_and_asks_the_delegate_once_per_row(self) -> None:
+        """The blank table (2026-11-27): a sort while scrolled to the step columns left every row 0 px high. Qt asks the columns from the first one on screen to the last."""
+        self.show_wide()
+        bar = self.tree.horizontalScrollBar()
+        asked: list[int] = []
+        delegate_class = type(self.tree.itemDelegate())
+        original = delegate_class.sizeHint
+
+        def spy(delegate, option, index):
+            asked.append(index.column())
+            return original(delegate, option, index)
+
+        delegate_class.sizeHint = spy
+        try:
+            for label, offset in (("left edge", 0), ("middle", bar.maximum() // 2), ("right end", bar.maximum())):
+                bar.setValue(offset)
+                _APP.processEvents()
+                asked.clear()
+                with self.assertNoLogs("lspr_imaging_app.panels.roi_table.panel", level="WARNING"):  # (no fall-back to the slow layout)
+                    self.panel._on_header_clicked(COLUMN_X)
+                    self.panel._on_header_clicked(COLUMN_X)  # (again: descending)
+                self.assert_rows_have_height(label)
+                rows = sum(self.model.rowCount(p) for p in self.parents())
+                # two sorts: each row asked at most for the fixed columns and one step column, not for every step column (6 here, 241 in the app)
+                self.assertLessEqual(len(asked), 2 * rows * (COLUMN_COUNT + 1), (label, len(asked), rows))
+        finally:
+            delegate_class.sizeHint = original
 
 
 class PaintRoleTest(_Grouped):
