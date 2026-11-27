@@ -1180,13 +1180,11 @@ class GroupOnlyViewTest(_PanelCase):
         from lspr_imaging_app.panels.dock_container import PanelContainer, TitleChoice
 
         dock = PanelContainer("ROI / Groups", self.panel)
-        dock.set_title_choices((TitleChoice("ROI", "r"), TitleChoice("Groups", "g", on_double_click=True)), current=0)
+        dock.set_title_choices((TitleChoice("ROI", "r"), TitleChoice("Groups", "g")), current=0)
         picked: list[int] = []
         dock.title_choice_picked.connect(picked.append)
         roi_word, groups_word = dock._title_words
-        groups_word.clicked.emit()  # a single click on Groups does nothing
-        self.assertEqual(picked, [])
-        groups_word.double_clicked.emit()
+        groups_word.clicked.emit()  # a single click on Groups switches
         self.assertEqual(picked, [1])
         dock.set_title_current(1)
         roi_word.clicked.emit()
@@ -1208,7 +1206,7 @@ class GroupOnlyViewTest(_PanelCase):
         self.assertFalse(self.panel.group_only())
         self.assertEqual(dock._title_current, 0)
         self.assertTrue(self.tree.isExpanded(self.header("group_1")))
-        dock._title_words[1].double_clicked.emit()  # and a double click on "Groups" goes back
+        dock._title_words[1].clicked.emit()  # and a click on "Groups" goes back
         self.assertTrue(self.panel.group_only())
         self.assertEqual(dock._title_current, 1)
         dock.deleteLater()
