@@ -4,7 +4,7 @@ What is pinned:
 - **the rules**: `AxisOptions.zero` is saved only when set, a value that is no finite number is dropped, `shown()` counts from it;
 - **the axis**: the ticks stand on multiples of the step *from the zero* and are labelled with the number counted from it (0 at the zero, negative before it), also across axis breaks;
 - **the range**: a typed x range is in the printed numbers (the view in data x is shifted by the zero), "Use view" gives printed numbers back;
-- **the controls**: the "Zero at" field and the step list (filled each time it opens) set it; text that is no number is refused; the LbL / S_bulk windows have no such row;
+- **the controls**: the "Zero at" field and the step list (filled each time it opens) set it; text that is no number is refused; the LbL / S_bulk windows have the row since 2026-11-28 (`test_lspri_window_guides_and_zero.py`); a bare `AxisControls` without `zero_steps` has none;
 - **no number changes**: the lines, the cursor and the view reported by the plot stay in the data's own x; the exported figure carries the shifted labels.
 A real `QApplication` in-process (offscreen); no dataset files.
 """
