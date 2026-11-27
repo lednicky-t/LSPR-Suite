@@ -369,11 +369,14 @@ class SharedDisplayStyleTest(_PanelCase):
 
 
 class RowHeightTest(_PanelCase):
-    """Row heights come from the delegate's `sizeHint` of column 0 alone (the
-    other columns return no height) - asking every column and the base class
-    made rebuilding a 1500-ROI table take 1.3 s instead of 0.2 s."""
+    """Row heights come from the delegate's `sizeHint`, which only computes the height (it does not ask the base class to format every cell's
+    text again: that made rebuilding a 1500-ROI table take 1.3 s instead of 0.2 s).
 
-    def test_roi_and_group_rows_get_their_own_heights_from_column_zero(self) -> None:
+    **Every column answers with the real height** (changed 2026-11-27; this test used to expect 0 from all but column 0). Qt takes a row's height
+    as the largest answer over the columns on screen, and while the table is scrolled sideways column 0 is not one of them: an answer of 0 from
+    the others made every row 0 px high after a sort, a blank table until the view was scrolled back."""
+
+    def test_roi_and_group_rows_get_their_own_heights_from_every_column(self) -> None:
         from PyQt6.QtWidgets import QStyleOptionViewItem
 
         from lspr_imaging_app.panels.roi_table.delegate import group_row_height, row_height
@@ -389,7 +392,9 @@ class RowHeightTest(_PanelCase):
 
         self.assertEqual(delegate.sizeHint(option, header).height(), group_row_height(option.fontMetrics))
         self.assertEqual(delegate.sizeHint(option, roi_cell).height(), row_height(option.fontMetrics))
-        self.assertEqual(delegate.sizeHint(option, self.cell(1, COLUMN_X)).height(), 0)
+        # Not just column 0: a column that says 0 can leave the row 0 px high when column 0 is scrolled out of view.
+        self.assertEqual(delegate.sizeHint(option, self.cell(1, COLUMN_X)).height(), row_height(option.fontMetrics))
+        self.assertEqual(delegate.sizeHint(option, self.cell(1, COLUMN_X)).height(), delegate.sizeHint(option, roi_cell).height())
 
     def test_the_view_still_lays_rows_out_at_those_heights(self) -> None:
         from lspr_imaging_app.panels.roi_table.delegate import row_height
