@@ -600,7 +600,7 @@ class DriftBaselinePanelTest(unittest.TestCase):
         self.panel._band_edit.setChecked(True)
         self.assertTrue(self.panel._ribbon_tabs.set_category("Experimental plan"))  # where steps are edited: the plan's items only
         self.assertFalse(has_baseline_items())
-        self.assertTrue(self.panel._ribbon_tabs.set_category("Plot"))
+        self.assertTrue(self.panel._ribbon_tabs.set_category("Data"))
         self._set(baseline_method=METHOD_ANCHORS)  # not the Range method
         self.assertFalse(has_baseline_items())
 

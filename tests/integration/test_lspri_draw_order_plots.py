@@ -353,7 +353,7 @@ class ModuleAndSessionTest(unittest.TestCase):
     def test_the_session_file_holds_the_list_only_when_there_is_one(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root, naming = Path(tmp), FrameNamingScheme.for_dataset([0, 1], [500.0, 550.0])
-            self.assertEqual(SESSION_SCHEMA_VERSION, "1.16")
+            self.assertEqual(SESSION_SCHEMA_VERSION, "1.17")
             path = save_session(root, SessionState(), naming)
             payload = json.loads(path.read_text(encoding="utf-8"))
             self.assertNotIn("plot_line_order", payload)  # written exactly as before

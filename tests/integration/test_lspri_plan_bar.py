@@ -730,10 +730,10 @@ class PlanBarPanelTest(unittest.TestCase):
 
     def test_the_control_row_has_a_plot_tab_a_view_tab_and_an_experimental_plan_tab(self) -> None:
         tabs = self.panel._ribbon_tabs
-        self.assertEqual(tabs._category_names, ["Plot", "View", "Experimental plan"])  # the View tab: 2026-11-13
-        self.assertEqual(self.panel.current_ribbon_tab(), "Plot")  # the first one is shown at the start
+        self.assertEqual(tabs._category_names, ["Data", "View", "Experimental plan"])  # the View tab: 2026-11-13
+        self.assertEqual(self.panel.current_ribbon_tab(), "Data")  # the first one is shown at the start
         self.assertEqual([c.text() for c in self.panel._plan_ribbon._captions], ["Edit", "Batch edit", "Evaluation", "Checks"])  # the two View groups moved to the View tab (2026-11-13)
-        self.assertEqual([c.text() for c in self.panel._view_ribbon._captions], ["Show", "Points & lines", "Legend", "Steps", "Evaluation", "Stats"])  # "View steps" / "View stats" until 2026-11-13; Evaluation the same day
+        self.assertEqual([c.text() for c in self.panel._view_ribbon._captions], ["Show", "Points & lines", "Legend", "Steps", "Plot", "Evaluation", "Stats"])  # "View steps" / "View stats" until 2026-11-13; Evaluation the same day; Plot (the axes) after Steps, 2026-11-27
 
     def test_the_structure_tools_are_live_only_while_the_experimental_plan_tab_is_shown(self) -> None:
         self._open_scan_and_draw()
@@ -745,9 +745,23 @@ class PlanBarPanelTest(unittest.TestCase):
         texts = [a.text() for a in actions.build_menu(0).actions()]
         self.assertIn("Remove step", texts)
         self.assertIn("Use as", texts)
-        self.panel._ribbon_tabs.set_category("Plot")
+        self.panel._ribbon_tabs.set_category("Data")
         self.assertFalse(actions.structure_tools_active())
         self.assertIn("Edit text...", [a.text() for a in actions.build_menu(0).actions()])  # the old items stay on every tab
+
+    def test_a_steps_menu_offers_a_guide_at_its_mean_while_the_step_table_has_numbers(self) -> None:
+        self.panel._plot.set_stats_table(None, self.panel._plot.stats_item().settings())
+        actions = self.panel._steps.actions
+        self._open_scan_and_draw()
+        table = self.panel._plot.stats_item().table()
+        if table is None or not table.lines:
+            self.skipTest("the fixture draws no step table")
+        texts = [a.text() for a in actions.build_menu(0).actions()]
+        self.assertIn("Add guide from step", texts)  # 2026-11-27
+        actions.build_menu(0)  # building the menu changes nothing
+        self.assertEqual(self.panel._guide_controls.guides(), ())
+        self.panel._plot.set_stats_table(None, self.panel._plot.stats_item().settings())
+        self.assertNotIn("Add guide from step", [a.text() for a in actions.build_menu(0).actions()])  # nothing to take a mean of
 
     def test_the_shown_tab_is_remembered_and_brings_its_tools_back(self) -> None:
         store = UiStateStore({})
@@ -767,7 +781,7 @@ class PlanBarPanelTest(unittest.TestCase):
 
     def test_an_unknown_remembered_tab_is_ignored(self) -> None:
         self.panel.restore_ui_state(UiStateStore({"sensorgram/ribbon_tab": "Gone"}))
-        self.assertEqual(self.panel.current_ribbon_tab(), "Plot")
+        self.assertEqual(self.panel.current_ribbon_tab(), "Data")
 
     def test_the_evaluation_pickers_list_the_steps_and_write_the_roles(self) -> None:
         self._open_scan_and_draw()

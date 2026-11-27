@@ -135,7 +135,7 @@ class SpectralCorrectionAppTests(unittest.TestCase):
         self.assertTrue(self.spectral.set_mode("centroid"))
         payload = self._saved_payload()
         block = payload["spectral_correction"]
-        self.assertEqual(payload["schema_version"], "1.16")
+        self.assertEqual(payload["schema_version"], "1.17")
         self.assertEqual((block["mode"], block["sha256"], block["source_name"], block["illumination"]), ("centroid", table.sha256, "spectral_sweep_test.csv", "test LED"))
         self.assertEqual(block["file"], "spectral_correction/spectral_correction.h5")
         centres = self.spectral.passbands().centroid_nm.copy()

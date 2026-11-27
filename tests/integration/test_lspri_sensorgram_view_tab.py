@@ -1226,7 +1226,7 @@ class ViewTabPanelTest(unittest.TestCase):
 
     def test_the_view_tab_sits_between_plot_and_plan_and_holds_every_view_group(self) -> None:
         tabs = self.panel._ribbon_tabs
-        self.assertEqual(tabs._category_names, ["Plot", "View", "Experimental plan"])
+        self.assertEqual(tabs._category_names, ["Data", "View", "Experimental plan"])
         view, plot_row, plan = self.panel._view_ribbon, self.panel._ribbon, self.panel._plan_ribbon
         for widget in (
             self.view.band, self.view.anchors, self.panel._mask_toggle, self.panel._stale_toggle, self.view.lines_menu, self.view.legend_menu,
@@ -1237,6 +1237,50 @@ class ViewTabPanelTest(unittest.TestCase):
         tabs.set_category("View")
         self.assertEqual(self.panel.current_ribbon_tab(), "View")
         self.assertFalse(self.panel._steps.actions.structure_tools_active())  # the plan's structure tools stay for the Experimental plan tab
+
+    def test_the_guides_button_sits_in_the_plot_group_and_draws_on_the_plot(self) -> None:
+        view, plot, guides = self.panel._view_ribbon, self.panel._plot, self.panel._guide_controls
+        self.assertTrue(view.isAncestorOf(guides.menu))  # the Plot group's second button (2026-11-27)
+        self.assertIs(guides._module, self.panel._axis_controls.module)  # one session value for both
+        box = guides._slots[0].value
+        box.setText("650")
+        box.editingFinished.emit()
+        self.assertEqual([line.value() for line in plot._guides.lines()], [650.0])
+        self.panel._axis_controls.reset()  # Reset of the Plot menu is the options' way back, the guides stay: they have their own Clear all
+        self.assertEqual([line.value() for line in plot._guides.lines()], [650.0])
+        guides.clear_button.click()
+        self.assertEqual(plot._guides.lines(), [])
+        plot.guide_add_requested.emit(650.0)  # the view menu's "Add guide here", the guide's drag and its menu reach the same table
+        self.assertEqual([(g.value, g.show_value) for g in guides.guides()], [(650.0, True)])
+        plot.guide_moved.emit(0, 655.0)
+        self.assertEqual(guides.guides()[0].value, 655.0)
+        self.assertEqual([a.text() for a in guides.build_menu(0).actions() if a.text()][-1], "Remove guide")
+        guides.clear_button.click()
+
+    def test_the_plot_group_and_the_breaks_switch_sit_in_the_view_tab_and_follow_the_plot(self) -> None:
+        from lspr_imaging_app.domain.axis_breaks import AxisBreak
+
+        view, plot, controls = self.panel._view_ribbon, self.panel._plot, self.panel._axis_controls
+        self.assertTrue(view.isAncestorOf(controls.menu))  # the Plot group (2026-11-27)
+        self.assertTrue(view.isAncestorOf(self.panel._breaks_toggle))  # and the Show group's switch
+        self.assertFalse(self.panel._ribbon.isAncestorOf(controls.menu) or self.panel._plan_ribbon.isAncestorOf(controls.menu))
+        self.assertFalse(self.panel._breaks_toggle.isEnabled())  # nothing to show yet
+        controls.set_x_breaks((AxisBreak(1.0, 2.0),))
+        self.assertTrue(self.panel._breaks_toggle.isEnabled())
+        self.assertEqual(plot.breaks(), (AxisBreak(1.0, 2.0),))
+        self.panel._breaks_toggle.setChecked(False)
+        self.assertFalse(plot.breaks_visible())
+        self.panel._breaks_toggle.setChecked(True)
+        controls.edit_breaks.setChecked(True)  # the Plot menu's edit toggle starts the plot's edit mode ...
+        self.assertTrue(plot.break_edit())
+        plot.set_anchor_mode(True)  # ... the anchor edit ends it and the toggle follows ...
+        self.assertFalse(plot.break_edit())
+        self.assertFalse(controls.edit_breaks.isChecked())
+        controls.edit_breaks.setChecked(True)  # ... and while it runs the edit mode is refused, with the reason in the note
+        self.assertFalse(plot.break_edit())
+        self.assertFalse(controls.edit_breaks.isChecked())
+        self.assertIn("anchor", controls.note.text().lower())
+        plot.set_anchor_mode(False)
 
     def test_the_options_reach_the_plot_and_the_resets_put_the_defaults_back_in_one_change(self) -> None:
         self.assertEqual(self.panel._plot.view(), SensorgramViewSettings())  # untouched: the plot looks as it always did

@@ -123,7 +123,7 @@ class LblSessionFileTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_the_series_goes_into_the_session_file_and_comes_back(self) -> None:
-        self.assertEqual(SESSION_SCHEMA_VERSION, "1.16")
+        self.assertEqual(SESSION_SCHEMA_VERSION, "1.17")
         save_session(self.root, SessionState(plan_edits=PlanEditsState(lbl=LblSeries(REFS[0], 6))), self.naming)
         payload = json.loads(session_path(self.root).read_text(encoding="utf-8"))
         self.assertEqual(payload["plan"]["lbl"]["period"], 6)

@@ -11,7 +11,7 @@ paths:
 
 # LSPRi: Spectra, Sensorgram, plots, experimental plan
 
-Docs: `experimental_plan_bar_design_2026-10-26`, `step_statistics_backbone_2026-10-26`, `signal_map_2026-11-10`, `refractive_indices_2026-11-12`, `bulk_sensitivity_2026-11-12`, `lbl_series_2026-11-22`, `spectral_correction_2026-11-20` (no temperature yet: measure first), `sensorgram_view_tab_2026-11-13`, `plot_windows_ribbon_2026-11-22`, `legend_order_2026-11-22`, `draw_order_2026-11-22` (all in `docs/`).
+Docs: `experimental_plan_bar_design_2026-10-26`, `step_statistics_backbone_2026-10-26`, `signal_map_2026-11-10`, `refractive_indices_2026-11-12`, `bulk_sensitivity_2026-11-12`, `lbl_series_2026-11-22`, `spectral_correction_2026-11-20` (no temperature yet: measure first), `sensorgram_view_tab_2026-11-13`, `plot_windows_ribbon_2026-11-22`, `legend_order_2026-11-22`, `draw_order_2026-11-22`, `plot_axes_2026-11-27` (all in `docs/`).
 
 ## Spectra and Sensorgram
 
@@ -33,4 +33,5 @@ Docs: `experimental_plan_bar_design_2026-10-26`, `step_statistics_backbone_2026-
 
 - **Points / lines / legend menus are one definition, `PlotLookControls` (`panels/sensorgram/plot_look.py`)**, separate values per plot. Add options there; never copy the menus.
 - **Re-ordering never redraws lines**: order-only options go in `SensorgramViewSettings.differs_only_in_order`. Manual line order is the session's (`PlotLineOrderModule`).
+- **Axis options (tick spacing, display range, grid, x-axis breaks) are session values** (`PlotAxesModule`, per plot and per quantity the axis shows; `domain/plot_axes.py`, `domain/axis_breaks.py`). **With breaks every item of the Sensorgram plot is placed through `BreakMap.forward`, and everything the plot reports goes back through `inverse`**: a new item or signal that carries an x goes through them too (`plot.py` `_drawn_x` / `_data_x`; the plan bar and the step table take the map). A break never changes a stored number. **The x zero (`AxisOptions.zero`) changes only the printed numbers** (`BrokenAxisItem.set_zero`); a typed x range is in printed numbers, breaks and everything the plot reports stay in data x. **Guides** are the y side's `AxisOptions.guides` (reference lines behind the data, never in the autoscale; layer "Guides"); a guide-only change must not re-range or redraw (`PlotAxes.only_guides_differ`). Guides are changed only through `GuideControls` (right-click gestures and drags on the plot only report).
 - Sensorgram View-tab options are display only and remembered (`panels/sensorgram/group_menu.py`). Signal-map colours are a display override (`RoiOverlay.draw(color_override=)`).
