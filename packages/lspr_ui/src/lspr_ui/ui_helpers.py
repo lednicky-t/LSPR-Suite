@@ -5,6 +5,24 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, QSize, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap, QPen
 from PyQt6.QtWidgets import QAbstractSpinBox, QSlider, QToolButton, QWidget
 
+from .theme import get_active_theme
+
+
+def _slider_colors() -> dict[str, QColor]:
+    """The colours the custom-painted sliders below draw in, for the active theme, read at every paint so a live theme switch needs no
+    hand-off. Dark: the colours these sliders always had. Bright: a pale track, so the unfilled part is not a black wedge on a white panel."""
+    theme = get_active_theme()
+    if theme.is_light:
+        return {
+            "track": QColor(theme.control_bg_pressed), "outline": QColor(theme.control_border_hover),
+            "fill": QColor(theme.accent_blue), "handle": QColor(theme.text_primary),
+            "groove": QColor(theme.control_bg_pressed), "knob": QColor("#ffffff"), "knob_edge": QColor(theme.control_border_hover),
+        }
+    return {
+        "track": QColor("#0f172a"), "outline": QColor("#475569"), "fill": QColor("#38bdf8"), "handle": QColor("#f8fafc"),
+        "groove": QColor("#243041"), "knob": QColor("#f8fafc"), "knob_edge": QColor("#0b1220"),
+    }
+
 
 def make_sim_slider(minimum: int, maximum: int, value: int) -> QSlider:
     slider = QSlider(Qt.Orientation.Horizontal)
@@ -66,8 +84,9 @@ class CompactWedgeSlider(QWidget):
         base_path.lineTo(rect.right(), rect.top())
         base_path.lineTo(rect.right(), rect.bottom())
         base_path.closeSubpath()
-        painter.setPen(QPen(QColor("#475569"), 1.0))
-        painter.setBrush(QColor("#0f172a"))
+        colors = _slider_colors()
+        painter.setPen(QPen(colors["outline"], 1.0))
+        painter.setBrush(colors["track"])
         painter.drawPath(base_path)
 
         fraction = 0.0 if self._maximum <= self._minimum else (self._value - self._minimum) / float(self._maximum - self._minimum)
@@ -80,11 +99,11 @@ class CompactWedgeSlider(QWidget):
             fill_path.lineTo(fill_right, rect.bottom() - rect.height() * fraction)
             fill_path.closeSubpath()
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#38bdf8"))
+            painter.setBrush(colors["fill"])
             painter.drawPath(fill_path)
 
         handle_x = rect.left() + rect.width() * fraction
-        painter.setPen(QPen(QColor("#f8fafc"), 1.4))
+        painter.setPen(QPen(colors["handle"], 1.4))
         painter.drawLine(
             QPointF(handle_x, rect.bottom()),
             QPointF(handle_x, rect.bottom() - rect.height() * max(fraction, 0.18)),
@@ -205,21 +224,22 @@ class DualHandleRangeSlider(QWidget):
         groove = self._groove_rect()
         center_y = groove.center().y()
 
+        colors = _slider_colors()
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#243041"))
+        painter.setBrush(colors["groove"])
         painter.drawRoundedRect(groove, groove.height() / 2.0, groove.height() / 2.0)
 
         low_x = self._handle_x(self._low)
         high_x = self._handle_x(self._high)
         fill_rect = QRectF(low_x, groove.top(), max(high_x - low_x, 0.0), groove.height())
         if fill_rect.width() > 0.5:
-            painter.setBrush(QColor("#38bdf8"))
+            painter.setBrush(colors["fill"])
             painter.drawRoundedRect(fill_rect, groove.height() / 2.0, groove.height() / 2.0)
 
         for value in (self._low, self._high):
             handle_center = QPointF(self._handle_x(value), center_y)
-            painter.setPen(QPen(QColor("#0b1220"), 1.4))
-            painter.setBrush(QColor("#f8fafc"))
+            painter.setPen(QPen(colors["knob_edge"], 1.4))
+            painter.setBrush(colors["knob"])
             painter.drawEllipse(handle_center, self._HANDLE_RADIUS, self._HANDLE_RADIUS)
         painter.end()
 

@@ -9,6 +9,8 @@ from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap, Q
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QApplication, QStyle
 
+from .theme import get_active_theme
+
 
 # ---------------------------------------------------------------------------
 # Vendored Tabler icons. See icon_assets/ (the .svg files) and ICONS.md (how
@@ -34,6 +36,34 @@ def _icon_svg_template(name: str) -> str | None:
     return path.read_text(encoding="utf-8")
 
 
+# On a light theme an icon colour must stand out from a white ribbon at least this much (WCAG contrast; 3:1 is the bar for graphics).
+_MIN_ICON_CONTRAST = 3.0
+
+
+def _relative_luminance(color: QColor) -> float:
+    def channel(value: float) -> float:
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * channel(color.redF()) + 0.7152 * channel(color.greenF()) + 0.0722 * channel(color.blueF())
+
+
+def legible_on_light(color: str | QColor) -> str:
+    """`color` as an icon wears it on a *light* background: unchanged when it already contrasts enough with white, otherwise the same hue (and
+    saturation) made darker until it does. The app's accent colours (lime, amber, yellow, teal, the tool blue) were picked for the dark theme and
+    are 1.6-2.3:1 against white; this keeps their meaning (the hue) and makes them readable. Not a hex colour: returned as given."""
+    qcolor = QColor(color)
+    if not qcolor.isValid():
+        return color.name() if isinstance(color, QColor) else str(color)
+    white_luminance = 1.0
+    h, s, lightness, _a = qcolor.getHslF()
+    for _ in range(60):
+        if (white_luminance + 0.05) / (_relative_luminance(qcolor) + 0.05) >= _MIN_ICON_CONTRAST:
+            break
+        lightness = max(lightness - 0.01, 0.0)
+        qcolor = QColor.fromHslF(max(h, 0.0), s, lightness)
+    return qcolor.name()
+
+
 def available_tabler_icon_names() -> list[str]:
     """Every vendored Tabler icon name available. Used by tests/tooling."""
     return sorted(p.stem for p in _ICON_ASSETS_DIR.glob("*.svg"))
@@ -56,6 +86,8 @@ def tabler_icon_svg(
     if svg is None:
         return None
     resolved_color = color.name() if isinstance(color, QColor) else (color or "#000000")
+    if get_active_theme().is_light:
+        resolved_color = legible_on_light(resolved_color)
     # Vendored icons use one of two conventions: outline icons set
     # stroke="currentColor", filled icons set fill="currentColor" - a blanket
     # substitution covers both without needing to know which is which.

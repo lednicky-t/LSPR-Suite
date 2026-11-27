@@ -320,7 +320,7 @@ class ThresholdLivePreviewTest(unittest.TestCase):
 
     def test_the_icon_colours_the_part_over_the_line_for_brighter_and_under_it_for_darker(self) -> None:
         # The colours are the icon module's own (the "selected" colour became blue on 2026-11-23, was green).
-        selected, muted = icons._SELECTED, icons._MUTED
+        selected, muted = icons._SELECTED, icons._muted()
         for darker, over, under in ((False, selected, muted), (True, muted, selected)):
             with self.subTest(darker=darker):
                 image = icons.threshold_icon(darker).pixmap(48, 48).toImage()
