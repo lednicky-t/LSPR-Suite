@@ -41,7 +41,7 @@ Docs: `docs/analysis_redesign_plan_2026-10-19.md` §15-17, `docs/spectra_analysi
 
 - A scan runs **only** on explicit action (Scan, Fast scan, ROI tuning Accept); selection or navigation never computes ("not yet analyzed").
 - Any change to a cell's inputs recomputes that cell; no materiality or pixel-selection comparison.
-- Formula, Fit method, Metric settings are **never** stored or put in provenance; recomputed live.
+- Formula, Fit method, Metric settings are **never** stored or put in provenance; recomputed live. One approved exception (2026-11-28): the Sensorgram's fitted traces have a **disk copy** `sensorgram_traces.npz` beside `scan.h5` (`analysis/trace_disk_cache.py`): a start-up speed-up only, one scan and one setup, traces used only when `scan_trace.scan_fingerprint` (every array a trace is read from) and the setup (incl. the fit modules' source hash) are equal; `scan.h5` is untouched. A change outside the hashed fit modules that alters a trace needs `CACHE_VERSION` bumped.
 - One `scan.h5` per session (`analysis/scan_store.py`).
 - `analysis/tasks.compute_cell`, `provenance.py`, `reduction.py` are the independent **reference implementation** the scan is checked against (inputs: `tools/reference_inputs.py`).
 - Fractional pixel weighting is built (`rasterize_fractional`, weighted reductions) but **not wired** (also unused by the scan: `RoiToolbox.detect_rois`, tests only): `compute_cell` still uses binary `rasterize_sample`/`rasterize_reference`. A weighted reduction must equal the unweighted one when all weights are equal.
