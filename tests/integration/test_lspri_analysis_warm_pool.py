@@ -160,6 +160,22 @@ class WarmPoolTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.pool.acquire(2, False)
 
+    def test_shutdown_with_kill_ends_the_workers_at_once_and_the_pool_cannot_be_used_again(self) -> None:
+        pids = self.pool.start(2, True)
+        started = time.perf_counter()
+        self.pool.shutdown(kill=True)  # the quit path (2026-11-28): no waiting for idle workers to leave
+        self.assertLess(time.perf_counter() - started, 10.0)
+        self.assertTrue(_wait_until(lambda: _gone(pids), 20), "the workers were still running after a kill")
+        self.assertFalse(self.pool.is_ready())
+        self.pool.shutdown(kill=True)  # twice is fine
+        with self.assertRaises(RuntimeError):
+            self.pool.acquire(2, False)
+
+    def test_shutdown_with_kill_on_a_pool_whose_workers_never_started_is_fine(self) -> None:
+        self.pool.acquire(2, False)  # workers start with the first task: none has
+        self.pool.shutdown(kill=True)
+        self.assertFalse(self.pool.is_ready())
+
     def test_scan_after_scan_runs_on_the_same_processes_and_gives_the_same_numbers(self) -> None:
         pids = self.pool.start(2, True)
         reference = self._reference()
@@ -342,6 +358,14 @@ class PerformanceModeTaskTests(unittest.TestCase):
         pids = self.task._warm.worker_pids()
         self.task.shutdown()
         self.assertTrue(_wait_until(lambda: _gone(pids), 30))
+
+    def test_quit_ends_the_workers_without_waiting_for_them(self) -> None:
+        self.task.set_mode(MODE_PERFORMANCE)
+        self.assertTrue(_pump(lambda: ("ready", 2) in self.states, POOL_START_SECONDS))
+        warm = self.task._warm
+        with mock.patch.object(warm, "shutdown", wraps=warm.shutdown) as shutdown:
+            self.task.shutdown()
+        shutdown.assert_called_once_with(kill=True)
 
     def test_the_numbers_of_a_performance_mode_scan_equal_a_normal_one(self) -> None:
         plan = self.data.plan()
