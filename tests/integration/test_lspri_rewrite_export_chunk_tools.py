@@ -90,7 +90,8 @@ class ExportChunkToolsTests(unittest.TestCase):
                                             chromatic=self.chromatic)
         self.addCleanup(self.section.deleteLater)
         self.dataset.load_dataset(ImageDataset(folder=folder, records=records))
-        _APP.processEvents()
+        self.assertTrue(_pump(lambda: self.section._probe_for is None, timeout=10.0))  # the image size is read on a thread (2026-11-28)
+        self.assertTrue(self.section._export_button.isEnabled())
 
     def set_size(self, w: int, h: int) -> None:
         self.section._chunk_spin.setValue(w)

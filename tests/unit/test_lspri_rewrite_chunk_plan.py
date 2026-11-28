@@ -407,6 +407,72 @@ class LatticeCropTests(unittest.TestCase):
         self.assertIsNone(cp.lattice_tilt_deg(self.centres(4, 6, 70.0)[:3]))  # too few for a pitch
 
 
+class AffineReachHullTests(unittest.TestCase):
+    """`hull_vertices` + the hull inside `affine_reach` (2026-11-28): the worst shift is found at a corner of the ROI centres' convex hull,
+    so `affine_reach` looks at ~12 points instead of 160 and gives the same two numbers (real session: 2.19 s -> 0.26 s, bit-identical)."""
+
+    @staticmethod
+    def brute_force(centres, affines):
+        """The code as it was before the hull: every centre against every affine."""
+        mats = np.asarray([np.asarray(a, dtype=np.float64)[:2, :3] for a in affines], dtype=np.float64)
+        points = np.asarray(centres, dtype=np.float64).reshape(-1, 2)
+        moved = np.einsum("kij,nj->kni", mats[:, :, :2], points) + mats[:, None, :, 2]
+        shift = float(np.abs(moved - points[None, :, :]).max(initial=0.0))
+        stretch = float(np.linalg.svd(mats[:, :, :2], compute_uv=False).max(initial=1.0))
+        return shift, max(stretch, 1.0)
+
+    def test_the_corners_of_a_square_with_points_inside_and_on_its_edges(self):
+        pts = np.array([[0, 0], [10, 0], [10, 10], [0, 10], [5, 5], [5, 0], [10, 5], [2, 7]], dtype=float)
+        corners = cp.hull_vertices(pts)
+        self.assertEqual(sorted(map(tuple, corners.tolist())), [(0.0, 0.0), (0.0, 10.0), (10.0, 0.0), (10.0, 10.0)])
+
+    def test_duplicates_collinear_and_tiny_sets_do_not_break_it(self):
+        line = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
+        self.assertEqual(sorted(map(tuple, cp.hull_vertices(line).tolist())), [(0.0, 0.0), (3.0, 3.0)])
+        same = np.array([[4.0, 4.0]] * 5)
+        self.assertEqual(len(np.unique(cp.hull_vertices(same), axis=0)), 1)  # one place (it may be listed twice)
+        two = np.array([[0.0, 0.0], [1.0, 0.0]])
+        self.assertEqual(cp.hull_vertices(two).tolist(), two.tolist())  # fewer than 3: everything is kept
+        self.assertEqual(cp.hull_vertices(np.zeros((0, 2))).shape, (0, 2))
+
+    def test_a_non_finite_centre_keeps_every_point(self):
+        pts = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [np.nan, 3.0]])
+        self.assertEqual(len(cp.hull_vertices(pts)), 4)
+
+    def test_every_point_is_inside_or_on_its_hull(self):
+        rng = np.random.default_rng(3)
+        pts = rng.uniform(0, 1000, (160, 2))
+        corners = cp.hull_vertices(pts)
+        self.assertLess(len(corners), 30)
+        n = len(corners)
+        # corners come back in input order, so test with the sorted-by-angle polygon
+        centre = corners.mean(axis=0)
+        ring = corners[np.argsort(np.arctan2(corners[:, 1] - centre[1], corners[:, 0] - centre[0]))]
+        for p in pts:
+            for i in range(n):
+                a, b = ring[i], ring[(i + 1) % n]
+                self.assertGreaterEqual((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]), -1e-9)
+
+    def test_affine_reach_is_the_same_as_over_every_centre(self):
+        rng = np.random.default_rng(11)
+        for trial in range(40):
+            count = int(rng.integers(1, 200))
+            centres = rng.uniform(0, 1300, (count, 2))
+            affines = []
+            for _ in range(int(rng.integers(1, 60))):
+                m = np.eye(2, 3)
+                m[:, :2] += rng.normal(0.0, 3e-3, (2, 2))  # near-identity, like a fitted chromatic model
+                m[:, 2] = rng.normal(0.0, 3.0, 2)
+                affines.append(m)
+            with self.subTest(trial=trial, centres=count):
+                self.assertEqual(cp.affine_reach(centres, affines), self.brute_force(centres, affines))
+
+    def test_collinear_and_single_centres_give_the_same_reach(self):
+        affines = [np.array([[1.01, 0.002, 2.0], [-0.002, 0.99, -3.0]]), np.array([[1.0, 0.0, -4.0], [0.0, 1.0, 1.0]])]
+        for centres in (np.array([[10.0, 10.0]]), np.array([[0.0, 0.0], [50.0, 50.0], [100.0, 100.0]]), np.array([[5.0, 5.0]] * 4)):
+            self.assertEqual(cp.affine_reach(centres, affines), self.brute_force(centres, affines))
+
+
 class CompressionTests(unittest.TestCase):
     def test_ratio_follows_the_multiple_of_8_rule_on_16_bit_data(self):
         rng = np.random.default_rng(0)
